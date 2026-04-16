@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.routes import agents, connections, documents, metadata, organization, processes, recommendations
 from app.core.config import get_settings
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list(),
