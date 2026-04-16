@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useQueries } from '@tanstack/react-query'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart3,
   Code,
@@ -209,6 +209,7 @@ export default function AnalysisPage() {
   const [q, setQ] = useState('')
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const qc = useQueryClient()
   const syncProgressQuery = useSyncProgress(activeSyncId)
 
   const connectionsQuery = useConnections()
@@ -355,13 +356,14 @@ export default function AnalysisPage() {
 
   const onSync = useCallback(
     (id: string) => {
+      qc.removeQueries({ queryKey: ['sync-progress', id] })
       setSyncingId(id)
       setActiveSyncId(id)
       syncConnection.mutate(id, {
         onSettled: () => setSyncingId(null),
       })
     },
-    [syncConnection],
+    [syncConnection, qc],
   )
 
   const onDelete = useCallback(
