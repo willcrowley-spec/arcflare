@@ -17,3 +17,10 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+celery_app.conf.include = [
+    "app.workers.metadata_sync",
+    "app.workers.telemetry_poll",
+    "app.workers.vectorization",
+    "app.workers.analysis",
+]
