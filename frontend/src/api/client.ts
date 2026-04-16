@@ -41,7 +41,7 @@ class ApiError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const raw = `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
-  const url = raw.includes('?') ? raw : raw.replace(/\/?$/, '/')
+  const url = raw
   const headers = new Headers(options.headers)
 
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {

@@ -5,8 +5,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.routes import agents, connections, documents, metadata, organization, processes, recommendations
@@ -23,26 +21,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Arcflare API")
 
 
-class TrailingSlashMiddleware(BaseHTTPMiddleware):
-    """Strip trailing slashes so /foo/ matches route /foo without a redirect."""
-
-    async def dispatch(self, request: Request, call_next):
-        path = request.scope["path"]
-        if path != "/" and path.endswith("/"):
-            request.scope["path"] = path.rstrip("/")
-        return await call_next(request)
-
-
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="Arcflare API",
         version="0.1.0",
         lifespan=lifespan,
-        redirect_slashes=False,
     )
 
-    app.add_middleware(TrailingSlashMiddleware)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
     app.add_middleware(
         CORSMiddleware,
