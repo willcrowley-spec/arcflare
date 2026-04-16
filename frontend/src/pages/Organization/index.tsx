@@ -302,26 +302,48 @@ type VelocitySnap = {
   active_user_count: number
   internal_active_count?: number
   external_active_count?: number
+  system_user_count?: number
   new_users_this_month: number
   deactivated_this_month: number
   by_role_json: Record<string, number>
   by_profile_json: Record<string, number>
+  by_created_month_json?: Record<string, { human: number; system: number; external: number }>
 }
 
 function VelocitySection({ velocityQuery }: { velocityQuery: { data?: unknown } }) {
   if (!velocityQuery.data || !Array.isArray(velocityQuery.data) || velocityQuery.data.length === 0) return null
 
   const snapshots = (velocityQuery.data as VelocitySnap[]).slice().reverse()
-  const chartData = snapshots.map((s) => ({
-    date: new Date(s.snapshot_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }),
-    internal: s.internal_active_count ?? s.active_user_count,
-    external: s.external_active_count ?? 0,
-    new: s.new_users_this_month,
-    deactivated: s.deactivated_this_month,
-  }))
-
   const latestSnap = snapshots[snapshots.length - 1]
-  const internalCount = latestSnap?.internal_active_count ?? latestSnap?.active_user_count ?? 0
+
+  const monthlyBuckets = latestSnap?.by_created_month_json
+  let chartData: { date: string; human: number; system: number; external: number }[]
+
+  if (monthlyBuckets && Object.keys(monthlyBuckets).length > 0) {
+    const months = Object.keys(monthlyBuckets).sort()
+    let cumHuman = 0
+    let cumSystem = 0
+    let cumExternal = 0
+    chartData = months.map((m) => {
+      const bucket = monthlyBuckets[m] ?? { human: 0, system: 0, external: 0 }
+      cumHuman += bucket.human ?? 0
+      cumSystem += bucket.system ?? 0
+      cumExternal += bucket.external ?? 0
+      const [y, mo] = m.split('-')
+      const label = new Date(Number(y), Number(mo) - 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+      return { date: label, human: cumHuman, system: cumSystem, external: cumExternal }
+    })
+  } else {
+    chartData = snapshots.map((s) => ({
+      date: new Date(s.snapshot_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }),
+      human: s.internal_active_count ?? s.active_user_count,
+      system: s.system_user_count ?? 0,
+      external: s.external_active_count ?? 0,
+    }))
+  }
+
+  const humanCount = latestSnap?.internal_active_count ?? latestSnap?.active_user_count ?? 0
+  const systemCount = latestSnap?.system_user_count ?? 0
   const externalCount = latestSnap?.external_active_count ?? 0
   const roleEntries = Object.entries(latestSnap?.by_role_json ?? {}).sort((a, b) => b[1] - a[1])
   const profileEntries = Object.entries(latestSnap?.by_profile_json ?? {}).sort((a, b) => b[1] - a[1])
@@ -333,14 +355,14 @@ function VelocitySection({ velocityQuery }: { velocityQuery: { data?: unknown } 
           <TrendingUp className="h-6 w-6 text-navy-700" />
           <div>
             <h2 className="text-lg font-semibold text-navy-900">Platform Adoption</h2>
-            <p className="text-sm text-slate-600">Internal vs external active users</p>
+            <p className="text-sm text-slate-600">Cumulative user growth by classification</p>
           </div>
         </div>
         <div className="mt-4 h-56">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
               <defs>
-                <linearGradient id="internalGrad" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="humanGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} />
                   <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} />
                 </linearGradient>
@@ -353,14 +375,16 @@ function VelocitySection({ velocityQuery }: { velocityQuery: { data?: unknown } 
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Area type="monotone" dataKey="internal" name="Internal" stroke="#1e3a5f" fill="url(#internalGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="human" name="Human" stroke="#1e3a5f" fill="url(#humanGrad)" strokeWidth={2} />
               <Area type="monotone" dataKey="external" name="External" stroke="#0d9488" fill="url(#externalGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="system" name="System" stroke="#94a3b8" fill="none" strokeWidth={1.5} strokeDasharray="4 3" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
         {chartData.length > 0 && (
-          <div className="mt-3 flex gap-6 text-xs text-slate-600">
-            <span>Internal: <strong className="text-navy-900">{internalCount}</strong></span>
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
+            <span>Human: <strong className="text-navy-900">{humanCount}</strong></span>
+            <span>System: <strong className="text-slate-500">{systemCount}</strong></span>
             <span>External: <strong className="text-teal-700">{externalCount}</strong></span>
             <span>New this month: <strong className="text-emerald-700">+{latestSnap?.new_users_this_month ?? 0}</strong></span>
             <span>Deactivated: <strong className="text-red-600">-{latestSnap?.deactivated_this_month ?? 0}</strong></span>
@@ -373,7 +397,7 @@ function VelocitySection({ velocityQuery }: { velocityQuery: { data?: unknown } 
           <Shield className="h-6 w-6 text-navy-700" />
           <div>
             <h2 className="text-lg font-semibold text-navy-900">Role & Profile Distribution</h2>
-            <p className="text-sm text-slate-600">Internal users by role and profile</p>
+            <p className="text-sm text-slate-600">Human users by role and profile</p>
           </div>
         </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -432,7 +456,8 @@ export default function OrganizationPage() {
   const isSandbox = settings?.is_sandbox === true
   const instanceUrl = pickString(settings, ['instance_url'])
   const activeUsers = typeof settings?.active_users === 'number' ? settings.active_users : null
-  const internalUsers = typeof settings?.internal_users === 'number' ? settings.internal_users : null
+  const humanUsers = typeof settings?.human_users === 'number' ? settings.human_users : null
+  const systemUsers = typeof settings?.system_users === 'number' ? settings.system_users : null
   const externalUsers = typeof settings?.external_users === 'number' ? settings.external_users : null
   const annualSpend = typeof settings?.estimated_annual_spend === 'number' ? settings.estimated_annual_spend : null
   const licenseSummary = settings?.license_summary as {
@@ -502,8 +527,12 @@ export default function OrganizationPage() {
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Internal Users</dt>
-                  <dd className="font-medium text-slate-900">{internalUsers != null ? formatInt(internalUsers) : employeesDisplay}</dd>
+                  <dt className="text-slate-500">Human Users</dt>
+                  <dd className="font-medium text-slate-900">{humanUsers != null ? formatInt(humanUsers) : employeesDisplay}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                  <dt className="text-slate-400">System / Integration</dt>
+                  <dd className="font-medium text-slate-500">{systemUsers != null ? formatInt(systemUsers) : '—'}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
                   <dt className="text-slate-500">External Users</dt>
