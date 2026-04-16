@@ -214,3 +214,28 @@ export function useCreateAgent() {
     },
   })
 }
+
+export function useSyncProgress(connectionId: string | null) {
+  const qc = useQueryClient()
+  const query = useQuery({
+    queryKey: ['sync-progress', connectionId],
+    queryFn: () => api.connections.syncStatus(connectionId!),
+    enabled: !!connectionId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === 'completed' || status === 'failed' || status === 'idle') return false
+      return 2000
+    },
+  })
+
+  const isDone = query.data?.status === 'completed'
+  const isFailed = query.data?.status === 'failed'
+
+  if (isDone || isFailed) {
+    void qc.invalidateQueries({ queryKey: ['connections'] })
+    void qc.invalidateQueries({ queryKey: ['metadata'] })
+    void qc.invalidateQueries({ queryKey: ['organization'] })
+  }
+
+  return query
+}

@@ -66,7 +66,7 @@ async def salesforce_callback(
         oauth_tokens_encrypted=enc,
         status="connected",
         entity_count=0,
-        last_sync_at=datetime.now(tz=UTC),
+        last_sync_at=None,
         sync_config_json={},
     )
     db.add(conn)
@@ -104,6 +104,20 @@ async def sync_connection(
         raise HTTPException(status_code=404, detail="Connection not found")
     sync_metadata_task.delay(str(conn.id))
     return {"status": "queued", "connection_id": str(conn.id)}
+
+
+@router.get("/{connection_id}/sync-status")
+async def get_sync_status(
+    connection_id: UUID,
+    org: CurrentOrg,
+    db: DbSession,
+) -> dict:
+    """Return live sync progress from Redis."""
+    conn = await db.get(PlatformConnection, connection_id)
+    if conn is None or conn.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    from app.services.sync_progress import get_progress
+    return get_progress(str(connection_id))
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)

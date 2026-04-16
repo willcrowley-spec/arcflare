@@ -570,12 +570,24 @@ def pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UICo
     return components
 
 
-async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
+async def sync_metadata(
+    connection_id: UUID,
+    db: AsyncSession,
+    progress_callback: callable | None = None,
+) -> int:
     """Full metadata sync for a Salesforce connection.
 
     Pulls object describes, automations, usage counts, and related metadata; persists
     metadata objects, fields, and automations. Returns the number of objects synced.
     """
+
+    def _progress(phase: str, status: str, count: int = 0) -> None:
+        if progress_callback:
+            try:
+                progress_callback(str(connection_id), phase, status, count)
+            except Exception:
+                pass
+
     stmt = select(PlatformConnection).where(PlatformConnection.id == connection_id)
     result = await db.execute(stmt)
     connection = result.scalar_one_or_none()
@@ -589,15 +601,36 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
 
     objects = pull_object_describes(sf)
     object_names = [o.api_name for o in objects]
+    _progress("objects", "done", len(objects))
 
     usage = pull_usage_data(sf, object_names)
     for obj in objects:
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
+    _progress("fields", "pulling", sum(o.field_count for o in objects))
+    _progress("flows", "pulling", 0)
+    _progress("triggers", "pulling", 0)
+    _progress("validation_rules", "pulling", 0)
+
     automations = pull_all_automations(sf)
+    flow_count = sum(1 for a in automations if a.automation_type in ("flow", "process_builder"))
+    trigger_count = sum(1 for a in automations if a.automation_type == "trigger")
+    vr_count = sum(1 for a in automations if a.automation_type == "validation_rule")
+    _progress("flows", "done", flow_count)
+    _progress("triggers", "done", trigger_count)
+    _progress("validation_rules", "done", vr_count)
+
+    _progress("permissions", "pulling", 0)
     permissions = pull_all_permissions(sf)
+    _progress("permissions", "done", len(permissions))
+
+    _progress("ui_components", "pulling", 0)
+    _progress("reports", "pulling", 0)
     ui_components = pull_all_ui_components(sf, object_names)
+    report_count = sum(1 for c in ui_components if c.component_type in ("report", "dashboard"))
+    _progress("ui_components", "done", len(ui_components) - report_count)
+    _progress("reports", "done", report_count)
 
     mo_subq = select(MetadataObject.id).where(MetadataObject.connection_id == connection_id)
 
@@ -660,6 +693,8 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
             )
         )
 
+    _progress("fields", "done", sum(o.field_count for o in objects))
+    _progress("apex_classes", "pulling", 0)
     apex_classes = pull_apex_classes(sf)
     for ac in apex_classes:
         db.add(
@@ -676,6 +711,7 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
                 },
             )
         )
+    _progress("apex_classes", "done", len(apex_classes))
 
     for perm in permissions:
         db.add(
@@ -707,6 +743,7 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
             )
         )
 
+    _progress("installed_packages", "pulling", 0)
     packages = pull_installed_packages(sf)
     for pkg in packages:
         db.add(
@@ -722,6 +759,7 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
                 },
             )
         )
+    _progress("installed_packages", "done", len(packages))
 
     auto_by_object: dict[str, dict[str, bool]] = {}
     for auto in automations:
@@ -752,15 +790,19 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
     for mo in res_vr.scalars().all():
         mo.has_validation_rules = mo.api_name in vr_objects
 
+    _progress("licensing", "pulling", 0)
     try:
         await snapshot_licensing(connection_id, org_id, sf, db)
     except Exception as e:
         logger.warning("licensing_snapshot_failed connection=%s error=%s", connection_id, e)
+    _progress("licensing", "done", 1)
 
+    _progress("user_velocity", "pulling", 0)
     try:
         await snapshot_user_velocity(connection_id, org_id, sf, db)
     except Exception as e:
         logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, e)
+    _progress("user_velocity", "done", 1)
 
     connection.last_sync_at = datetime.now(tz=UTC)
     connection.entity_count = len(objects)

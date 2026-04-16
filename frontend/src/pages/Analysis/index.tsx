@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import {
   BarChart3,
@@ -21,6 +21,7 @@ import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { SearchBar } from '@/components/SearchBar'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
+import { SyncProgressPanel } from '@/components/SyncProgressPanel'
 import {
   useConnections,
   useDeleteConnection,
@@ -30,6 +31,7 @@ import {
   useMetadataObjects,
   useMetadataSummary,
   useSyncConnection,
+  useSyncProgress,
 } from '@/hooks/useApi'
 import type { MetadataAutomation, MetadataComponent, MetadataObject, MetadataSummary, PlatformConnection } from '@/types'
 
@@ -206,6 +208,8 @@ export default function AnalysisPage() {
   const [source, setSource] = useState<SourceFilter>('ALL')
   const [q, setQ] = useState('')
   const [syncingId, setSyncingId] = useState<string | null>(null)
+  const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const syncProgressQuery = useSyncProgress(activeSyncId)
 
   const connectionsQuery = useConnections()
   const initiateSalesforce = useInitiateSalesforce()
@@ -213,6 +217,16 @@ export default function AnalysisPage() {
   const deleteConnection = useDeleteConnection()
 
   const connections = connectionsQuery.data?.items ?? []
+
+  useEffect(() => {
+    if (!activeSyncId && connections.length > 0) {
+      const syncing = connections.find((c) => String(c.status).toLowerCase() === 'syncing')
+      if (syncing) {
+        setActiveSyncId(String(syncing.id))
+      }
+    }
+  }, [connections, activeSyncId])
+
   const hasConnections = connections.length > 0
   const isObjectsView = typeFilter === 'ALL' || typeFilter === 'OBJECTS'
 
@@ -339,6 +353,7 @@ export default function AnalysisPage() {
   const onSync = useCallback(
     (id: string) => {
       setSyncingId(id)
+      setActiveSyncId(id)
       syncConnection.mutate(id, {
         onSettled: () => setSyncingId(null),
       })
@@ -1010,7 +1025,16 @@ export default function AnalysisPage() {
             />
           </div>
         ) : (
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <>
+            {activeSyncId && (
+              <div className="mt-6">
+                <SyncProgressPanel
+                  data={syncProgressQuery.data}
+                  onDismiss={() => setActiveSyncId(null)}
+                />
+              </div>
+            )}
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {connections.map((c) => {
               const label = platformLabelFromType(c.platform_type ?? (c.platform as string | undefined))
               const badge = connectionBadgeStatus(String(c.status))
@@ -1066,7 +1090,8 @@ export default function AnalysisPage() {
                 </div>
               )
             })}
-          </div>
+            </div>
+          </>
         )}
       </section>
     </div>

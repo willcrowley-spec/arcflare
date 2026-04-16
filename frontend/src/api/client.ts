@@ -103,6 +103,14 @@ export const api = {
       request<SalesforceInitiateResponse>('/connections/salesforce/initiate', { method: 'POST' }),
     sync: (id: string) => request<void>(`/connections/${id}/sync`, { method: 'POST' }),
     delete: (id: string) => request<void>(`/connections/${id}`, { method: 'DELETE' }),
+    syncStatus: (id: string) =>
+      request<{
+        status: string
+        started_at: string | null
+        completed_at: string | null
+        error: string | null
+        phases?: Record<string, { status: string; count: number }>
+      }>(`/connections/${id}/sync-status`),
   },
   metadata: {
     listObjects: (params?: { page?: number; page_size?: number; q?: string }) =>
