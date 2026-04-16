@@ -15,7 +15,7 @@ import type {
   VelocityMetrics,
 } from '@/types'
 
-const API_BASE = '/api/v1'
+const API_BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1'
 
 export type TokenGetter = () => Promise<string | null>
 
@@ -83,8 +83,19 @@ function withQuery(path: string, params?: Record<string, string | number | boole
 
 export const api = {
   connections: {
-    list: (params?: { page?: number; page_size?: number }) =>
-      request<PaginatedResponse<PlatformConnection>>(withQuery('/connections', params)),
+    list: async (params?: { page?: number; page_size?: number }) => {
+      const raw = await request<{ connections: PlatformConnection[]; total: number }>(
+        withQuery('/connections', params),
+      )
+      const items = raw.connections ?? []
+      return {
+        items,
+        total: raw.total ?? items.length,
+        page: 1,
+        page_size: items.length || 50,
+        has_more: false,
+      } satisfies PaginatedResponse<PlatformConnection>
+    },
     initiateSalesforce: () =>
       request<SalesforceInitiateResponse>('/connections/salesforce/initiate', { method: 'POST' }),
     sync: (id: string) => request<void>(`/connections/${id}/sync`, { method: 'POST' }),

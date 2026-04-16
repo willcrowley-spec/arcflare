@@ -15,7 +15,8 @@ export default function App() {
         <Route path="/analysis" element={<AnalysisPage />} />
         <Route path="/organization" element={<OrganizationPage />} />
         <Route path="/processes" element={<ProcessesPage />} />
-        <Route path="/processes/map" element={<ProcessMapPage />} />
+        <Route path="/processes/map" element={<Navigate to="/processes" replace />} />
+        <Route path="/processes/:id/map" element={<ProcessMapPage />} />
         <Route path="/recommendations" element={<RecommendationsPage />} />
         <Route path="/agents" element={<AgentsPage />} />
       </Route>

@@ -29,7 +29,10 @@ export interface PaginatedResponse<T> {
   total: number
   page: number
   page_size: number
-  has_more: boolean
+  /** Present on some list endpoints */
+  has_more?: boolean
+  /** Backend metadata pagination uses `pages` */
+  pages?: number
 }
 
 export interface Organization {
@@ -55,23 +58,42 @@ export interface User {
 
 export interface PlatformConnection {
   id: string
-  platform: PlatformType
-  label: string
-  status: ConnectionStatus
+  org_id?: string
+  /** API field from FastAPI (`platform_type` on wire) */
+  platform_type?: string
+  instance_url?: string | null
+  /** Legacy shape; prefer `platform_type` when present */
+  platform?: PlatformType
+  label?: string
+  status: ConnectionStatus | string
   entity_count: number
-  last_sync_at?: string
+  last_sync_at?: string | null
   error_message?: string
   created_at: string
+  sync_config_json?: Record<string, unknown>
 }
 
 export interface MetadataObject {
   id: string
+  org_id?: string
+  connection_id?: string
   api_name: string
-  label: string
-  platform: PlatformType
-  type: EntityType
-  status: RecordStatus
-  last_updated_at: string
+  label: string | null
+  object_type?: string | null
+  field_count: number
+  record_count: number
+  is_custom: boolean
+  managed_package_namespace?: string | null
+  has_triggers: boolean
+  has_flows: boolean
+  has_validation_rules: boolean
+  metadata_json?: Record<string, unknown>
+  last_synced_at?: string | null
+  /** Optional legacy / client-normalized fields */
+  platform?: PlatformType
+  type?: EntityType
+  status?: RecordStatus
+  last_updated_at?: string
   description?: string
 }
 
@@ -257,7 +279,8 @@ export interface CostModelSummary {
 }
 
 export interface SalesforceInitiateResponse {
-  auth_url: string
+  authorization_url: string
+  state: string
 }
 
 export interface ProcessExportResult {

@@ -26,10 +26,13 @@ async def get_current_org(
     )
     org = result.scalar_one_or_none()
     if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Organization not found for this session",
+        org = Organization(
+            clerk_org_id=user.org_id,
+            name=user.org_id,
         )
+        db.add(org)
+        await db.commit()
+        await db.refresh(org)
     return org
 
 

@@ -1,5 +1,5 @@
-import { memo, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { memo, useEffect, useMemo } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
@@ -17,11 +17,68 @@ import {
 } from '@xyflow/react'
 import { ArrowLeft, FileSpreadsheet, FileText, FileType2, Network, Server, Workflow } from 'lucide-react'
 import clsx from 'clsx'
+import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
+import { useProcess } from '@/hooks/useApi'
 
 type DemoData = {
   title: string
   subtitle: string
   variant: 'doc' | 'process' | 'record'
+}
+
+type ApiGraphNode = {
+  id: string
+  type?: string
+  label?: string | null
+  position?: { x: number; y: number }
+}
+
+type ApiGraphEdge = {
+  id: string
+  source: string
+  target: string
+  label?: string | null
+}
+
+type ProcessGraphPayload = {
+  nodes?: ApiGraphNode[]
+  edges?: ApiGraphEdge[]
+}
+
+function mapNodeVariant(nodeType: string | undefined): DemoData['variant'] {
+  const t = (nodeType ?? '').toUpperCase()
+  if (t.includes('DOC') || t.includes('BUSINESS_DOC') || t.includes('FILE')) return 'doc'
+  if (t.includes('RECORD') || t.includes('DATA') || t.includes('OBJECT')) return 'record'
+  return 'process'
+}
+
+function toFlowNodes(nodes: ApiGraphNode[] | undefined): Node<DemoData>[] {
+  if (!nodes?.length) return []
+  return nodes.map((n) => {
+    const variant = mapNodeVariant(n.type)
+    const pos = n.position && typeof n.position.x === 'number' && typeof n.position.y === 'number' ? n.position : { x: 0, y: 0 }
+    return {
+      id: n.id,
+      type: 'demo',
+      position: pos,
+      data: {
+        title: n.label?.trim() || 'Untitled step',
+        subtitle: (n.type ?? 'process').replace(/_/g, ' '),
+        variant,
+      },
+    }
+  })
+}
+
+function toFlowEdges(edges: ApiGraphEdge[] | undefined): Edge[] {
+  if (!edges?.length) return []
+  return edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    label: e.label ?? '',
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+  }))
 }
 
 function DemoNode({ data }: NodeProps<Node<DemoData>>) {
@@ -60,140 +117,104 @@ function DemoNode({ data }: NodeProps<Node<DemoData>>) {
 
 const nodeTypes = { demo: memo(DemoNode) }
 
-const initialNodes: Node<DemoData>[] = [
-  {
-    id: 'doc_arch',
-    type: 'demo',
-    position: { x: 40, y: 0 },
-    data: { title: 'Architectural Standards', subtitle: 'Word Document', variant: 'doc' },
-  },
-  {
-    id: 'doc_sla',
-    type: 'demo',
-    position: { x: 340, y: 0 },
-    data: { title: 'Lead SLA Policy', subtitle: 'PDF', variant: 'doc' },
-  },
-  {
-    id: 'doc_scoring',
-    type: 'demo',
-    position: { x: 640, y: 0 },
-    data: { title: 'Scoring Model Config', subtitle: 'Excel', variant: 'doc' },
-  },
-  {
-    id: 'proc_route',
-    type: 'demo',
-    position: { x: 40, y: 200 },
-    data: { title: 'Inbound Lead Routing', subtitle: 'Salesforce Flow', variant: 'process' },
-  },
-  {
-    id: 'proc_enrich',
-    type: 'demo',
-    position: { x: 340, y: 200 },
-    data: { title: 'Lead Enrichment', subtitle: 'Manual Process', variant: 'process' },
-  },
-  {
-    id: 'proc_score',
-    type: 'demo',
-    position: { x: 640, y: 200 },
-    data: { title: 'AI Lead Scoring', subtitle: 'Einstein Discovery', variant: 'process' },
-  },
-  {
-    id: 'data_hs',
-    type: 'demo',
-    position: { x: 40, y: 400 },
-    data: { title: 'HubSpot Leads', subtitle: 'HubSpot Sync', variant: 'record' },
-  },
-  {
-    id: 'data_lead',
-    type: 'demo',
-    position: { x: 340, y: 400 },
-    data: { title: 'Lead Object', subtitle: 'Salesforce Lead', variant: 'record' },
-  },
-  {
-    id: 'data_contact',
-    type: 'demo',
-    position: { x: 640, y: 400 },
-    data: { title: 'Contact Object', subtitle: 'Salesforce Contact', variant: 'record' },
-  },
-]
-
-const initialEdges: Edge[] = [
-  {
-    id: 'e1',
-    source: 'doc_arch',
-    target: 'proc_route',
-    label: 'governs',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e2',
-    source: 'doc_sla',
-    target: 'proc_route',
-    label: 'constrains',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e3',
-    source: 'doc_scoring',
-    target: 'proc_score',
-    label: 'configures',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e4',
-    source: 'proc_route',
-    target: 'data_hs',
-    label: 'syncs to',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e5',
-    source: 'proc_enrich',
-    target: 'data_lead',
-    label: 'converts to',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e6',
-    source: 'proc_score',
-    target: 'data_lead',
-    label: 'feeds',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e7',
-    source: 'data_hs',
-    target: 'data_lead',
-    label: 'syncs to',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-  {
-    id: 'e8',
-    source: 'data_lead',
-    target: 'data_contact',
-    label: 'converts to',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
-  },
-]
+function extractGraph(payload: unknown): ProcessGraphPayload | null {
+  if (!payload || typeof payload !== 'object') return null
+  const root = payload as { graph?: unknown }
+  const g = root.graph
+  if (!g || typeof g !== 'object') return null
+  const graph = g as ProcessGraphPayload
+  return graph
+}
 
 export default function ProcessMapPage() {
-  const nodesState = useMemo(() => initialNodes, [])
-  const edgesState = useMemo(() => initialEdges, [])
-  const [nodes, , onNodesChange] = useNodesState(nodesState)
-  const [edges, , onEdgesChange] = useEdgesState(edgesState)
+  const { id } = useParams<{ id: string }>()
+  const { data, isLoading, isError, error } = useProcess(id ?? '')
+
+  const graph = useMemo(() => extractGraph(data), [data])
+  const flowNodes = useMemo(() => toFlowNodes(graph?.nodes), [graph?.nodes])
+  const flowEdges = useMemo(() => toFlowEdges(graph?.edges), [graph?.edges])
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(flowNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges)
+
+  useEffect(() => {
+    setNodes(flowNodes)
+    setEdges(flowEdges)
+  }, [flowNodes, flowEdges, setNodes, setEdges])
+
+  const processName =
+    data && typeof data === 'object' && 'process' in data
+      ? (data as { process?: { name?: string } }).process?.name
+      : undefined
+
+  const hasGraphData = Boolean(graph?.nodes?.length)
+  const status =
+    isError && error && typeof error === 'object' && 'status' in error && typeof (error as { status: unknown }).status === 'number'
+      ? (error as { status: number }).status
+      : undefined
+
+  if (!id) {
+    return (
+      <div className="space-y-6">
+        <BackHeader />
+        <EmptyState
+          icon={<Network className="h-10 w-10" />}
+          title="No process selected"
+          description="Choose a process from the list to view its map."
+        />
+      </div>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <BackHeader />
+        <LoadingState message="Loading process graph…" />
+      </div>
+    )
+  }
+
+  if (isError) {
+    const msg = error instanceof Error ? error.message : undefined
+    const is404 = status === 404
+    return (
+      <div className="space-y-6">
+        <BackHeader />
+        {is404 ? (
+          <EmptyState
+            icon={<Network className="h-10 w-10" />}
+            title="Process not found"
+            description="This process may have been removed or is not available for your organization."
+          />
+        ) : (
+          <ErrorState message={msg} />
+        )}
+      </div>
+    )
+  }
+
+  if (!hasGraphData) {
+    return (
+      <div className="space-y-6">
+        <BackHeader />
+        <EmptyState
+          icon={<Network className="h-10 w-10" />}
+          title="No graph data yet"
+          description="Run process generation after connecting a platform to populate nodes and edges."
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <Link
-            to="/processes"
-            className="inline-flex items-center gap-2 text-sm font-medium text-navy-700 hover:text-navy-900"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Business Processes
-          </Link>
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight text-navy-900">Process Map</h1>
+          <BackHeader />
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight text-navy-900">
+            {processName ? `Process Map · ${processName}` : 'Process Map'}
+          </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Drag nodes to rearrange. Positions are saved automatically.
           </p>
@@ -229,6 +250,18 @@ export default function ProcessMapPage() {
         </ReactFlow>
       </div>
     </div>
+  )
+}
+
+function BackHeader() {
+  return (
+    <Link
+      to="/processes"
+      className="inline-flex items-center gap-2 text-sm font-medium text-navy-700 hover:text-navy-900"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Back to Business Processes
+    </Link>
   )
 }
 

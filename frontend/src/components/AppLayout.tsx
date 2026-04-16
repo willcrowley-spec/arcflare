@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/clerk-react'
 import { Bot, Bell, Settings, User } from 'lucide-react'
 import clsx from 'clsx'
@@ -39,6 +40,24 @@ function NavItem({ to, label }: { to: string; label: string }) {
 }
 
 export function AppLayout() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [salesforceConnectedBanner, setSalesforceConnectedBanner] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('connected') !== 'salesforce') return
+
+    setSalesforceConnectedBanner(true)
+    params.delete('connected')
+    const qs = params.toString()
+    const next = `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`
+    navigate(next, { replace: true })
+
+    const timer = window.setTimeout(() => setSalesforceConnectedBanner(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [location.hash, location.pathname, location.search, navigate])
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
       <header className="border-b border-white/10 bg-navy-800 text-white shadow-md">
@@ -119,6 +138,15 @@ export function AppLayout() {
           </nav>
         </div>
       </header>
+
+      {salesforceConnectedBanner && (
+        <div
+          className="border-b border-emerald-700/40 bg-emerald-900/90 px-6 py-3 text-center text-sm font-medium text-emerald-50"
+          role="status"
+        >
+          Salesforce connected successfully. Metadata sync has been queued.
+        </div>
+      )}
 
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-6 py-8">
         <Outlet />

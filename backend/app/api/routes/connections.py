@@ -73,7 +73,7 @@ async def salesforce_callback(
     await db.commit()
     sync_metadata_task.delay(str(conn.id))
     return RedirectResponse(
-        url=f"{settings.FRONTEND_URL}/integrations?connected=salesforce",
+        url=f"{settings.FRONTEND_URL}/#/analysis?connected=salesforce",
         status_code=status.HTTP_302_FOUND,
     )
 
