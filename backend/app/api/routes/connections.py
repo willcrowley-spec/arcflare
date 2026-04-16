@@ -102,6 +102,10 @@ async def sync_connection(
     conn = await db.get(PlatformConnection, connection_id)
     if conn is None or conn.org_id != org.id:
         raise HTTPException(status_code=404, detail="Connection not found")
+    conn.status = "syncing"
+    await db.commit()
+    from app.services.sync_progress import init_progress
+    init_progress(str(conn.id))
     sync_metadata_task.delay(str(conn.id))
     return {"status": "queued", "connection_id": str(conn.id)}
 

@@ -64,9 +64,11 @@ function PhaseChip({ name, info }: { name: string; info: PhaseInfo }) {
 
 export function SyncProgressPanel({
   data,
+  isActive = false,
   onDismiss,
 }: {
   data: SyncProgressData | undefined
+  isActive?: boolean
   onDismiss?: () => void
 }) {
   const [dismissed, setDismissed] = useState(false)
@@ -75,6 +77,7 @@ export function SyncProgressPanel({
   const isRunning = data?.status === 'running'
   const isCompleted = data?.status === 'completed'
   const isFailed = data?.status === 'failed'
+  const isLoading = isActive && (!data || data.status === 'idle')
 
   useEffect(() => {
     if (isCompleted && !completedAtRef.current) {
@@ -85,13 +88,14 @@ export function SyncProgressPanel({
       }, 4000)
       return () => clearTimeout(timer)
     }
-    if (isRunning) {
+    if (isRunning || isLoading) {
       completedAtRef.current = null
       setDismissed(false)
     }
-  }, [isCompleted, isRunning, onDismiss])
+  }, [isCompleted, isRunning, isLoading, onDismiss])
 
-  if (!data || data.status === 'idle' || dismissed) return null
+  if (dismissed) return null
+  if (!isActive && (!data || data.status === 'idle')) return null
 
   const phases = data.phases ?? {}
   const doneCount = PHASE_ORDER.filter((p) => phases[p]?.status === 'done').length
@@ -101,7 +105,7 @@ export function SyncProgressPanel({
     <div
       className={clsx(
         'rounded-xl border p-5 transition-all duration-500',
-        isRunning && 'border-sky-200 bg-gradient-to-br from-sky-50/80 to-white shadow-sm',
+        (isRunning || isLoading) && 'border-sky-200 bg-gradient-to-br from-sky-50/80 to-white shadow-sm',
         isCompleted && 'border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-white shadow-sm',
         isFailed && 'border-red-200 bg-gradient-to-br from-red-50/80 to-white shadow-sm',
       )}
@@ -109,17 +113,19 @@ export function SyncProgressPanel({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="text-sm font-semibold text-slate-800">
+            {isLoading && 'Preparing sync\u2026'}
             {isRunning && 'Syncing metadata\u2026'}
             {isCompleted && 'Sync complete'}
             {isFailed && 'Sync failed'}
           </p>
           <p className="text-xs text-slate-500">
+            {isLoading && 'Initializing sync pipeline'}
             {isRunning && `${doneCount} of ${totalPhases} phases complete`}
             {isCompleted && `All ${totalPhases} phases complete`}
-            {isFailed && (data.error || 'An error occurred during sync')}
+            {isFailed && (data?.error || 'An error occurred during sync')}
           </p>
         </div>
-        {isRunning && (
+        {(isRunning || isLoading) && (
           <div className="flex items-center gap-2">
             <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
               <div

@@ -220,9 +220,12 @@ export default function AnalysisPage() {
 
   useEffect(() => {
     if (!activeSyncId && connections.length > 0) {
-      const syncing = connections.find((c) => String(c.status).toLowerCase() === 'syncing')
-      if (syncing) {
-        setActiveSyncId(String(syncing.id))
+      const active = connections.find((c) => {
+        const s = String(c.status).toLowerCase()
+        return s === 'syncing' || s === 'pending'
+      })
+      if (active) {
+        setActiveSyncId(String(active.id))
       }
     }
   }, [connections, activeSyncId])
@@ -1030,6 +1033,7 @@ export default function AnalysisPage() {
               <div className="mt-6">
                 <SyncProgressPanel
                   data={syncProgressQuery.data}
+                  isActive={!!activeSyncId}
                   onDismiss={() => setActiveSyncId(null)}
                 />
               </div>

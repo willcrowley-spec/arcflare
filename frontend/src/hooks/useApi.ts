@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
@@ -223,19 +224,19 @@ export function useSyncProgress(connectionId: string | null) {
     enabled: !!connectionId,
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (status === 'completed' || status === 'failed' || status === 'idle') return false
+      if (status === 'completed' || status === 'failed') return false
       return 2000
     },
   })
 
-  const isDone = query.data?.status === 'completed'
-  const isFailed = query.data?.status === 'failed'
-
-  if (isDone || isFailed) {
-    void qc.invalidateQueries({ queryKey: ['connections'] })
-    void qc.invalidateQueries({ queryKey: ['metadata'] })
-    void qc.invalidateQueries({ queryKey: ['organization'] })
-  }
+  const status = query.data?.status
+  useEffect(() => {
+    if (status === 'completed' || status === 'failed') {
+      void qc.invalidateQueries({ queryKey: ['connections'] })
+      void qc.invalidateQueries({ queryKey: ['metadata'] })
+      void qc.invalidateQueries({ queryKey: ['organization'] })
+    }
+  }, [status, qc])
 
   return query
 }
