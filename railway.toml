@@ -1,5 +1,0 @@
-# Service-specific Railway configs are in backend/ and frontend/.
-# Configure each Railway service with its root directory:
-#   arcflare-backend:  Root Directory = backend
-#   arcflare-worker:   Root Directory = backend
-#   arcflare-frontend: Root Directory = frontend
