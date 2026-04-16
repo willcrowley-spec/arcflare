@@ -102,6 +102,8 @@ export const api = {
     initiateSalesforce: () =>
       request<SalesforceInitiateResponse>('/connections/salesforce/initiate', { method: 'POST' }),
     sync: (id: string) => request<void>(`/connections/${id}/sync`, { method: 'POST' }),
+    reauth: (id: string) =>
+      request<SalesforceInitiateResponse>(`/connections/${id}/reauth`, { method: 'POST' }),
     delete: (id: string) => request<void>(`/connections/${id}`, { method: 'DELETE' }),
     syncStatus: (id: string) =>
       request<{

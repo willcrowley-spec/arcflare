@@ -61,6 +61,7 @@ export interface PlatformConnection {
   org_id?: string
   /** API field from FastAPI (`platform_type` on wire) */
   platform_type?: string
+  platform_org_id?: string | null
   instance_url?: string | null
   /** Legacy shape; prefer `platform_type` when present */
   platform?: PlatformType

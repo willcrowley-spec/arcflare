@@ -15,6 +15,7 @@ class ConnectionResponse(BaseModel):
     id: UUID
     org_id: UUID
     platform_type: str
+    platform_org_id: str | None = None
     instance_url: str | None
     status: str
     entity_count: int

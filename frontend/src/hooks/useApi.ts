@@ -37,6 +37,15 @@ export function useDeleteConnection() {
   })
 }
 
+export function useReauthConnection() {
+  return useMutation({
+    mutationFn: (id: string) => api.connections.reauth(id),
+    onSuccess: (data) => {
+      window.location.href = data.authorization_url
+    },
+  })
+}
+
 export function useMetadataObjects(
   params?: { page?: number; page_size?: number; q?: string },
   options?: { enabled?: boolean },

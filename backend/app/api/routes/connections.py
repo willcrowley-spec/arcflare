@@ -59,23 +59,75 @@ async def salesforce_callback(
     tokens = await sf_oauth.handle_callback(code)
     enc = encrypt_tokens(json.dumps(tokens), settings)
 
-    conn = PlatformConnection(
-        org_id=org.id,
-        platform_type="salesforce",
-        instance_url=tokens.get("instance_url"),
-        oauth_tokens_encrypted=enc,
-        status="connected",
-        entity_count=0,
-        last_sync_at=None,
-        sync_config_json={},
+    # Extract Salesforce org ID from the token "id" URL
+    # Format: https://login.salesforce.com/id/00Dxx.../005xx...
+    sf_org_id = ""
+    id_url = tokens.get("id", "")
+    if "/id/" in id_url:
+        parts = id_url.split("/id/")[1].split("/")
+        sf_org_id = parts[0] if parts else ""
+
+    # Upsert: find existing connection for this SF org, or create new
+    existing = await db.execute(
+        select(PlatformConnection).where(
+            PlatformConnection.org_id == org.id,
+            PlatformConnection.platform_type == "salesforce",
+            PlatformConnection.platform_org_id == sf_org_id,
+        )
     )
-    db.add(conn)
+    conn = existing.scalar_one_or_none()
+
+    if conn:
+        conn.oauth_tokens_encrypted = enc
+        conn.instance_url = tokens.get("instance_url")
+        conn.status = "connected"
+    else:
+        conn = PlatformConnection(
+            org_id=org.id,
+            platform_type="salesforce",
+            platform_org_id=sf_org_id,
+            instance_url=tokens.get("instance_url"),
+            oauth_tokens_encrypted=enc,
+            status="connected",
+            entity_count=0,
+            last_sync_at=None,
+            sync_config_json={},
+        )
+        db.add(conn)
+
     await db.commit()
+    await db.refresh(conn)
     sync_metadata_task.delay(str(conn.id))
     return RedirectResponse(
         url=f"{settings.FRONTEND_URL}/#/analysis?connected=salesforce",
         status_code=status.HTTP_302_FOUND,
     )
+
+
+@router.post("/{connection_id}/reauth", status_code=status.HTTP_200_OK)
+async def reauth_connection(
+    connection_id: UUID,
+    org: CurrentOrg,
+    user: CurrentUserDep,
+    db: DbSession,
+) -> dict[str, str]:
+    """Start OAuth re-authentication for an existing connection."""
+    del user
+    conn = await db.get(PlatformConnection, connection_id)
+    if conn is None or conn.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    if conn.platform_type != "salesforce":
+        raise HTTPException(status_code=400, detail=f"Re-auth not yet supported for {conn.platform_type}")
+
+    payload = {
+        "clerk_org_id": org.clerk_org_id,
+        "ts": datetime.now(tz=UTC).isoformat(),
+        "connection_id": str(connection_id),
+    }
+    oauth_state = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    url, _ = sf_oauth.generate_auth_url(oauth_state=oauth_state)
+    return {"authorization_url": url, "state": oauth_state}
 
 
 @router.get("/", response_model=ConnectionList)

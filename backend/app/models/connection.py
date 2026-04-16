@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, func, text
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 class PlatformConnection(Base):
     __tablename__ = "platform_connections"
+    __table_args__ = (
+        UniqueConstraint("org_id", "platform_type", "platform_org_id", name="uq_connection_platform_org"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -29,6 +32,7 @@ class PlatformConnection(Base):
         index=True,
     )
     platform_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    platform_org_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     instance_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     oauth_tokens_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="pending")

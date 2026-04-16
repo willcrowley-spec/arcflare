@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   FileText,
   GitBranch,
+  KeyRound,
   Layers,
   Link2,
   Package,
@@ -20,6 +21,7 @@ import { api } from '@/api/client'
 import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { SearchBar } from '@/components/SearchBar'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ConnectPlatformModal } from '@/components/ConnectPlatformModal'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import { SyncProgressPanel } from '@/components/SyncProgressPanel'
 import {
@@ -30,6 +32,7 @@ import {
   useMetadataComponents,
   useMetadataObjects,
   useMetadataSummary,
+  useReauthConnection,
   useSyncConnection,
   useSyncProgress,
 } from '@/hooks/useApi'
@@ -209,6 +212,7 @@ export default function AnalysisPage() {
   const [q, setQ] = useState('')
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const [showConnectModal, setShowConnectModal] = useState(false)
   const qc = useQueryClient()
   const syncProgressQuery = useSyncProgress(activeSyncId)
 
@@ -216,6 +220,7 @@ export default function AnalysisPage() {
   const initiateSalesforce = useInitiateSalesforce()
   const syncConnection = useSyncConnection()
   const deleteConnection = useDeleteConnection()
+  const reauthConnection = useReauthConnection()
 
   const connections = connectionsQuery.data?.items ?? []
 
@@ -346,13 +351,26 @@ export default function AnalysisPage() {
     })
   }, [connections])
 
-  const onConnectSalesforce = useCallback(() => {
-    initiateSalesforce.mutate(undefined, {
-      onSuccess: (data) => {
-        window.location.href = data.authorization_url
-      },
-    })
-  }, [initiateSalesforce])
+  const onSelectPlatform = useCallback(
+    (platformId: string) => {
+      if (platformId === 'salesforce') {
+        initiateSalesforce.mutate(undefined, {
+          onSuccess: (data) => {
+            window.location.href = data.authorization_url
+          },
+        })
+      }
+      setShowConnectModal(false)
+    },
+    [initiateSalesforce],
+  )
+
+  const onReauth = useCallback(
+    (id: string) => {
+      reauthConnection.mutate(id)
+    },
+    [reauthConnection],
+  )
 
   const onSync = useCallback(
     (id: string) => {
@@ -733,11 +751,11 @@ export default function AnalysisPage() {
     <button
       type="button"
       disabled={initiateSalesforce.isPending}
-      onClick={onConnectSalesforce}
+      onClick={() => setShowConnectModal(true)}
       className="inline-flex items-center justify-center gap-2 self-start rounded-lg bg-navy-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm ring-1 ring-navy-900/10 hover:bg-navy-800 disabled:opacity-60"
     >
       <Link2 className="h-4 w-4" />
-      {initiateSalesforce.isPending ? 'Connecting…' : '+ Connect Salesforce'}
+      {initiateSalesforce.isPending ? 'Connecting…' : '+ Add Connection'}
     </button>
   )
 
@@ -880,6 +898,13 @@ export default function AnalysisPage() {
         </div>
         {connectButton}
       </div>
+
+      <ConnectPlatformModal
+        open={showConnectModal}
+        onClose={() => setShowConnectModal(false)}
+        onSelectPlatform={onSelectPlatform}
+        connecting={initiateSalesforce.isPending}
+      />
 
       {initiateSalesforce.isError && (
         <p className="text-sm text-red-600">
@@ -1077,6 +1102,15 @@ export default function AnalysisPage() {
                     >
                       <RefreshCw className={clsx('h-3.5 w-3.5', syncingThis && 'animate-spin')} />
                       {syncingThis ? 'Syncing…' : 'Sync'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reauthConnection.isPending}
+                      onClick={() => onReauth(String(c.id))}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      Re-authenticate
                     </button>
                     <button
                       type="button"
