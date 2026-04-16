@@ -8,6 +8,7 @@ import json
 import logging
 import urllib.parse
 from datetime import UTC, datetime
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -575,7 +576,7 @@ def pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UICo
 async def sync_metadata(
     connection_id: UUID,
     db: AsyncSession,
-    progress_callback: callable | None = None,
+    progress_callback: Callable | None = None,
 ) -> int:
     """Full metadata sync for a Salesforce connection.
 
