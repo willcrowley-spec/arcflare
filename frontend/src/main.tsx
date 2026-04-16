@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import { ClerkProvider, useAuth } from '@clerk/clerk-react'
@@ -8,6 +8,8 @@ import './index.css'
 import { setApiTokenGetter } from '@/api/client'
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || ''
+export const clerkEnabled = !!clerkPubKey
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 })
@@ -27,15 +29,24 @@ function ApiTokenBridge() {
   return null
 }
 
+function AuthShell({ children }: { children: ReactNode }) {
+  if (!clerkEnabled) return <>{children}</>
+  return (
+    <ClerkProvider publishableKey={clerkPubKey}>
+      <ApiTokenBridge />
+      {children}
+    </ClerkProvider>
+  )
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ClerkProvider publishableKey={clerkPubKey}>
+    <AuthShell>
       <QueryClientProvider client={queryClient}>
         <HashRouter>
-          <ApiTokenBridge />
           <App />
         </HashRouter>
       </QueryClientProvider>
-    </ClerkProvider>
+    </AuthShell>
   </StrictMode>,
 )

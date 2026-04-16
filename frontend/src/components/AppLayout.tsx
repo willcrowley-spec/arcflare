@@ -1,7 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/clerk-react'
-import { Bot, Bell, Settings } from 'lucide-react'
+import { Bot, Bell, Settings, User } from 'lucide-react'
 import clsx from 'clsx'
+import { clerkEnabled } from '@/main'
 
 const nav = [
   { to: '/analysis', label: 'Analysis' },
@@ -73,25 +74,33 @@ export function AppLayout() {
             >
               <Settings className="h-5 w-5" />
             </button>
-            <SignedIn>
-              <UserButton
-                appearance={{
-                  elements: {
-                    userButtonAvatarBox: 'h-9 w-9 ring-2 ring-white/20',
-                  },
-                }}
-              />
-            </SignedIn>
-            <SignedOut>
-              <SignInButton mode="modal">
-                <button
-                  type="button"
-                  className="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 hover:bg-white/15"
-                >
-                  Sign in
-                </button>
-              </SignInButton>
-            </SignedOut>
+            {clerkEnabled ? (
+              <>
+                <SignedIn>
+                  <UserButton
+                    appearance={{
+                      elements: {
+                        userButtonAvatarBox: 'h-9 w-9 ring-2 ring-white/20',
+                      },
+                    }}
+                  />
+                </SignedIn>
+                <SignedOut>
+                  <SignInButton mode="modal">
+                    <button
+                      type="button"
+                      className="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 hover:bg-white/15"
+                    >
+                      Sign in
+                    </button>
+                  </SignInButton>
+                </SignedOut>
+              </>
+            ) : (
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 ring-2 ring-white/20">
+                <User className="h-5 w-5 text-slate-200" />
+              </span>
+            )}
           </div>
         </div>
         <div className="border-t border-white/10 px-6 py-2 md:hidden">
