@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_tokens
 from app.models.connection import PlatformConnection
+from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject
+from app.models.organization import Organization
 from app.services.connectors.base import (
     AutomationMeta,
     PermissionMeta,
@@ -614,9 +616,9 @@ async def sync_metadata(
     _progress("validation_rules", "pulling", 0)
 
     automations = pull_all_automations(sf)
-    flow_count = sum(1 for a in automations if a.automation_type in ("flow", "process_builder"))
-    trigger_count = sum(1 for a in automations if a.automation_type == "trigger")
-    vr_count = sum(1 for a in automations if a.automation_type == "validation_rule")
+    flow_count = sum(1 for a in automations if a.automation_type in ("flow", "process_builder") and a.is_active)
+    trigger_count = sum(1 for a in automations if a.automation_type == "trigger" and a.is_active)
+    vr_count = sum(1 for a in automations if a.automation_type == "validation_rule" and a.is_active)
     _progress("flows", "done", flow_count)
     _progress("triggers", "done", trigger_count)
     _progress("validation_rules", "done", vr_count)
@@ -675,6 +677,8 @@ async def sync_metadata(
             )
 
     for auto in automations:
+        if not auto.is_active:
+            continue
         rel = auto.related_objects[0] if auto.related_objects else None
         db.add(
             MetadataAutomation(
@@ -696,6 +700,7 @@ async def sync_metadata(
     _progress("fields", "done", sum(o.field_count for o in objects))
     _progress("apex_classes", "pulling", 0)
     apex_classes = pull_apex_classes(sf)
+    apex_classes = [ac for ac in apex_classes if ac.get("Status") != "Deleted"]
     for ac in apex_classes:
         db.add(
             MetadataComponent(
@@ -803,6 +808,70 @@ async def sync_metadata(
     except Exception as e:
         logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, e)
     _progress("user_velocity", "done", 1)
+
+    _progress("entities", "pulling", 0)
+    try:
+        from app.services.entities.profiler import sync_from_salesforce
+        entity_count = await sync_from_salesforce(org_id, connection_id, db)
+    except Exception as e:
+        logger.warning("entity_sync_failed connection=%s error=%s", connection_id, e)
+        entity_count = 0
+    _progress("entities", "done", entity_count)
+
+    try:
+        org = await db.get(Organization, org_id)
+        if org is not None:
+            from app.services.salesforce.licensing import pull_org_info as _pull_org_info
+            org_info = _pull_org_info(sf)
+            sf_org_name = org_info.get("Name", "")
+
+            lic_stmt = select(OrgLicenseSnapshot).where(
+                OrgLicenseSnapshot.org_id == org_id
+            ).order_by(OrgLicenseSnapshot.snapshot_at.desc()).limit(1)
+            lic_snap = (await db.execute(lic_stmt)).scalar_one_or_none()
+
+            vel_stmt = select(UserVelocitySnapshot).where(
+                UserVelocitySnapshot.org_id == org_id
+            ).order_by(UserVelocitySnapshot.snapshot_at.desc()).limit(1)
+            vel_snap = (await db.execute(vel_stmt)).scalar_one_or_none()
+
+            pkg_rows = await db.execute(
+                select(MetadataComponent.label).where(
+                    MetadataComponent.org_id == org_id,
+                    MetadataComponent.component_category == "installed_package",
+                )
+            )
+            top_packages = [r[0] for r in pkg_rows.all() if r[0]]
+
+            profile_count = 0
+            role_count = 0
+            if vel_snap:
+                role_count = len(getattr(vel_snap, "by_role_json", {}) or {})
+                profile_count = len(getattr(vel_snap, "by_profile_json", {}) or {})
+
+            settings: dict[str, Any] = {
+                "sf_org_name": sf_org_name,
+                "sf_org_id": org_info.get("Id", ""),
+                "edition": org_info.get("OrganizationType", ""),
+                "is_sandbox": bool(org_info.get("IsSandbox", False)),
+                "instance_name": org_info.get("InstanceName", ""),
+                "instance_url": tokens.get("instance_url", ""),
+                "active_users": getattr(vel_snap, "active_user_count", 0) if vel_snap else 0,
+                "estimated_annual_spend": float(getattr(lic_snap, "estimated_annual_spend", 0) or 0) if lic_snap else 0,
+                "top_packages": top_packages[:20],
+                "license_summary": {
+                    "total": sum(l.get("total", 0) for l in (getattr(lic_snap, "licenses_json", []) or [])) if lic_snap else 0,
+                    "used": sum(l.get("used", 0) for l in (getattr(lic_snap, "licenses_json", []) or [])) if lic_snap else 0,
+                },
+                "role_count": role_count,
+                "profile_count": profile_count,
+            }
+            org.settings_json = settings
+
+            if sf_org_name and (not org.name or org.name == org.clerk_org_id):
+                org.name = sf_org_name
+    except Exception as e:
+        logger.warning("org_enrichment_failed connection=%s error=%s", connection_id, e)
 
     connection.last_sync_at = datetime.now(tz=UTC)
     connection.entity_count = len(objects)

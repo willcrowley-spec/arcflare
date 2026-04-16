@@ -28,6 +28,7 @@ const PHASE_LABELS: Record<string, string> = {
   installed_packages: 'Packages',
   licensing: 'Licensing',
   user_velocity: 'User Velocity',
+  entities: 'Org Hierarchy',
   vectorization: 'Vectorization',
 }
 

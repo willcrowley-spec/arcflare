@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 
@@ -9,6 +9,20 @@ export type ColumnDef<T> = {
   className?: string
   cell: (row: T) => React.ReactNode
   sortValue?: (row: T) => string | number
+}
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i)
+  const pages: (number | 'ellipsis')[] = [0]
+  const start = Math.max(1, current - 1)
+  const end = Math.min(total - 2, current + 1)
+  if (start > 1) pages.push('ellipsis')
+  for (let i = start; i <= end; i++) pages.push(i)
+  if (end < total - 2) pages.push('ellipsis')
+  pages.push(total - 1)
+  return [...new Set(pages)]
 }
 
 type DataTableProps<T> = {
@@ -38,6 +52,12 @@ export function DataTable<T>({
   const [sortCol, setSortCol] = React.useState<string | null>(null)
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
   const [page, setPage] = React.useState(0)
+  const [userPageSize, setUserPageSize] = React.useState(pageSize)
+
+  const pageSizeChoices = React.useMemo(() => {
+    const set = new Set<number>([...PAGE_SIZE_OPTIONS, pageSize])
+    return Array.from(set).sort((a, b) => a - b)
+  }, [pageSize])
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -69,10 +89,13 @@ export function DataTable<T>({
   }, [columns, filtered, sortCol, sortDir])
 
   const total = sorted.length
-  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const pageCount = Math.max(1, Math.ceil(total / userPageSize))
   const safePage = Math.min(page, pageCount - 1)
-  const start = safePage * pageSize
-  const slice = sorted.slice(start, start + pageSize)
+  const start = safePage * userPageSize
+  const slice = sorted.slice(start, start + userPageSize)
+  const pageNumbers = getPageNumbers(safePage, pageCount)
+  const isFirstPage = safePage <= 0
+  const isLastPage = safePage >= pageCount - 1
 
   React.useEffect(() => {
     setPage(0)
@@ -98,7 +121,7 @@ export function DataTable<T>({
           <div />
         )}
         <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-          Viewing {total === 0 ? 0 : start + 1}-{Math.min(start + pageSize, total)} of {total} {resourceName}
+          Viewing {total === 0 ? 0 : start + 1}-{Math.min(start + userPageSize, total)} of {total} {resourceName}
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -153,26 +176,94 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={() => setPage((p) => Math.max(0, p - 1))}
-          disabled={safePage <= 0}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span className="text-xs font-medium text-slate-500">
-          Page {safePage + 1} / {pageCount}
-        </span>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-          disabled={safePage >= pageCount - 1}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+      <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+          <p className="text-sm text-slate-600">
+            Showing{' '}
+            <span className="font-medium text-slate-800">
+              {total === 0 ? 0 : start + 1}-{Math.min(start + userPageSize, total)}
+            </span>{' '}
+            of <span className="font-medium text-slate-800">{total}</span> {resourceName}
+          </p>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-600">
+            <span className="whitespace-nowrap">Rows per page</span>
+            <select
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-800"
+              value={userPageSize}
+              onChange={(e) => {
+                setUserPageSize(Number(e.target.value))
+                setPage(0)
+              }}
+            >
+              {pageSizeChoices.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <button
+            type="button"
+            aria-label="First page"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setPage(0)}
+            disabled={isFirstPage}
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Previous page"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={isFirstPage}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          {pageNumbers.map((item, idx) =>
+            item === 'ellipsis' ? (
+              <span key={`e-${idx}`} className="px-1 text-slate-400" aria-hidden>
+                ...
+              </span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                className={clsx(
+                  'h-8 w-8 rounded-lg text-sm font-medium',
+                  item === safePage
+                    ? 'bg-navy-800 text-white'
+                    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+                )}
+                onClick={() => setPage(item)}
+                aria-label={`Page ${item + 1}`}
+                aria-current={item === safePage ? 'page' : undefined}
+              >
+                {item + 1}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            aria-label="Next page"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            disabled={isLastPage}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            aria-label="Last page"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setPage(pageCount - 1)}
+            disabled={isLastPage}
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   )

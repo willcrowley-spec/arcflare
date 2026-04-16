@@ -123,19 +123,23 @@ export default function OrganizationPage() {
   const cost = costModelQuery.data as CostModelData | undefined
 
   const settings = profile?.settings_json
-  const industry =
-    pickString(settings, ['industry', 'sector', 'vertical']) ||
-    (typeof profile?.plan_tier === 'string' && profile.plan_tier ? profile.plan_tier : undefined) ||
-    'Not specified'
-
-  const hq = pickString(settings, ['hq', 'headquarters', 'headquarter', 'city', 'address']) || '—'
+  const sfOrgName = pickString(settings, ['sf_org_name']) || profile?.name
+  const edition = pickString(settings, ['edition'])
+  const isSandbox = settings?.is_sandbox === true
+  const instanceUrl = pickString(settings, ['instance_url'])
+  const activeUsers = typeof settings?.active_users === 'number' ? settings.active_users : null
+  const annualSpend = typeof settings?.estimated_annual_spend === 'number' ? settings.estimated_annual_spend : null
+  const licenseSummary = settings?.license_summary as { total?: number; used?: number } | undefined
+  const roleCount = typeof settings?.role_count === 'number' ? settings.role_count : null
+  const profileCount = typeof settings?.profile_count === 'number' ? settings.profile_count : null
+  const topPackages = Array.isArray(settings?.top_packages) ? (settings.top_packages as string[]) : []
 
   const entityItems = (entitiesQuery.data?.items ?? []) as EntityRow[]
   const entityTotal = entitiesQuery.data?.total ?? 0
   const headcountListed = entityItems.reduce((acc, e) => acc + (Number(e.headcount) || 0), 0)
   const employeesDisplay =
     entityTotal === 0
-      ? '—'
+      ? (activeUsers != null ? formatInt(activeUsers) : '—')
       : entityItems.length >= entityTotal
         ? formatInt(headcountListed)
         : `${formatInt(headcountListed)}+`
@@ -145,28 +149,8 @@ export default function OrganizationPage() {
       ? String(cost.assumptions.model)
       : 'Entity-linked cost signals'
 
-  const queries = [profileQuery, hierarchyQuery, costModelQuery, entitiesQuery] as const
-
-  const loading = queries.some((q) => q.isLoading)
-  const errored = queries.filter((q) => q.isError)
-  const hasNon404Error = errored.some((q) => {
-    const s = getHttpStatus(q.error)
-    return s === undefined || s !== 404
-  })
-  const has404 = errored.some((q) => getHttpStatus(q.error) === 404)
-
-  const settledEmptyOrg =
-    !loading &&
-    !hasNon404Error &&
-    profileQuery.isSuccess &&
-    hierarchyQuery.isSuccess &&
-    entitiesQuery.isSuccess &&
-    roots.length === 0 &&
-    entityTotal === 0
-
-  const showEmpty = has404 || settledEmptyOrg
-
-  const firstErrorMessage = errored[0]?.error instanceof Error ? errored[0].error.message : undefined
+  const profileLoading = profileQuery.isLoading
+  const profileError = profileQuery.isError && getHttpStatus(profileQuery.error) !== 404
 
   return (
     <div className="space-y-8">
@@ -177,16 +161,10 @@ export default function OrganizationPage() {
         </p>
       </div>
 
-      {loading ? (
+      {profileLoading ? (
         <LoadingState message="Loading organization data..." />
-      ) : hasNon404Error ? (
-        <ErrorState message={firstErrorMessage} />
-      ) : showEmpty ? (
-        <EmptyState
-          icon={<Building2 className="h-10 w-10" />}
-          title="No organization profile yet"
-          description="Connect a platform or import a CSV to get started."
-        />
+      ) : profileError ? (
+        <ErrorState message={profileQuery.error instanceof Error ? profileQuery.error.message : undefined} />
       ) : (
         <>
           <div className="grid gap-6 lg:grid-cols-3">
@@ -197,27 +175,65 @@ export default function OrganizationPage() {
                 </span>
                 <div>
                   <h2 className="text-lg font-semibold text-navy-900">Business Profile</h2>
-                  <p className="text-xs text-slate-500">Synced snapshot</p>
+                  <p className="text-xs text-slate-500">Synced from Salesforce</p>
                 </div>
               </div>
               <dl className="mt-6 space-y-4 text-sm">
                 <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
                   <dt className="text-slate-500">Company</dt>
-                  <dd className="font-medium text-slate-900">{profile?.name ?? '—'}</dd>
+                  <dd className="font-medium text-slate-900">{sfOrgName ?? '—'}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Industry</dt>
-                  <dd className="font-medium text-slate-900">{industry}</dd>
+                  <dt className="text-slate-500">Edition</dt>
+                  <dd className="font-medium text-slate-900">
+                    {edition || '—'}
+                    {isSandbox && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Sandbox</span>}
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Employees</dt>
+                  <dt className="text-slate-500">Active Users</dt>
                   <dd className="font-medium text-slate-900">{employeesDisplay}</dd>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <dt className="text-slate-500">Headquarters</dt>
-                  <dd className="font-medium text-slate-900">{hq}</dd>
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                  <dt className="text-slate-500">Roles / Profiles</dt>
+                  <dd className="font-medium text-slate-900">
+                    {roleCount != null ? roleCount : '—'} / {profileCount != null ? profileCount : '—'}
+                  </dd>
                 </div>
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                  <dt className="text-slate-500">Est. Annual Spend</dt>
+                  <dd className="font-medium text-slate-900">{annualSpend ? formatUsdCompact(annualSpend) : '—'}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
+                  <dt className="text-slate-500">Licenses</dt>
+                  <dd className="font-medium text-slate-900">
+                    {licenseSummary ? `${formatInt(licenseSummary.used)} / ${formatInt(licenseSummary.total)}` : '—'}
+                  </dd>
+                </div>
+                {instanceUrl && (
+                  <div className="flex items-center justify-between gap-4">
+                    <dt className="text-slate-500">Instance</dt>
+                    <dd className="font-medium text-slate-900 truncate max-w-[180px]">
+                      <a href={instanceUrl} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline">
+                        {pickString(settings, ['instance_name']) || instanceUrl.replace('https://', '')}
+                      </a>
+                    </dd>
+                  </div>
+                )}
               </dl>
+              {topPackages.length > 0 && (
+                <div className="mt-5 border-t border-slate-100 pt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Installed Packages</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {topPackages.slice(0, 12).map((pkg) => (
+                      <span key={pkg} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">{pkg}</span>
+                    ))}
+                    {topPackages.length > 12 && (
+                      <span className="text-xs text-slate-400">+{topPackages.length - 12} more</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </section>
 
             <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">

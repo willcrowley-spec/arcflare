@@ -20,6 +20,7 @@ PHASES = [
     "installed_packages",
     "licensing",
     "user_velocity",
+    "entities",
     "vectorization",
 ]
 
