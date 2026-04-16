@@ -79,6 +79,8 @@ class UserVelocitySnapshot(Base):
     deactivated_this_month: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     by_role_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     by_profile_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    by_created_month_json: Mapped[dict] = mapped_column(JSONB, nullable=True, server_default=text("'{}'::jsonb"))
+    system_user_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     organization: Mapped["Organization"] = relationship("Organization")
     connection: Mapped["PlatformConnection"] = relationship("PlatformConnection")

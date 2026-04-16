@@ -107,6 +107,8 @@ class UserVelocityResponse(BaseModel):
     active_user_count: int
     internal_active_count: int = 0
     external_active_count: int = 0
+    system_user_count: int = 0
+    by_created_month_json: dict = {}
     new_users_this_month: int
     deactivated_this_month: int
     by_role_json: dict
