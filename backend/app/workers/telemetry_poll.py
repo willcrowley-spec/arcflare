@@ -16,9 +16,8 @@ def poll_telemetry_task(connection_id: str) -> str:
     async def _run() -> int:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
-            n = await poll_record_counts(UUID(connection_id), session)
-            await session.commit()
-            return n
+            # poll_record_counts commits after inserting telemetry rows.
+            return await poll_record_counts(UUID(connection_id), session)
 
     asyncio.run(_run())
     return connection_id

@@ -35,6 +35,13 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str = Field(default="")
     ANTHROPIC_API_KEY: str = Field(default="")
+    GEMINI_API_KEY: str = Field(default="")
+
+    LLM_PROVIDER: str = Field(default="anthropic", description="openai, anthropic, or gemini")
+    LLM_LITE_MODEL: str = Field(default="")
+    LLM_FAST_MODEL: str = Field(default="")
+    LLM_STRONG_MODEL: str = Field(default="")
+    LLM_RATE_DELAY: float = Field(default=0.0, description="Seconds between LLM calls")
 
     SALESFORCE_CLIENT_ID: str = Field(default="")
     SALESFORCE_CLIENT_SECRET: str = Field(default="")

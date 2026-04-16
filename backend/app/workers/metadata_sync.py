@@ -17,9 +17,8 @@ def sync_metadata_task(connection_id: str) -> str:
     async def _run() -> int:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
-            count = await sync_metadata(UUID(connection_id), session)
-            await session.commit()
-            return count
+            # sync_metadata commits the session after persisting.
+            return await sync_metadata(UUID(connection_id), session)
 
     asyncio.run(_run())
     return connection_id

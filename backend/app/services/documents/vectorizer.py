@@ -1,5 +1,6 @@
 """Embeddings and vector search over document chunks."""
 
+import asyncio
 from uuid import UUID
 
 from sqlalchemy import text
@@ -7,6 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentChunk
 from app.services.ai.router import get_embedding_provider
+
+_EMBED_MODEL = "text-embedding-3-large"
+
+
+async def _embed(client, text: str) -> list[float]:
+    def _sync() -> list[float]:
+        r = client.embeddings.create(model=_EMBED_MODEL, input=text)
+        return list(r.data[0].embedding)
+
+    return await asyncio.to_thread(_sync)
 
 
 async def vectorize_chunks(
@@ -21,7 +32,7 @@ async def vectorize_chunks(
     out: list[DocumentChunk] = []
     for c in chunks:
         content = c.get("content") or ""
-        embedding = await provider.embed(content) if content.strip() else [0.0] * 3072
+        embedding = await _embed(provider, content) if content.strip() else [0.0] * 3072
         row = DocumentChunk(
             document_id=document_id,
             chunk_index=int(c["chunk_index"]),
@@ -49,7 +60,7 @@ async def search_documents(
     Returns dict rows suitable for DocumentSearchResult schema mapping.
     """
     provider = get_embedding_provider()
-    qvec = await provider.embed(query)
+    qvec = await _embed(provider, query)
     vec_str = "[" + ",".join(str(float(x)) for x in qvec) + "]"
     sql = text(
         """
