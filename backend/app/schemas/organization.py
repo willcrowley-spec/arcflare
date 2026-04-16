@@ -79,3 +79,33 @@ class HierarchyNode(BaseModel):
 
 class HierarchyResponse(BaseModel):
     roots: list[HierarchyNode]
+
+
+class LicenseSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    org_id: UUID
+    connection_id: UUID
+    snapshot_at: datetime
+    edition: str | None
+    is_sandbox: bool
+    licenses_json: list
+    package_licenses_json: list
+    psl_json: list
+    limits_json: dict
+    estimated_annual_spend: float | None
+
+
+class UserVelocityResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    org_id: UUID
+    connection_id: UUID
+    snapshot_at: datetime
+    active_user_count: int
+    new_users_this_month: int
+    deactivated_this_month: int
+    by_role_json: dict
+    by_profile_json: dict

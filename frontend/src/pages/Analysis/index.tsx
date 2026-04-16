@@ -1,15 +1,22 @@
 import { useCallback, useMemo, useState } from 'react'
+import { useQueries } from '@tanstack/react-query'
 import {
+  BarChart3,
+  Code,
   Database,
   FileSpreadsheet,
   FileText,
+  GitBranch,
   Layers,
   Link2,
+  Package,
   RefreshCw,
   Search as SearchIcon,
   Trash2,
+  Zap,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { api } from '@/api/client'
 import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { SearchBar } from '@/components/SearchBar'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -18,14 +25,17 @@ import {
   useConnections,
   useDeleteConnection,
   useInitiateSalesforce,
+  useMetadataAutomation,
+  useMetadataComponents,
   useMetadataObjects,
+  useMetadataSummary,
   useSyncConnection,
 } from '@/hooks/useApi'
-import type { MetadataObject, PlatformConnection } from '@/types'
+import type { MetadataAutomation, MetadataComponent, MetadataObject, MetadataSummary, PlatformConnection } from '@/types'
 
 type SourceFilter = 'ALL' | 'SALESFORCE' | 'HUBSPOT' | 'NETSUITE' | 'MULESOFT' | 'CONFLUENCE'
 
-type TabKey = 'ALL' | 'Metadata' | 'DATA' | 'DOCS'
+type TypeFilter = 'ALL' | 'OBJECTS' | 'AUTOMATIONS' | 'APEX' | 'REPORTS' | 'PERMISSIONS' | 'PACKAGES'
 
 type AnalysisRow = MetadataObject & {
   kind: 'Metadata' | 'Data Record' | 'Business Doc'
@@ -106,14 +116,6 @@ function rowKind(row: MetadataObject): AnalysisRow['kind'] {
   return 'Metadata'
 }
 
-function tabMatches(tab: TabKey, kind: AnalysisRow['kind']): boolean {
-  if (tab === 'ALL') return true
-  if (tab === 'Metadata') return kind === 'Metadata'
-  if (tab === 'DATA') return kind === 'Data Record'
-  if (tab === 'DOCS') return kind === 'Business Doc'
-  return true
-}
-
 function connectionIdsForSource(connections: PlatformConnection[], source: SourceFilter): string[] | null {
   if (source === 'ALL') return null
   return connections
@@ -121,9 +123,28 @@ function connectionIdsForSource(connections: PlatformConnection[], source: Sourc
     .map((c) => String(c.id))
 }
 
+function filterRowsBySource<T extends { connection_id?: string }>(
+  rows: T[],
+  connections: PlatformConnection[],
+  source: SourceFilter,
+): T[] {
+  if (source === 'ALL') return rows
+  const allowed = connectionIdsForSource(connections, source)
+  if (!allowed || allowed.length === 0) return []
+  return rows.filter((r) => r.connection_id && allowed.includes(String(r.connection_id)))
+}
+
 function formatUnknownError(error: unknown, fallback: string): string {
   if (error instanceof Error) return error.message
   return fallback
+}
+
+function humanizeSlug(s: string): string {
+  return s
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
 }
 
 function KindIcon({ kind }: { kind: AnalysisRow['kind'] }) {
@@ -174,8 +195,14 @@ function useAnalysisRows(
   }, [connections, items])
 }
 
+function objectPermissionsCount(meta: Record<string, unknown>): number {
+  const op = meta.object_permissions
+  if (Array.isArray(op)) return op.length
+  return 0
+}
+
 export default function AnalysisPage() {
-  const [tab, setTab] = useState<TabKey>('ALL')
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL')
   const [source, setSource] = useState<SourceFilter>('ALL')
   const [q, setQ] = useState('')
   const [syncingId, setSyncingId] = useState<string | null>(null)
@@ -187,26 +214,112 @@ export default function AnalysisPage() {
 
   const connections = connectionsQuery.data?.items ?? []
   const hasConnections = connections.length > 0
+  const isObjectsView = typeFilter === 'ALL' || typeFilter === 'OBJECTS'
 
-  const metadataQuery = useMetadataObjects({
-    page: 1,
-    page_size: 200,
-    q: q.trim() || undefined,
+  const summaryQuery = useMetadataSummary({ enabled: hasConnections })
+  const summary = summaryQuery.data as MetadataSummary | undefined
+
+  const qs = q.trim() || undefined
+
+  const metadataQuery = useMetadataObjects(
+    {
+      page: 1,
+      page_size: 200,
+      q: qs,
+    },
+    { enabled: hasConnections && isObjectsView },
+  )
+
+  const automationQuery = useMetadataAutomation(
+    { page: 1, page_size: 200 },
+    { enabled: hasConnections && typeFilter === 'AUTOMATIONS' },
+  )
+
+  const apexQuery = useMetadataComponents(
+    { page: 1, page_size: 200, component_category: 'apex_class', q: qs },
+    { enabled: hasConnections && typeFilter === 'APEX' },
+  )
+
+  const packagesQuery = useMetadataComponents(
+    { page: 1, page_size: 200, component_category: 'installed_package', q: qs },
+    { enabled: hasConnections && typeFilter === 'PACKAGES' },
+  )
+
+  const reportsDashboardQueries = useQueries({
+    queries:
+      hasConnections && typeFilter === 'REPORTS'
+        ? (['report', 'dashboard'] as const).map((component_category) => ({
+            queryKey: ['metadata', 'components', { page: 1, page_size: 200, component_category, q: qs }],
+            queryFn: () =>
+              api.metadata.listComponents({ page: 1, page_size: 200, component_category, q: qs }),
+          }))
+        : [],
+  })
+
+  const permissionsQueries = useQueries({
+    queries:
+      hasConnections && typeFilter === 'PERMISSIONS'
+        ? (['profile', 'permission_set'] as const).map((component_category) => ({
+            queryKey: ['metadata', 'components', { page: 1, page_size: 200, component_category, q: qs }],
+            queryFn: () =>
+              api.metadata.listComponents({ page: 1, page_size: 200, component_category, q: qs }),
+          }))
+        : [],
   })
 
   const analysisRows = useAnalysisRows(metadataQuery.data?.items, connections)
 
-  const filtered = useMemo(() => {
+  const filteredObjects = useMemo(() => {
     const allowedConnIds = connectionIdsForSource(connections, source)
     return analysisRows.filter((r) => {
-      if (!tabMatches(tab, r.kind)) return false
       if (allowedConnIds && allowedConnIds.length > 0) {
         if (!r.connection_id || !allowedConnIds.includes(String(r.connection_id))) return false
       }
       if (allowedConnIds && allowedConnIds.length === 0 && source !== 'ALL') return false
       return true
     })
-  }, [analysisRows, connections, source, tab])
+  }, [analysisRows, connections, source])
+
+  const automationRows = useMemo(() => {
+    const raw = automationQuery.data?.items ?? []
+    return filterRowsBySource(raw, connections, source).filter((a) => {
+      if (!qs) return true
+      const n = qs.toLowerCase()
+      return (
+        a.api_name.toLowerCase().includes(n) ||
+        (a.label ?? '').toLowerCase().includes(n) ||
+        a.automation_type.toLowerCase().includes(n)
+      )
+    })
+  }, [automationQuery.data?.items, connections, source, qs])
+
+  const apexRows = useMemo(
+    () => filterRowsBySource(apexQuery.data?.items ?? [], connections, source),
+    [apexQuery.data?.items, connections, source],
+  )
+
+  const packageRows = useMemo(
+    () => filterRowsBySource(packagesQuery.data?.items ?? [], connections, source),
+    [packagesQuery.data?.items, connections, source],
+  )
+
+  const reportRows = useMemo(() => {
+    const merged = reportsDashboardQueries.flatMap((query) => query.data?.items ?? [])
+    const byId = new Map<string, MetadataComponent>()
+    for (const row of merged) {
+      byId.set(row.id, row)
+    }
+    return filterRowsBySource([...byId.values()], connections, source)
+  }, [reportsDashboardQueries, connections, source])
+
+  const permissionRows = useMemo(() => {
+    const merged = permissionsQueries.flatMap((query) => query.data?.items ?? [])
+    const byId = new Map<string, MetadataComponent>()
+    for (const row of merged) {
+      byId.set(row.id, row)
+    }
+    return filterRowsBySource([...byId.values()], connections, source)
+  }, [permissionsQueries, connections, source])
 
   const anySyncInFlight = useMemo(() => {
     return connections.some((c) => {
@@ -243,7 +356,7 @@ export default function AnalysisPage() {
     [deleteConnection],
   )
 
-  const columns: ColumnDef<AnalysisRow>[] = useMemo(
+  const objectColumns: ColumnDef<AnalysisRow>[] = useMemo(
     () => [
       {
         id: 'name',
@@ -266,12 +379,7 @@ export default function AnalysisPage() {
         id: 'type',
         header: 'Type',
         sortValue: (r) => r.object_type ?? r.kind,
-        cell: (r) => (
-          <span className="text-slate-700">
-            {r.object_type ?? r.kind}
-            {r.is_custom ? <span className="ml-1 text-xs text-slate-400">(custom)</span> : null}
-          </span>
-        ),
+        cell: (r) => <span className="text-slate-700">{r.object_type ?? r.kind}</span>,
       },
       {
         id: 'platform',
@@ -327,12 +435,247 @@ export default function AnalysisPage() {
     [],
   )
 
-  const pageLoading = connectionsQuery.isLoading || (hasConnections && metadataQuery.isLoading)
-  const pageError = connectionsQuery.isError || metadataQuery.isError
+  const automationColumns: ColumnDef<MetadataAutomation>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        sortValue: (r) => r.api_name,
+        cell: (r) => (
+          <div>
+            <p className="font-medium text-slate-900">{r.label || r.api_name}</p>
+            <p className="font-mono text-xs text-slate-500">{r.api_name}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'type',
+        header: 'Type',
+        sortValue: (r) => r.automation_type,
+        cell: (r) => <span className="text-slate-700">{humanizeSlug(r.automation_type)}</span>,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        sortValue: (r) => r.status ?? '',
+        cell: (r) => <span className="text-slate-600">{r.status ?? '—'}</span>,
+      },
+      {
+        id: 'related',
+        header: 'Related object',
+        sortValue: (r) => r.related_object ?? '',
+        cell: (r) => <span className="text-slate-600">{r.related_object ?? '—'}</span>,
+      },
+    ],
+    [],
+  )
+
+  const apexColumns: ColumnDef<MetadataComponent>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        sortValue: (r) => r.api_name,
+        cell: (r) => (
+          <div>
+            <p className="font-medium text-slate-900">{r.label || r.api_name}</p>
+            <p className="font-mono text-xs text-slate-500">{r.api_name}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'version',
+        header: 'API version',
+        sortValue: (r) => Number(r.metadata_json?.api_version ?? 0),
+        cell: (r) => (
+          <span className="text-slate-700">{r.metadata_json?.api_version != null ? String(r.metadata_json.api_version) : '—'}</span>
+        ),
+      },
+      {
+        id: 'loc',
+        header: 'LOC',
+        sortValue: (r) => Number(r.metadata_json?.length_without_comments ?? 0),
+        cell: (r) => (
+          <span className="text-slate-700">
+            {r.metadata_json?.length_without_comments != null
+              ? Number(r.metadata_json.length_without_comments).toLocaleString()
+              : '—'}
+          </span>
+        ),
+      },
+    ],
+    [],
+  )
+
+  const reportColumns: ColumnDef<MetadataComponent>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        sortValue: (r) => r.api_name,
+        cell: (r) => (
+          <div>
+            <p className="font-medium text-slate-900">{r.label || r.api_name}</p>
+            <p className="font-mono text-xs text-slate-500">{r.api_name}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'type',
+        header: 'Type',
+        sortValue: (r) => r.component_category,
+        cell: (r) => <span className="text-slate-700">{humanizeSlug(r.component_category)}</span>,
+      },
+      {
+        id: 'description',
+        header: 'Description',
+        sortValue: (r) => String(r.metadata_json?.description ?? ''),
+        cell: (r) => (
+          <span className="line-clamp-2 text-sm text-slate-600">
+            {r.metadata_json?.description != null && String(r.metadata_json.description).trim() !== ''
+              ? String(r.metadata_json.description)
+              : '—'}
+          </span>
+        ),
+      },
+    ],
+    [],
+  )
+
+  const permissionColumns: ColumnDef<MetadataComponent>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        sortValue: (r) => r.api_name,
+        cell: (r) => (
+          <div>
+            <p className="font-medium text-slate-900">{r.label || r.api_name}</p>
+            <p className="font-mono text-xs text-slate-500">{r.api_name}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'type',
+        header: 'Type',
+        sortValue: (r) => r.component_category,
+        cell: (r) => <span className="text-slate-700">{humanizeSlug(r.component_category)}</span>,
+      },
+      {
+        id: 'objects',
+        header: 'Objects',
+        sortValue: (r) => objectPermissionsCount(r.metadata_json),
+        cell: (r) => (
+          <span className="text-slate-700">{objectPermissionsCount(r.metadata_json).toLocaleString()}</span>
+        ),
+      },
+    ],
+    [],
+  )
+
+  const packageColumns: ColumnDef<MetadataComponent>[] = useMemo(
+    () => [
+      {
+        id: 'name',
+        header: 'Name',
+        sortValue: (r) => r.label ?? r.api_name,
+        cell: (r) => (
+          <div>
+            <p className="font-medium text-slate-900">{r.label || r.api_name}</p>
+            <p className="font-mono text-xs text-slate-500">{r.api_name}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'namespace',
+        header: 'Namespace',
+        sortValue: (r) => String(r.metadata_json?.namespace ?? ''),
+        cell: (r) => <span className="text-slate-700">{String(r.metadata_json?.namespace ?? '—')}</span>,
+      },
+      {
+        id: 'version',
+        header: 'Version',
+        sortValue: (r) => String(r.metadata_json?.version ?? ''),
+        cell: (r) => <span className="text-slate-700">{String(r.metadata_json?.version ?? '—')}</span>,
+      },
+    ],
+    [],
+  )
+
+  const searchPlaceholder = useMemo(() => {
+    switch (typeFilter) {
+      case 'AUTOMATIONS':
+        return 'Search automations by name, label, or type…'
+      case 'APEX':
+        return 'Search Apex classes by API name or label…'
+      case 'REPORTS':
+        return 'Search reports and dashboards…'
+      case 'PERMISSIONS':
+        return 'Search profiles and permission sets…'
+      case 'PACKAGES':
+        return 'Search installed packages…'
+      default:
+        return 'Search objects by API name or label…'
+    }
+  }, [typeFilter])
+
+  const activeListLoading = useMemo(() => {
+    if (!hasConnections) return false
+    if (isObjectsView) return metadataQuery.isLoading
+    if (typeFilter === 'AUTOMATIONS') return automationQuery.isLoading
+    if (typeFilter === 'APEX') return apexQuery.isLoading
+    if (typeFilter === 'PACKAGES') return packagesQuery.isLoading
+    if (typeFilter === 'REPORTS') return reportsDashboardQueries.some((x) => x.isLoading)
+    if (typeFilter === 'PERMISSIONS') return permissionsQueries.some((x) => x.isLoading)
+    return false
+  }, [
+    hasConnections,
+    isObjectsView,
+    typeFilter,
+    metadataQuery.isLoading,
+    automationQuery.isLoading,
+    apexQuery.isLoading,
+    packagesQuery.isLoading,
+    reportsDashboardQueries,
+    permissionsQueries,
+  ])
+
+  const activeListError = useMemo(() => {
+    if (!hasConnections) return null
+    if (isObjectsView && metadataQuery.isError) return metadataQuery.error
+    if (typeFilter === 'AUTOMATIONS' && automationQuery.isError) return automationQuery.error
+    if (typeFilter === 'APEX' && apexQuery.isError) return apexQuery.error
+    if (typeFilter === 'PACKAGES' && packagesQuery.isError) return packagesQuery.error
+    if (typeFilter === 'REPORTS') {
+      const err = reportsDashboardQueries.find((x) => x.isError)?.error
+      if (err) return err
+    }
+    if (typeFilter === 'PERMISSIONS') {
+      const err = permissionsQueries.find((x) => x.isError)?.error
+      if (err) return err
+    }
+    return null
+  }, [
+    hasConnections,
+    isObjectsView,
+    typeFilter,
+    metadataQuery.isError,
+    metadataQuery.error,
+    automationQuery.isError,
+    automationQuery.error,
+    apexQuery.isError,
+    apexQuery.error,
+    packagesQuery.isError,
+    packagesQuery.error,
+    reportsDashboardQueries,
+    permissionsQueries,
+  ])
+
+  const pageLoading = connectionsQuery.isLoading || (hasConnections && isObjectsView && metadataQuery.isLoading)
+
+  const pageError = connectionsQuery.isError
   const pageErrorMessage = formatUnknownError(
-    connectionsQuery.isError
-      ? (connectionsQuery as { error?: unknown }).error
-      : (metadataQuery as { error?: unknown }).error,
+    connectionsQuery.isError ? (connectionsQuery as { error?: unknown }).error : undefined,
     'Request failed',
   )
 
@@ -378,6 +721,133 @@ export default function AnalysisPage() {
     </button>
   )
 
+  const renderObjectsTable = () => {
+    if (!hasConnections) return null
+    if (metadataQuery.isLoading) {
+      return (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-8 shadow-sm ring-1 ring-slate-900/5">
+          <LoadingState message="Loading metadata objects…" />
+        </div>
+      )
+    }
+    if (metadataQuery.isError) {
+      return (
+        <ErrorState
+          message={formatUnknownError((metadataQuery as { error?: unknown }).error, 'Failed to load metadata.')}
+        />
+      )
+    }
+    if (filteredObjects.length === 0 && anySyncInFlight) {
+      return (
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-8 shadow-sm ring-1 ring-amber-900/10">
+          <LoadingState message="Metadata sync is running — objects will appear here when indexing completes." />
+        </div>
+      )
+    }
+    if (filteredObjects.length === 0 && (metadataQuery.data?.items?.length ?? 0) === 0) {
+      return (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+          <p className="text-sm font-medium text-navy-900">No metadata indexed yet</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Run Sync on your Salesforce connection to pull describe metadata into Arcflare.
+          </p>
+        </div>
+      )
+    }
+    if (filteredObjects.length === 0) {
+      return (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+          <p className="text-sm font-medium text-navy-900">No metadata objects match your filters</p>
+          <p className="mt-1 text-sm text-slate-600">Try another search or source — or run Sync on your connection.</p>
+        </div>
+      )
+    }
+    return <DataTable columns={objectColumns} rows={filteredObjects} rowKey={(r) => r.id} pageSize={8} />
+  }
+
+  const renderSecondaryTable = () => {
+    if (!hasConnections) return null
+    if (activeListLoading) {
+      return (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-8 shadow-sm ring-1 ring-slate-900/5">
+          <LoadingState message="Loading rows…" />
+        </div>
+      )
+    }
+    if (activeListError) {
+      return <ErrorState message={formatUnknownError(activeListError, 'Failed to load data.')} />
+    }
+
+    if (typeFilter === 'AUTOMATIONS') {
+      if (automationRows.length === 0 && anySyncInFlight) {
+        return (
+          <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-8 shadow-sm ring-1 ring-amber-900/10">
+            <LoadingState message="Metadata sync is running — automations will appear here when indexing completes." />
+          </div>
+        )
+      }
+      if (automationRows.length === 0) {
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-sm font-medium text-navy-900">No automations match your filters</p>
+            <p className="mt-1 text-sm text-slate-600">Run Sync on your connection or adjust search and source.</p>
+          </div>
+        )
+      }
+      return <DataTable columns={automationColumns} rows={automationRows} rowKey={(r) => r.id} pageSize={8} />
+    }
+
+    if (typeFilter === 'APEX') {
+      if (apexRows.length === 0) {
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-sm font-medium text-navy-900">No Apex classes found</p>
+            <p className="mt-1 text-sm text-slate-600">Run Sync after indexing completes, or try another search.</p>
+          </div>
+        )
+      }
+      return <DataTable columns={apexColumns} rows={apexRows} rowKey={(r) => r.id} pageSize={8} />
+    }
+
+    if (typeFilter === 'REPORTS') {
+      if (reportRows.length === 0) {
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-sm font-medium text-navy-900">No reports or dashboards found</p>
+            <p className="mt-1 text-sm text-slate-600">Run Sync or adjust your filters.</p>
+          </div>
+        )
+      }
+      return <DataTable columns={reportColumns} rows={reportRows} rowKey={(r) => r.id} pageSize={8} />
+    }
+
+    if (typeFilter === 'PERMISSIONS') {
+      if (permissionRows.length === 0) {
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-sm font-medium text-navy-900">No profiles or permission sets found</p>
+            <p className="mt-1 text-sm text-slate-600">Run Sync or adjust your filters.</p>
+          </div>
+        )
+      }
+      return <DataTable columns={permissionColumns} rows={permissionRows} rowKey={(r) => r.id} pageSize={8} />
+    }
+
+    if (typeFilter === 'PACKAGES') {
+      if (packageRows.length === 0) {
+        return (
+          <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-sm font-medium text-navy-900">No installed packages found</p>
+            <p className="mt-1 text-sm text-slate-600">Run Sync or adjust your filters.</p>
+          </div>
+        )
+      }
+      return <DataTable columns={packageColumns} rows={packageRows} rowKey={(r) => r.id} pageSize={8} />
+    }
+
+    return null
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -397,36 +867,86 @@ export default function AnalysisPage() {
         </p>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              ['ALL', 'All'],
-              ['Metadata', 'Metadata'],
-              ['DATA', 'Data Records'],
-              ['DOCS', 'Business Docs'],
-            ] as const
-          ).map(([key, label]) => (
+      {hasConnections && summaryQuery.data && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          {[
+            { label: 'Objects', count: summary?.objects?.total ?? 0, icon: Database, filter: 'OBJECTS' as const },
+            { label: 'Fields', count: summary?.fields?.total ?? 0, icon: Layers, filter: null },
+            {
+              label: 'Flows',
+              count: (summary?.automations?.flow ?? 0) + (summary?.automations?.process_builder ?? 0),
+              icon: GitBranch,
+              filter: 'AUTOMATIONS' as const,
+            },
+            { label: 'Triggers', count: summary?.automations?.trigger ?? 0, icon: Zap, filter: 'AUTOMATIONS' as const },
+            { label: 'Apex Classes', count: summary?.components?.apex_class ?? 0, icon: Code, filter: 'APEX' as const },
+            {
+              label: 'Reports',
+              count: (summary?.components?.report ?? 0) + (summary?.components?.dashboard ?? 0),
+              icon: BarChart3,
+              filter: 'REPORTS' as const,
+            },
+            {
+              label: 'Packages',
+              count: summary?.components?.installed_package ?? 0,
+              icon: Package,
+              filter: 'PACKAGES' as const,
+            },
+          ].map((card) => (
             <button
-              key={key}
+              key={card.label}
               type="button"
-              onClick={() => setTab(key)}
+              onClick={() => card.filter && setTypeFilter(card.filter as TypeFilter)}
               className={clsx(
-                'rounded-full px-4 py-1.5 text-sm font-medium ring-1 ring-inset transition-colors',
-                tab === key
-                  ? 'bg-navy-800 text-white ring-navy-800'
-                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
+                'flex flex-col items-center gap-1 rounded-xl border px-3 py-4 text-center shadow-sm transition-colors',
+                card.filter && typeFilter === card.filter
+                  ? 'border-navy-300 bg-navy-50 ring-1 ring-navy-200'
+                  : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+                !card.filter && 'cursor-default',
               )}
             >
-              {label}
+              <card.icon className="h-5 w-5 text-slate-500" />
+              <span className="text-2xl font-bold text-navy-900">{card.count.toLocaleString()}</span>
+              <span className="text-xs font-medium text-slate-500">{card.label}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          {(['ALL', 'OBJECTS', 'AUTOMATIONS', 'APEX', 'REPORTS', 'PERMISSIONS', 'PACKAGES'] as const).map((key) => {
+            const labels: Record<TypeFilter, string> = {
+              ALL: 'All',
+              OBJECTS: 'Objects',
+              AUTOMATIONS: 'Automations',
+              APEX: 'Apex Classes',
+              REPORTS: 'Reports & Dashboards',
+              PERMISSIONS: 'Permissions',
+              PACKAGES: 'Packages',
+            }
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTypeFilter(key)}
+                className={clsx(
+                  'rounded-full px-4 py-1.5 text-sm font-medium ring-1 ring-inset transition-colors',
+                  typeFilter === key
+                    ? 'bg-navy-800 text-white ring-navy-800'
+                    : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
+                )}
+              >
+                {labels[key]}
+              </button>
+            )
+          })}
         </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-          <SearchBar value={q} onChange={setQ} placeholder="Search objects by API name or label…" className="flex-1" />
+          <SearchBar value={q} onChange={setQ} placeholder={searchPlaceholder} className="flex-1" />
           <div className="flex items-center gap-2 sm:min-w-[200px]">
             <SearchIcon className="hidden h-4 w-4 text-slate-400 sm:block" aria-hidden />
             <label className="sr-only" htmlFor="source-filter">
@@ -456,30 +976,10 @@ export default function AnalysisPage() {
           description="Link Salesforce to index org metadata, then run a sync from the platform card below."
           action={connectButton}
         />
-      ) : metadataQuery.isLoading ? (
-        <div className="rounded-xl border border-slate-200/80 bg-white p-8 shadow-sm ring-1 ring-slate-900/5">
-          <LoadingState message="Loading metadata objects…" />
-        </div>
-      ) : metadataQuery.isError ? (
-        <ErrorState
-          message={formatUnknownError((metadataQuery as { error?: unknown }).error, 'Failed to load metadata.')}
-        />
-      ) : filtered.length === 0 && anySyncInFlight ? (
-        <div className="rounded-xl border border-amber-200/80 bg-amber-50/40 p-8 shadow-sm ring-1 ring-amber-900/10">
-          <LoadingState message="Metadata sync is running — objects will appear here when indexing completes." />
-        </div>
-      ) : filtered.length === 0 && (metadataQuery.data?.items?.length ?? 0) === 0 ? (
-        <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
-          <p className="text-sm font-medium text-navy-900">No metadata indexed yet</p>
-          <p className="mt-1 text-sm text-slate-600">Run Sync on your Salesforce connection to pull describe metadata into Arcflare.</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-slate-200/80 bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
-          <p className="text-sm font-medium text-navy-900">No metadata objects match your filters</p>
-          <p className="mt-1 text-sm text-slate-600">Try another search, tab, or source — or run Sync on your connection.</p>
-        </div>
+      ) : isObjectsView ? (
+        renderObjectsTable()
       ) : (
-        <DataTable columns={columns} rows={filtered} rowKey={(r) => r.id} pageSize={8} />
+        renderSecondaryTable()
       )}
 
       <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">

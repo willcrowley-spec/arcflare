@@ -5,8 +5,10 @@ import type {
   DocumentSearchResult,
   FleetAnalytics,
   MetadataAutomation,
+  MetadataComponent,
   MetadataField,
   MetadataObject,
+  MetadataSummary,
   PaginatedResponse,
   PlatformConnection,
   Recommendation,
@@ -108,7 +110,16 @@ export const api = {
     getObject: (id: string) => request<MetadataObject>(`/metadata/objects/${id}`),
     getObjectTelemetry: (id: string) => request<RecordTelemetry[]>(`/metadata/objects/${id}/telemetry`),
     getObjectFields: (id: string) => request<MetadataField[]>(`/metadata/objects/${id}/fields`),
-    listAutomation: () => request<MetadataAutomation[]>('/metadata/automation'),
+    summary: () => request<MetadataSummary>('/metadata/summary/'),
+    listAutomation: (params?: { page?: number; page_size?: number }) =>
+      request<PaginatedResponse<MetadataAutomation>>(withQuery('/metadata/automation/', params)),
+    listComponents: (params?: {
+      page?: number
+      page_size?: number
+      component_category?: string
+      q?: string
+    }) =>
+      request<PaginatedResponse<MetadataComponent>>(withQuery('/metadata/components/', params)),
     getVelocity: () => request<VelocityMetrics>('/analysis/velocity'),
   },
   documents: {
@@ -171,6 +182,8 @@ export const api = {
         body: JSON.stringify(data),
       }),
     costModel: () => request<unknown>('/organization/cost-model'),
+    licensing: () => request<Record<string, unknown>>('/organization/licensing/'),
+    userVelocity: () => request<unknown[]>('/organization/user-velocity/'),
     syncFromSalesforce: () =>
       request<void>('/organization/sync-from-salesforce', { method: 'POST' }),
   },

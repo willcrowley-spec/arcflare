@@ -108,13 +108,46 @@ export interface MetadataField {
   external_id: boolean
 }
 
+/** Row from `GET /metadata/automation` (paginated). */
 export interface MetadataAutomation {
   id: string
-  name: string
-  type: 'FLOW' | 'PROCESS_BUILDER' | 'WORKFLOW' | 'APEX_TRIGGER' | 'OTHER'
-  platform: PlatformType
-  status: string
-  last_modified_at: string
+  connection_id: string
+  org_id: string
+  automation_type: string
+  api_name: string
+  label: string | null
+  status: string | null
+  related_object: string | null
+  complexity_score: number | null
+  metadata_json: Record<string, unknown>
+}
+
+export interface MetadataComponent {
+  id: string
+  org_id: string
+  connection_id: string
+  component_category: string
+  api_name: string
+  label: string | null
+  status: string | null
+  related_object: string | null
+  metadata_json: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface MetadataSummary {
+  objects: { total: number; custom: number; with_records: number }
+  fields: { total: number; custom: number }
+  automations: Record<string, number>
+  components: Record<string, number>
+  licensing: {
+    edition?: string
+    total_licenses?: number
+    used_licenses?: number
+    estimated_annual_spend?: number | null
+  }
+  last_sync_at: string | null
 }
 
 export interface RecordTelemetry {

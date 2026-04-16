@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_tokens
 from app.models.connection import PlatformConnection
-from app.models.metadata import MetadataAutomation, MetadataField, MetadataObject
+from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject
 from app.services.connectors.base import (
     AutomationMeta,
     PermissionMeta,
@@ -25,6 +25,8 @@ from app.services.connectors.base import (
     UIComponentMeta,
     UsageData,
 )
+from app.services.salesforce.licensing import snapshot_licensing
+from app.services.salesforce.user_velocity import snapshot_user_velocity
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +258,25 @@ def pull_validation_rules(sf: Salesforce, object_name: str) -> list[dict]:
         return []
 
 
+def pull_objects_with_validation_rules(sf: Salesforce) -> set[str]:
+    """Return SObject API names that have at least one unmanaged validation rule."""
+    try:
+        raw = _tooling_query_all(
+            sf,
+            "SELECT EntityDefinition.QualifiedApiName objName "
+            "FROM ValidationRule WHERE NamespacePrefix = null",
+        )
+        names: set[str] = set()
+        for r in raw:
+            qn = r.get("objName") or (r.get("EntityDefinition") or {}).get("QualifiedApiName")
+            if qn:
+                names.add(qn)
+        return names
+    except Exception as e:
+        logger.warning("sf_validation_rule_object_names_failed error=%s", e)
+        return set()
+
+
 def pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
     try:
         raw = _tooling_query_all(sf, "SELECT Id,Name,TableEnumOrId FROM WorkflowRule")
@@ -451,6 +472,35 @@ def pull_dashboards(sf: Salesforce) -> list[UIComponentMeta]:
         return []
 
 
+def pull_installed_packages(sf: Salesforce) -> list[dict]:
+    try:
+        raw = _tooling_query_all(
+            sf,
+            "SELECT Id,SubscriberPackage.Name,SubscriberPackage.NamespacePrefix,"
+            "SubscriberPackageVersion.MajorVersion,SubscriberPackageVersion.MinorVersion,"
+            "SubscriberPackageVersion.PatchVersion "
+            "FROM InstalledSubscriberPackage",
+        )
+        results = []
+        for pkg in raw:
+            sp = pkg.get("SubscriberPackage") or {}
+            spv = pkg.get("SubscriberPackageVersion") or {}
+            version = f"{spv.get('MajorVersion', 0)}.{spv.get('MinorVersion', 0)}.{spv.get('PatchVersion', 0)}"
+            results.append(
+                {
+                    "name": sp.get("Name", ""),
+                    "namespace": sp.get("NamespacePrefix", ""),
+                    "version": version,
+                    "id": pkg.get("Id", ""),
+                }
+            )
+        logger.info("sf_installed_packages_pulled count=%d", len(results))
+        return results
+    except Exception as e:
+        logger.warning("sf_installed_packages_failed error=%s", e)
+        return []
+
+
 def pull_usage_data(sf: Salesforce, object_names: list[str], recency_days: int = 365) -> UsageData:
     """Query record counts (total and recent) for each object."""
     total_counts: dict[str, int] = {}
@@ -554,6 +604,7 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
     await db.execute(delete(MetadataField).where(MetadataField.object_id.in_(mo_subq)))
     await db.execute(delete(MetadataAutomation).where(MetadataAutomation.connection_id == connection_id))
     await db.execute(delete(MetadataObject).where(MetadataObject.connection_id == connection_id))
+    await db.execute(delete(MetadataComponent).where(MetadataComponent.connection_id == connection_id))
 
     for obj in objects:
         meta_obj = MetadataObject(
@@ -561,7 +612,7 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
             org_id=org_id,
             api_name=obj.api_name,
             label=obj.label,
-            object_type="custom" if obj.is_custom else "standard",
+            object_type="Custom Object" if obj.is_custom else "Standard Object",
             field_count=obj.field_count,
             record_count=obj.record_count,
             is_custom=obj.is_custom,
@@ -609,17 +660,121 @@ async def sync_metadata(connection_id: UUID, db: AsyncSession) -> int:
             )
         )
 
+    apex_classes = pull_apex_classes(sf)
+    for ac in apex_classes:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category="apex_class",
+                api_name=ac.get("Name", ac.get("Id", "")),
+                label=ac.get("Name", ""),
+                status=ac.get("Status", "Active"),
+                metadata_json={
+                    "api_version": ac.get("ApiVersion"),
+                    "length_without_comments": ac.get("LengthWithoutComments"),
+                },
+            )
+        )
+
+    for perm in permissions:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category=perm.permission_type,
+                api_name=perm.api_name,
+                label=perm.label,
+                metadata_json={
+                    "description": perm.description,
+                    "object_permissions": perm.object_permissions,
+                },
+            )
+        )
+
+    for comp in ui_components:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category=comp.component_type,
+                api_name=comp.api_name,
+                label=comp.label,
+                related_object=getattr(comp, "related_object", None),
+                metadata_json={
+                    "description": getattr(comp, "description", None),
+                },
+            )
+        )
+
+    packages = pull_installed_packages(sf)
+    for pkg in packages:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category="installed_package",
+                api_name=pkg.get("namespace") or pkg.get("name", ""),
+                label=pkg.get("name", ""),
+                metadata_json={
+                    "version": pkg.get("version", ""),
+                    "namespace": pkg.get("namespace", ""),
+                },
+            )
+        )
+
+    auto_by_object: dict[str, dict[str, bool]] = {}
+    for auto in automations:
+        for rel in auto.related_objects:
+            entry = auto_by_object.setdefault(
+                rel, {"triggers": False, "flows": False, "validation_rules": False}
+            )
+            if auto.automation_type == "trigger":
+                entry["triggers"] = True
+            elif auto.automation_type in ("flow", "process_builder"):
+                entry["flows"] = True
+
+    vr_objects = pull_objects_with_validation_rules(sf)
+
+    for obj_name, flags in auto_by_object.items():
+        stmt = select(MetadataObject).where(
+            MetadataObject.connection_id == connection_id,
+            MetadataObject.api_name == obj_name,
+        )
+        res = await db.execute(stmt)
+        mo = res.scalar_one_or_none()
+        if mo:
+            mo.has_triggers = flags.get("triggers", False)
+            mo.has_flows = flags.get("flows", False)
+
+    stmt_vr = select(MetadataObject).where(MetadataObject.connection_id == connection_id)
+    res_vr = await db.execute(stmt_vr)
+    for mo in res_vr.scalars().all():
+        mo.has_validation_rules = mo.api_name in vr_objects
+
+    try:
+        await snapshot_licensing(connection_id, org_id, sf, db)
+    except Exception as e:
+        logger.warning("licensing_snapshot_failed connection=%s error=%s", connection_id, e)
+
+    try:
+        await snapshot_user_velocity(connection_id, org_id, sf, db)
+    except Exception as e:
+        logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, e)
+
     connection.last_sync_at = datetime.now(tz=UTC)
     connection.entity_count = len(objects)
     await db.commit()
 
     logger.info(
-        "sync_metadata_complete connection=%s objects=%d automations=%d permissions=%d ui=%d",
+        "sync_metadata_complete connection=%s objects=%d automations=%d permissions=%d ui=%d apex=%d packages=%d",
         connection_id,
         len(objects),
         len(automations),
         len(permissions),
         len(ui_components),
+        len(apex_classes),
+        len(packages),
     )
     return len(objects)
 

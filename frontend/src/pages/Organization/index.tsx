@@ -1,6 +1,14 @@
 import { useMemo } from 'react'
-import { Building2, GitBranch, Landmark, Users } from 'lucide-react'
-import { useCostModel, useOrgEntities, useOrgHierarchy, useOrgProfile } from '@/hooks/useApi'
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Building2, CreditCard, GitBranch, Landmark, Shield, TrendingUp, Users } from 'lucide-react'
+import {
+  useCostModel,
+  useOrgEntities,
+  useOrgHierarchy,
+  useOrgLicensing,
+  useOrgProfile,
+  useUserVelocity,
+} from '@/hooks/useApi'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 
 type HierarchyNode = {
@@ -104,6 +112,8 @@ function TreeNode({ node, depth = 0 }: { node: HierarchyNode; depth?: number }) 
 export default function OrganizationPage() {
   const profileQuery = useOrgProfile()
   const hierarchyQuery = useOrgHierarchy()
+  const licensingQuery = useOrgLicensing()
+  const velocityQuery = useUserVelocity()
   const costModelQuery = useCostModel()
   const entitiesQuery = useOrgEntities({ page: 1, page_size: 200 })
 
@@ -233,6 +243,244 @@ export default function OrganizationPage() {
               </div>
             </section>
           </div>
+
+          {licensingQuery.data &&
+            (() => {
+              const lic = licensingQuery.data as {
+                edition?: string
+                is_sandbox?: boolean
+                licenses_json?: { type: string; total: number; used: number; status: string }[]
+                package_licenses_json?: { namespace: string; total: number; used: number }[]
+                psl_json?: { name: string; total: number; used: number }[]
+                limits_json?: Record<string, { Max?: number; Remaining?: number }>
+                estimated_annual_spend?: number | null
+              }
+              const licenses = lic.licenses_json ?? []
+              const activeLicenses = licenses.filter((l) => l.total > 0)
+              const totalLic = licenses.reduce((s, l) => s + (l.total || 0), 0)
+              const usedLic = licenses.reduce((s, l) => s + (l.used || 0), 0)
+              const pkgCount = (lic.package_licenses_json ?? []).length
+              const storage = lic.limits_json?.DataStorageMB
+              const apiLimits = lic.limits_json?.DailyApiRequests
+
+              return (
+                <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                  <div className="flex items-center gap-3">
+                    <CreditCard className="h-6 w-6 text-navy-700" />
+                    <div>
+                      <h2 className="text-lg font-semibold text-navy-900">Salesforce Licensing</h2>
+                      <p className="text-sm text-slate-600">License utilization and estimated platform spend</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid gap-6 lg:grid-cols-3">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-navy-100 px-3 py-1 text-xs font-semibold text-navy-800">
+                          {lic.edition || 'Unknown Edition'}
+                        </span>
+                        {lic.is_sandbox && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                            Sandbox
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Annual Spend</p>
+                        <p className="mt-1 text-3xl font-bold text-navy-900">
+                          {lic.estimated_annual_spend
+                            ? new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                notation: 'compact',
+                                maximumFractionDigits: 0,
+                              }).format(lic.estimated_annual_spend)
+                            : '—'}
+                        </p>
+                      </div>
+                      <div className="flex gap-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">Licenses: </span>
+                          <span className="font-semibold text-slate-900">
+                            {usedLic}/{totalLic}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Packages: </span>
+                          <span className="font-semibold text-slate-900">{pkgCount}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 lg:col-span-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">License Utilization</p>
+                      <div className="max-h-[200px] space-y-1.5 overflow-auto pr-2">
+                        {activeLicenses.map((l) => {
+                          const pct = l.total > 0 ? Math.round((l.used / l.total) * 100) : 0
+                          return (
+                            <div key={l.type} className="flex items-center gap-3 text-xs">
+                              <span className="w-36 truncate text-slate-700" title={l.type}>
+                                {l.type}
+                              </span>
+                              <div className="h-2 flex-1 rounded-full bg-slate-100">
+                                <div
+                                  className={`h-2 rounded-full ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                  style={{ width: `${Math.min(pct, 100)}%` }}
+                                />
+                              </div>
+                              <span className="w-16 text-right text-slate-600">
+                                {l.used}/{l.total}
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {storage && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Storage:{' '}
+                          {storage.Remaining != null && storage.Max != null
+                            ? `${((storage.Max - storage.Remaining) / 1024).toFixed(1)} / ${(storage.Max / 1024).toFixed(1)} GB`
+                            : '—'}
+                        </p>
+                      )}
+                      {apiLimits && (
+                        <p className="text-xs text-slate-500">
+                          Daily API:{' '}
+                          {apiLimits.Remaining != null && apiLimits.Max != null
+                            ? `${(apiLimits.Max - apiLimits.Remaining).toLocaleString()} / ${apiLimits.Max.toLocaleString()} used`
+                            : '—'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )
+            })()}
+
+          {velocityQuery.data &&
+            Array.isArray(velocityQuery.data) &&
+            velocityQuery.data.length > 0 &&
+            (() => {
+              const snapshots = (
+                velocityQuery.data as {
+                  snapshot_at: string
+                  active_user_count: number
+                  new_users_this_month: number
+                  deactivated_this_month: number
+                  by_role_json: Record<string, number>
+                  by_profile_json: Record<string, number>
+                }[]
+              )
+                .slice()
+                .reverse()
+
+              const chartData = snapshots.map((s) => ({
+                date: new Date(s.snapshot_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }),
+                active: s.active_user_count,
+                new: s.new_users_this_month,
+                deactivated: s.deactivated_this_month,
+                net: s.new_users_this_month - s.deactivated_this_month,
+              }))
+
+              const latestSnap = snapshots[snapshots.length - 1]
+              const roleEntries = Object.entries(latestSnap?.by_role_json ?? {}).sort((a, b) => b[1] - a[1])
+              const profileEntries = Object.entries(latestSnap?.by_profile_json ?? {}).sort((a, b) => b[1] - a[1])
+
+              return (
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <div className="flex items-center gap-3">
+                      <TrendingUp className="h-6 w-6 text-navy-700" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-navy-900">Platform Adoption Trend</h2>
+                        <p className="text-sm text-slate-600">Net platform user change over time</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 h-56">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="activeGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} />
+                              <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                          <Area
+                            type="monotone"
+                            dataKey="active"
+                            name="Active Users"
+                            stroke="#1e3a5f"
+                            fill="url(#activeGrad)"
+                            strokeWidth={2}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                    {chartData.length > 0 && (
+                      <div className="mt-3 flex gap-6 text-xs text-slate-600">
+                        <span>
+                          Active: <strong className="text-slate-900">{latestSnap?.active_user_count ?? 0}</strong>
+                        </span>
+                        <span>
+                          New this month:{' '}
+                          <strong className="text-emerald-700">+{latestSnap?.new_users_this_month ?? 0}</strong>
+                        </span>
+                        <span>
+                          Deactivated:{' '}
+                          <strong className="text-red-600">-{latestSnap?.deactivated_this_month ?? 0}</strong>
+                        </span>
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+                    <div className="flex items-center gap-3">
+                      <Shield className="h-6 w-6 text-navy-700" />
+                      <div>
+                        <h2 className="text-lg font-semibold text-navy-900">Role & Profile Distribution</h2>
+                        <p className="text-sm text-slate-600">Active users by role and profile</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">By Role</p>
+                        <div className="max-h-[180px] space-y-1 overflow-auto pr-1">
+                          {roleEntries.length === 0 ? (
+                            <p className="text-xs text-slate-400">No role data</p>
+                          ) : (
+                            roleEntries.map(([name, count]) => (
+                              <div key={name} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="truncate text-slate-700">{name}</span>
+                                <span className="font-semibold text-slate-900">{count}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">By Profile</p>
+                        <div className="max-h-[180px] space-y-1 overflow-auto pr-1">
+                          {profileEntries.length === 0 ? (
+                            <p className="text-xs text-slate-400">No profile data</p>
+                          ) : (
+                            profileEntries.map(([name, count]) => (
+                              <div key={name} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="truncate text-slate-700">{name}</span>
+                                <span className="font-semibold text-slate-900">{count}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              )
+            })()}
 
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="rounded-xl border border-slate-200/80 bg-navy-800 p-6 text-white shadow-md ring-1 ring-black/10">

@@ -1,6 +1,6 @@
-"""Embeddings and vector search over document chunks."""
-
+"""Embeddings and vector search over document chunks using Gemini."""
 import asyncio
+import logging
 from uuid import UUID
 
 from sqlalchemy import text
@@ -9,13 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document import DocumentChunk
 from app.services.ai.router import get_embedding_provider
 
-_EMBED_MODEL = "text-embedding-3-large"
+logger = logging.getLogger(__name__)
+
+_EMBED_MODEL = "gemini-embedding-001"
+_EMBED_DIMS = 3072
 
 
-async def _embed(client, text: str) -> list[float]:
+async def _embed(client, content: str) -> list[float]:
     def _sync() -> list[float]:
-        r = client.embeddings.create(model=_EMBED_MODEL, input=text)
-        return list(r.data[0].embedding)
+        result = client.models.embed_content(
+            model=_EMBED_MODEL,
+            contents=content,
+            config={"output_dimensionality": _EMBED_DIMS},
+        )
+        return list(result.embeddings[0].values)
+
+    return await asyncio.to_thread(_sync)
+
+
+async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
+    def _sync() -> list[list[float]]:
+        result = client.models.embed_content(
+            model=_EMBED_MODEL,
+            contents=texts,
+            config={"output_dimensionality": _EMBED_DIMS},
+        )
+        return [list(e.values) for e in result.embeddings]
 
     return await asyncio.to_thread(_sync)
 
@@ -25,14 +44,37 @@ async def vectorize_chunks(
     document_id: UUID,
     db: AsyncSession,
 ) -> list[DocumentChunk]:
-    """
-    Embed chunk texts and persist DocumentChunk rows with pgvector embeddings.
-    """
     provider = get_embedding_provider()
     out: list[DocumentChunk] = []
-    for c in chunks:
+
+    batch_texts = []
+    batch_indices = []
+    for i, c in enumerate(chunks):
         content = c.get("content") or ""
-        embedding = await _embed(provider, content) if content.strip() else [0.0] * 3072
+        if content.strip():
+            batch_texts.append(content)
+            batch_indices.append(i)
+
+    embeddings_map: dict[int, list[float]] = {}
+    for batch_start in range(0, len(batch_texts), 100):
+        batch_slice = batch_texts[batch_start:batch_start + 100]
+        batch_idx_slice = batch_indices[batch_start:batch_start + 100]
+        try:
+            vectors = await _embed_batch(provider, batch_slice)
+            for idx, vec in zip(batch_idx_slice, vectors):
+                embeddings_map[idx] = vec
+        except Exception:
+            logger.warning("batch_embed_failed, falling back to individual")
+            for idx, txt in zip(batch_idx_slice, batch_slice):
+                try:
+                    embeddings_map[idx] = await _embed(provider, txt)
+                except Exception as e:
+                    logger.warning("embed_failed chunk=%d error=%s", idx, e)
+                    embeddings_map[idx] = [0.0] * _EMBED_DIMS
+
+    for i, c in enumerate(chunks):
+        content = c.get("content") or ""
+        embedding = embeddings_map.get(i, [0.0] * _EMBED_DIMS)
         row = DocumentChunk(
             document_id=document_id,
             chunk_index=int(c["chunk_index"]),
@@ -54,11 +96,6 @@ async def search_documents(
     top_k: int,
     db: AsyncSession,
 ) -> list[dict]:
-    """
-    Semantic search using cosine distance against stored embeddings for the org.
-
-    Returns dict rows suitable for DocumentSearchResult schema mapping.
-    """
     provider = get_embedding_provider()
     qvec = await _embed(provider, query)
     vec_str = "[" + ",".join(str(float(x)) for x in qvec) + "]"

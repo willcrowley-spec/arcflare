@@ -4,18 +4,130 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentOrg, DbSession
-from app.models.metadata import MetadataAutomation, MetadataField, MetadataObject, RecordTelemetry
+from app.models.connection import PlatformConnection
+from app.models.licensing import OrgLicenseSnapshot
+from app.models.metadata import (
+    MetadataAutomation,
+    MetadataComponent,
+    MetadataField,
+    MetadataObject,
+    RecordTelemetry,
+)
 from app.schemas.common import PaginatedResponse
 from app.schemas.metadata import (
     AutomationResponse,
+    MetadataComponentResponse,
     MetadataFieldResponse,
     MetadataObjectResponse,
+    MetadataSummary,
     TelemetryResponse,
     VelocityPoint,
 )
 from app.services.salesforce.telemetry import calculate_velocity
 
 router = APIRouter()
+
+
+@router.get("/summary", response_model=MetadataSummary)
+async def get_metadata_summary(
+    db: DbSession,
+    org: CurrentOrg,
+) -> MetadataSummary:
+    obj_total = int(
+        await db.scalar(
+            select(func.count()).select_from(MetadataObject).where(MetadataObject.org_id == org.id)
+        )
+        or 0
+    )
+    obj_custom = int(
+        await db.scalar(
+            select(func.count()).select_from(MetadataObject).where(
+                MetadataObject.org_id == org.id, MetadataObject.is_custom.is_(True)
+            )
+        )
+        or 0
+    )
+    obj_with_records = int(
+        await db.scalar(
+            select(func.count()).select_from(MetadataObject).where(
+                MetadataObject.org_id == org.id, MetadataObject.record_count > 0
+            )
+        )
+        or 0
+    )
+
+    field_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(MetadataField)
+            .join(MetadataObject, MetadataField.object_id == MetadataObject.id)
+            .where(MetadataObject.org_id == org.id)
+        )
+        or 0
+    )
+    field_custom = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(MetadataField)
+            .join(MetadataObject, MetadataField.object_id == MetadataObject.id)
+            .where(MetadataObject.org_id == org.id, MetadataField.is_custom.is_(True))
+        )
+        or 0
+    )
+
+    auto_rows = await db.execute(
+        select(MetadataAutomation.automation_type, func.count())
+        .where(MetadataAutomation.org_id == org.id)
+        .group_by(MetadataAutomation.automation_type)
+    )
+    auto_counts = {row[0]: row[1] for row in auto_rows.all()}
+
+    comp_rows = await db.execute(
+        select(MetadataComponent.component_category, func.count())
+        .where(MetadataComponent.org_id == org.id)
+        .group_by(MetadataComponent.component_category)
+    )
+    comp_counts = {row[0]: row[1] for row in comp_rows.all()}
+
+    licensing: dict = {}
+    license_snap = (
+        await db.execute(
+            select(OrgLicenseSnapshot)
+            .where(OrgLicenseSnapshot.org_id == org.id)
+            .order_by(OrgLicenseSnapshot.snapshot_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if license_snap:
+        total_lic = sum(l.get("total", 0) for l in (license_snap.licenses_json or []))
+        used_lic = sum(l.get("used", 0) for l in (license_snap.licenses_json or []))
+        licensing = {
+            "edition": license_snap.edition,
+            "total_licenses": total_lic,
+            "used_licenses": used_lic,
+            "estimated_annual_spend": float(license_snap.estimated_annual_spend)
+            if license_snap.estimated_annual_spend
+            else None,
+        }
+
+    last_conn = (
+        await db.execute(
+            select(PlatformConnection)
+            .where(PlatformConnection.org_id == org.id)
+            .order_by(PlatformConnection.last_sync_at.desc().nulls_last())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    last_sync = last_conn.last_sync_at if last_conn else None
+
+    return MetadataSummary(
+        objects={"total": obj_total, "custom": obj_custom, "with_records": obj_with_records},
+        fields={"total": field_total, "custom": field_custom},
+        automations=auto_counts,
+        components=comp_counts,
+        licensing=licensing,
+        last_sync_at=last_sync,
+    )
 
 
 @router.get("/objects", response_model=PaginatedResponse[MetadataObjectResponse])
@@ -150,3 +262,36 @@ async def get_velocity(
         )
     out.sort(key=lambda x: x.velocity_score, reverse=True)
     return out
+
+
+@router.get("/components", response_model=PaginatedResponse[MetadataComponentResponse])
+async def list_components(
+    db: DbSession,
+    org: CurrentOrg,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    component_category: str | None = None,
+    q: str | None = None,
+) -> PaginatedResponse[MetadataComponentResponse]:
+    filters = [MetadataComponent.org_id == org.id]
+    if component_category:
+        filters.append(MetadataComponent.component_category == component_category)
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            or_(MetadataComponent.api_name.ilike(like), MetadataComponent.label.ilike(like))
+        )
+    total = int(
+        await db.scalar(select(func.count()).select_from(MetadataComponent).where(*filters)) or 0
+    )
+    stmt = (
+        select(MetadataComponent)
+        .where(*filters)
+        .order_by(MetadataComponent.api_name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    items = [MetadataComponentResponse.model_validate(r) for r in rows]
+    pages = max((total + page_size - 1) // page_size, 1)
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)

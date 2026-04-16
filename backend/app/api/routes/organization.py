@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from app.api.deps import CurrentOrg, DbSession
 from app.models.connection import PlatformConnection
 from app.models.entity import BusinessEntity
+from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.schemas.common import PaginatedResponse
 from app.schemas.organization import (
     CostModelResponse,
@@ -16,7 +17,9 @@ from app.schemas.organization import (
     EntityUpdate,
     HierarchyNode,
     HierarchyResponse,
+    LicenseSnapshotResponse,
     OrgProfileResponse,
+    UserVelocityResponse,
 )
 from app.services.entities.cost_model import calculate_cost_deflection, calculate_hires_deflected
 from app.services.entities.profiler import build_hierarchy, sync_from_salesforce
@@ -182,3 +185,38 @@ async def sync_entities_from_salesforce(
     n = await sync_from_salesforce(org.id, connection_id, db)
     await db.commit()
     return {"status": "accepted", "records_touched": str(n)}
+
+
+@router.get("/licensing", response_model=LicenseSnapshotResponse)
+async def get_licensing(
+    db: DbSession,
+    org: CurrentOrg,
+) -> LicenseSnapshotResponse:
+    snap = (
+        await db.execute(
+            select(OrgLicenseSnapshot)
+            .where(OrgLicenseSnapshot.org_id == org.id)
+            .order_by(OrgLicenseSnapshot.snapshot_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if snap is None:
+        raise HTTPException(status_code=404, detail="No licensing snapshot available")
+    return LicenseSnapshotResponse.model_validate(snap)
+
+
+@router.get("/user-velocity", response_model=list[UserVelocityResponse])
+async def get_user_velocity(
+    db: DbSession,
+    org: CurrentOrg,
+    limit: int = Query(24, ge=1, le=100),
+) -> list[UserVelocityResponse]:
+    rows = (
+        await db.execute(
+            select(UserVelocitySnapshot)
+            .where(UserVelocitySnapshot.org_id == org.id)
+            .order_by(UserVelocitySnapshot.snapshot_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [UserVelocityResponse.model_validate(r) for r in rows]

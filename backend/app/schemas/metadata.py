@@ -72,3 +72,28 @@ class VelocityPoint(BaseModel):
     api_name: str
     velocity_score: float
     window_days: int
+
+
+class MetadataComponentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    org_id: UUID
+    connection_id: UUID
+    component_category: str
+    api_name: str
+    label: str | None
+    status: str | None
+    related_object: str | None
+    metadata_json: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class MetadataSummary(BaseModel):
+    objects: dict = Field(default_factory=dict)
+    fields: dict = Field(default_factory=dict)
+    automations: dict = Field(default_factory=dict)
+    components: dict = Field(default_factory=dict)
+    licensing: dict = Field(default_factory=dict)
+    last_sync_at: datetime | None = None

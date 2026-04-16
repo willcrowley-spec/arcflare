@@ -36,10 +36,14 @@ export function useDeleteConnection() {
   })
 }
 
-export function useMetadataObjects(params?: { page?: number; page_size?: number; q?: string }) {
+export function useMetadataObjects(
+  params?: { page?: number; page_size?: number; q?: string },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['metadata', 'objects', params],
     queryFn: () => api.metadata.listObjects(params),
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -67,10 +71,33 @@ export function useObjectFields(id: string) {
   })
 }
 
-export function useMetadataAutomation() {
+export function useMetadataAutomation(
+  params?: { page?: number; page_size?: number },
+  options?: { enabled?: boolean },
+) {
   return useQuery({
-    queryKey: ['metadata', 'automation'],
-    queryFn: () => api.metadata.listAutomation(),
+    queryKey: ['metadata', 'automation', params],
+    queryFn: () => api.metadata.listAutomation(params),
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function useMetadataSummary(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['metadata', 'summary'],
+    queryFn: () => api.metadata.summary(),
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function useMetadataComponents(
+  params?: { page?: number; page_size?: number; component_category?: string; q?: string },
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['metadata', 'components', params],
+    queryFn: () => api.metadata.listComponents(params),
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -99,6 +126,22 @@ export function useCostModel() {
   return useQuery({
     queryKey: ['organization', 'cost-model'],
     queryFn: () => api.organization.costModel(),
+  })
+}
+
+export function useOrgLicensing() {
+  return useQuery({
+    queryKey: ['organization', 'licensing'],
+    queryFn: () => api.organization.licensing(),
+    retry: false,
+  })
+}
+
+export function useUserVelocity() {
+  return useQuery({
+    queryKey: ['organization', 'user-velocity'],
+    queryFn: () => api.organization.userVelocity(),
+    retry: false,
   })
 }
 

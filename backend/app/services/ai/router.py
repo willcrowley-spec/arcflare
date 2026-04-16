@@ -38,13 +38,13 @@ class LLMResult:
 
 
 def get_embedding_provider():
-    """Return the configured embedding provider."""
+    """Return the configured Gemini client for embeddings."""
     settings = get_settings()
-    key = (settings.OPENAI_API_KEY or "").strip()
+    key = (settings.GEMINI_API_KEY or "").strip()
     if not key:
-        raise RuntimeError("OPENAI_API_KEY is required for embeddings")
-    from openai import OpenAI
-    return OpenAI(api_key=key)
+        raise RuntimeError("GEMINI_API_KEY is required for embeddings")
+    from google import genai
+    return genai.Client(api_key=key)
 
 
 def get_reasoning_provider():
