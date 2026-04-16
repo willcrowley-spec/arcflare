@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { SignedIn, SignedOut, SignInButton, UserButton } from '@clerk/clerk-react'
-import { Bot, Bell, Settings, User } from 'lucide-react'
+import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, ClerkLoaded, ClerkLoading } from '@clerk/clerk-react'
+import { Bot, Bell, Settings, User, Zap, Shield, BarChart3, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
 import { clerkEnabled } from '@/main'
+
+function useClerkAuthSafe() {
+  if (!clerkEnabled) return { isSignedIn: false, isLoaded: true }
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useAuth()
+}
 
 const nav = [
   { to: '/analysis', label: 'Analysis' },
@@ -39,9 +45,101 @@ function NavItem({ to, label }: { to: string; label: string }) {
   )
 }
 
+function LandingPage() {
+  return (
+    <div className="flex min-h-screen flex-col bg-navy-900">
+      <header className="border-b border-white/10 bg-navy-900">
+        <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-5">
+          <div className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/10">
+              <Bot className="h-5 w-5 text-orange-300" strokeWidth={1.75} />
+            </span>
+            <div className="leading-tight">
+              <p className="text-sm font-semibold tracking-tight text-white">Arcflare</p>
+              <p className="text-[11px] text-slate-400">Enterprise Intelligence</p>
+            </div>
+          </div>
+          <SignInButton mode="modal">
+            <button
+              type="button"
+              className="rounded-lg bg-orange-500 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-orange-500/25 transition-all hover:bg-orange-400 hover:shadow-orange-400/30"
+            >
+              Sign in
+            </button>
+          </SignInButton>
+        </div>
+      </header>
+
+      <main className="flex flex-1 flex-col items-center justify-center px-6 py-20">
+        <div className="max-w-2xl text-center">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-4 py-1.5 text-xs font-medium text-orange-300">
+            <Zap className="h-3.5 w-3.5" />
+            Enterprise Platform Intelligence
+          </div>
+          <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+            Connect. Analyze.{' '}
+            <span className="bg-gradient-to-r from-orange-400 to-amber-300 bg-clip-text text-transparent">
+              Transform.
+            </span>
+          </h1>
+          <p className="mx-auto mt-5 max-w-lg text-lg text-slate-400">
+            Ingest metadata from Salesforce and business documents, discover automation opportunities, and
+            quantify ROI with AI-powered recommendations.
+          </p>
+          <div className="mt-10">
+            <SignInButton mode="modal">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-500/25 transition-all hover:bg-orange-400 hover:shadow-orange-400/30"
+              >
+                Get started
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </SignInButton>
+          </div>
+        </div>
+
+        <div className="mt-20 grid max-w-3xl gap-6 sm:grid-cols-3">
+          {[
+            {
+              icon: BarChart3,
+              title: 'Platform Analysis',
+              desc: 'Connect Salesforce orgs and inspect metadata, record velocity, and automation coverage.',
+            },
+            {
+              icon: Shield,
+              title: 'Process Discovery',
+              desc: 'Auto-generate business process maps from metadata and uploaded documents.',
+            },
+            {
+              icon: Zap,
+              title: 'AI Recommendations',
+              desc: 'Get ranked automation candidates with estimated ROI and implementation complexity.',
+            },
+          ].map((card) => (
+            <div
+              key={card.title}
+              className="rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm"
+            >
+              <card.icon className="h-6 w-6 text-orange-400" />
+              <h3 className="mt-3 text-sm font-semibold text-white">{card.title}</h3>
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-400">{card.desc}</p>
+            </div>
+          ))}
+        </div>
+      </main>
+
+      <footer className="border-t border-white/10 py-6 text-center text-xs text-slate-500">
+        © {new Date().getFullYear()} Arcflare AI. All rights reserved.
+      </footer>
+    </div>
+  )
+}
+
 export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { isSignedIn, isLoaded } = useClerkAuthSafe()
   const [salesforceConnectedBanner, setSalesforceConnectedBanner] = useState(false)
 
   useEffect(() => {
@@ -57,6 +155,21 @@ export function AppLayout() {
     const timer = window.setTimeout(() => setSalesforceConnectedBanner(false), 6000)
     return () => window.clearTimeout(timer)
   }, [location.hash, location.pathname, location.search, navigate])
+
+  if (clerkEnabled && !isLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-navy-900">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-orange-400" />
+          <p className="text-sm text-slate-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (clerkEnabled && !isSignedIn) {
+    return <LandingPage />
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
@@ -141,7 +254,7 @@ export function AppLayout() {
 
       {salesforceConnectedBanner && (
         <div
-          className="border-b border-emerald-700/40 bg-emerald-900/90 px-6 py-3 text-center text-sm font-medium text-emerald-50"
+          className="border-b border-emerald-300 bg-emerald-50 px-6 py-3 text-center text-sm font-medium text-emerald-800"
           role="status"
         >
           Salesforce connected successfully. Metadata sync has been queued.
@@ -154,7 +267,7 @@ export function AppLayout() {
 
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-3 px-6 py-6 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2024 Arcflare AI. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Arcflare AI. All rights reserved.</p>
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             <a className="hover:text-navy-800" href="#">
               System Status
