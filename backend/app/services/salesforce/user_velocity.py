@@ -24,6 +24,8 @@ def _rest_query_all(sf: Salesforce, soql: str) -> list[dict]:
 def pull_user_velocity(sf: Salesforce) -> dict:
     data: dict = {
         "active_user_count": 0,
+        "internal_active_count": 0,
+        "external_active_count": 0,
         "new_users_this_month": 0,
         "deactivated_this_month": 0,
         "by_role": {},
@@ -38,8 +40,23 @@ def pull_user_velocity(sf: Salesforce) -> dict:
 
     try:
         result = sf.query(
+            "SELECT COUNT() FROM User WHERE IsActive = true AND UserType = 'Standard'"
+        )
+        data["internal_active_count"] = result.get("totalSize", 0)
+    except Exception as e:
+        logger.warning("sf_internal_active_count_failed error=%s", e)
+
+    try:
+        data["external_active_count"] = max(
+            0, data["active_user_count"] - data["internal_active_count"]
+        )
+    except Exception:
+        pass
+
+    try:
+        result = sf.query(
             "SELECT COUNT() FROM User WHERE IsActive = true "
-            "AND CreatedDate = THIS_MONTH"
+            "AND UserType = 'Standard' AND CreatedDate = THIS_MONTH"
         )
         data["new_users_this_month"] = result.get("totalSize", 0)
     except Exception as e:
@@ -48,7 +65,7 @@ def pull_user_velocity(sf: Salesforce) -> dict:
     try:
         result = sf.query(
             "SELECT COUNT() FROM User WHERE IsActive = false "
-            "AND LastModifiedDate = THIS_MONTH"
+            "AND UserType = 'Standard' AND LastModifiedDate = THIS_MONTH"
         )
         data["deactivated_this_month"] = result.get("totalSize", 0)
     except Exception as e:
@@ -58,7 +75,7 @@ def pull_user_velocity(sf: Salesforce) -> dict:
         raw = _rest_query_all(
             sf,
             "SELECT UserRole.Name roleName, COUNT(Id) cnt "
-            "FROM User WHERE IsActive = true "
+            "FROM User WHERE IsActive = true AND UserType = 'Standard' "
             "GROUP BY UserRole.Name",
         )
         for r in raw:
@@ -71,7 +88,7 @@ def pull_user_velocity(sf: Salesforce) -> dict:
         raw = _rest_query_all(
             sf,
             "SELECT Profile.Name profileName, COUNT(Id) cnt "
-            "FROM User WHERE IsActive = true "
+            "FROM User WHERE IsActive = true AND UserType = 'Standard' "
             "GROUP BY Profile.Name",
         )
         for r in raw:
@@ -91,6 +108,8 @@ async def snapshot_user_velocity(
         org_id=org_id,
         connection_id=connection_id,
         active_user_count=data["active_user_count"],
+        internal_active_count=data["internal_active_count"],
+        external_active_count=data["external_active_count"],
         new_users_this_month=data["new_users_this_month"],
         deactivated_this_month=data["deactivated_this_month"],
         by_role_json=data["by_role"],
@@ -100,9 +119,11 @@ async def snapshot_user_velocity(
     await db.flush()
 
     logger.info(
-        "user_velocity_snapshot_complete connection=%s active=%d new=%d deactivated=%d roles=%d profiles=%d",
+        "user_velocity_snapshot_complete connection=%s total=%d internal=%d external=%d new=%d deactivated=%d roles=%d profiles=%d",
         connection_id,
         data["active_user_count"],
+        data["internal_active_count"],
+        data["external_active_count"],
         data["new_users_this_month"],
         data["deactivated_this_month"],
         len(data["by_role"]),

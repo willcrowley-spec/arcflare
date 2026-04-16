@@ -73,6 +73,8 @@ class UserVelocitySnapshot(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     active_user_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    internal_active_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    external_active_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     new_users_this_month: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     deactivated_this_month: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     by_role_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))

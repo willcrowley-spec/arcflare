@@ -22,6 +22,33 @@ LICENSE_PRICING = {
     "Sales Cloud": 165,
 }
 
+EXTERNAL_LICENSE_KEYS = {
+    "PID_Customer_Community",
+    "PID_Customer_Community_Plus",
+    "PID_Customer_Community_Login",
+    "PID_Partner_Community",
+    "PID_Partner_Community_Login",
+    "PID_External_Identity",
+}
+
+IDENTITY_LICENSE_KEYS = {"PID_Identity", "PID_External_Identity"}
+
+COST_METHODOLOGY = (
+    "Estimated using Salesforce list prices (USD/user/month x 12) applied to "
+    "used license counts. Actual contract pricing may differ due to volume "
+    "discounts, multi-year agreements, or promotional terms. Unrecognized "
+    "license types are matched by fuzzy name lookup against known SKUs. "
+    "Community/portal licenses use per-login or per-member list rates."
+)
+
+
+def _classify_license(definition_key: str) -> str:
+    if definition_key in EXTERNAL_LICENSE_KEYS:
+        return "external"
+    if definition_key in IDENTITY_LICENSE_KEYS:
+        return "identity"
+    return "internal"
+
 
 def _rest_query_all(sf: Salesforce, soql: str) -> list[dict]:
     """Execute a Data API SOQL query with pagination (local copy to avoid import cycles)."""
@@ -48,10 +75,16 @@ def pull_org_info(sf: Salesforce) -> dict:
 
 def pull_user_licenses(sf: Salesforce) -> list[dict]:
     try:
-        raw = _rest_query_all(sf, "SELECT Id, MasterLabel, TotalLicenses, UsedLicenses, Status FROM UserLicense")
+        raw = _rest_query_all(
+            sf,
+            "SELECT Id, MasterLabel, LicenseDefinitionKey, TotalLicenses, "
+            "UsedLicenses, Status FROM UserLicense",
+        )
         return [
             {
                 "type": r.get("MasterLabel", ""),
+                "key": r.get("LicenseDefinitionKey", ""),
+                "category": _classify_license(r.get("LicenseDefinitionKey", "")),
                 "total": r.get("TotalLicenses", 0),
                 "used": r.get("UsedLicenses", 0),
                 "status": r.get("Status", ""),
@@ -113,6 +146,27 @@ def pull_limits(sf: Salesforce) -> dict:
         return {}
 
 
+def pull_experience_sites(sf: Salesforce) -> list[dict]:
+    try:
+        raw = _rest_query_all(
+            sf,
+            "SELECT Id, Name, Status, UrlPathPrefix, Description FROM Network",
+        )
+        return [
+            {
+                "id": r.get("Id", ""),
+                "name": r.get("Name", ""),
+                "status": r.get("Status", ""),
+                "url_prefix": r.get("UrlPathPrefix", ""),
+                "description": r.get("Description", ""),
+            }
+            for r in raw
+        ]
+    except Exception as e:
+        logger.warning("sf_experience_sites_failed error=%s", e)
+        return []
+
+
 def estimate_annual_spend(edition: str, licenses: list[dict]) -> float:
     _ = edition  # reserved for edition-based pricing heuristics
     total = 0.0
@@ -137,10 +191,15 @@ async def snapshot_licensing(
     pkg_licenses = pull_package_licenses(sf)
     psl = pull_permission_set_licenses(sf)
     limits = pull_limits(sf)
+    experience_sites = pull_experience_sites(sf)
 
     edition = org_info.get("OrganizationType", "")
     is_sandbox = bool(org_info.get("IsSandbox", False))
     spend = estimate_annual_spend(edition, licenses)
+
+    limits_ext = dict(limits)
+    limits_ext["experience_sites"] = experience_sites
+    limits_ext["cost_methodology"] = COST_METHODOLOGY
 
     snap = OrgLicenseSnapshot(
         org_id=org_id,
@@ -150,18 +209,19 @@ async def snapshot_licensing(
         licenses_json=licenses,
         package_licenses_json=pkg_licenses,
         psl_json=psl,
-        limits_json=limits,
+        limits_json=limits_ext,
         estimated_annual_spend=spend,
     )
     db.add(snap)
     await db.flush()
 
     logger.info(
-        "license_snapshot_complete connection=%s edition=%s licenses=%d packages=%d spend=%.2f",
+        "license_snapshot_complete connection=%s edition=%s licenses=%d packages=%d sites=%d spend=%.2f",
         connection_id,
         edition,
         len(licenses),
         len(pkg_licenses),
+        len(experience_sites),
         spend,
     )
     return snap

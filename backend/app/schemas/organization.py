@@ -105,6 +105,8 @@ class UserVelocityResponse(BaseModel):
     connection_id: UUID
     snapshot_at: datetime
     active_user_count: int
+    internal_active_count: int = 0
+    external_active_count: int = 0
     new_users_this_month: int
     deactivated_this_month: int
     by_role_json: dict

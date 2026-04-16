@@ -11,7 +11,7 @@ Arcflare connects to client Salesforce orgs via OAuth, ingests metadata and oper
 | Tab | Capability |
 |-----|-----------|
 | **Analysis** | Connect Salesforce orgs via OAuth. Inspect metadata objects, field counts, record velocity, automation coverage. Filter by object type, managed package status. |
-| **Organization** | Map business entity hierarchy, departments, roles. Model human capital cost deflection — hours saved, cost avoidance, future hires deflected. |
+| **Organization** | Map business entity hierarchy, departments, roles. Internal vs external user segmentation, license utilization by category (core/community/feature), Experience Cloud site discovery, and human capital cost deflection modeling. |
 | **Processes** | Auto-generate business process maps from Salesforce metadata (Flows, triggers, object relationships) and extracted document content. Interactive visualization with export to Lucidchart. |
 | **Recommendations** | Cross-reference metadata patterns, record telemetry, and vectorized document content to produce ranked automation candidates with estimated ROI, implementation complexity, and business impact. |
 | **Agents** | Track deployed AI agents with cost caps, token usage, accuracy metrics, and fleet-level analytics. |
@@ -53,7 +53,7 @@ Arcflare connects to client Salesforce orgs via OAuth, ingests metadata and oper
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic |
 | Task Queue | Celery + Redis |
 | Database | PostgreSQL 16 + pgvector |
-| AI/ML | OpenAI embeddings, Anthropic Claude, Google Gemini, LangChain |
+| AI/ML | Google Gemini embeddings, Anthropic Claude, Google Gemini, LangChain |
 | NLP | spaCy NER, sentence-transformers, tiktoken |
 | Salesforce | simple-salesforce, OAuth 2.0, Metadata + Tooling APIs |
 
@@ -72,7 +72,10 @@ Entity matching via fuzzy string matching (rapidfuzz) + cosine similarity + LLM-
 LLM-powered analysis cross-references metadata patterns, record telemetry, and vectorized documents to produce ranked automation recommendations. Each recommendation includes estimated ROI, implementation complexity, business impact metrics, and human capital cost deflection modeling.
 
 ### Business Entity Profiler
-Builds organizational hierarchy from Salesforce User/Role data. Models human capital cost deflection — hours saved, cost avoidance, and future hires deflected per recommendation.
+Builds organizational hierarchy from Salesforce User/Role data. Segments internal (Standard) users from external community/portal users to give accurate headcounts. Models human capital cost deflection — hours saved, cost avoidance, and future hires deflected per recommendation.
+
+### Licensing Intelligence
+Pulls all Salesforce license types (UserLicense, PackageLicense, PermissionSetLicense) and classifies them into internal core, external community/portal, and feature/entitlement categories using `LicenseDefinitionKey`. Estimates annual platform spend from list pricing with transparent methodology. Discovers active Experience Cloud sites — identifying agentic automation opportunities to deflect portal traffic and reduce Experience Cloud licensing costs.
 
 ### Agent Management
 Track deployed AI agents with cost caps, token usage, accuracy metrics, and fleet-level analytics.

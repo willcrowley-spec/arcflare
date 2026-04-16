@@ -849,6 +849,15 @@ async def sync_metadata(
                 role_count = len(getattr(vel_snap, "by_role_json", {}) or {})
                 profile_count = len(getattr(vel_snap, "by_profile_json", {}) or {})
 
+            licenses_list = getattr(lic_snap, "licenses_json", []) or [] if lic_snap else []
+            internal_lics = [l for l in licenses_list if l.get("category") == "internal"]
+            external_lics = [l for l in licenses_list if l.get("category") == "external"]
+
+            experience_sites = []
+            if lic_snap:
+                limits_data = getattr(lic_snap, "limits_json", {}) or {}
+                experience_sites = limits_data.get("experience_sites", [])
+
             settings: dict[str, Any] = {
                 "sf_org_name": sf_org_name,
                 "sf_org_id": org_info.get("Id", ""),
@@ -857,14 +866,21 @@ async def sync_metadata(
                 "instance_name": org_info.get("InstanceName", ""),
                 "instance_url": tokens.get("instance_url", ""),
                 "active_users": getattr(vel_snap, "active_user_count", 0) if vel_snap else 0,
+                "internal_users": getattr(vel_snap, "internal_active_count", 0) if vel_snap else 0,
+                "external_users": getattr(vel_snap, "external_active_count", 0) if vel_snap else 0,
                 "estimated_annual_spend": float(getattr(lic_snap, "estimated_annual_spend", 0) or 0) if lic_snap else 0,
                 "top_packages": top_packages[:20],
                 "license_summary": {
-                    "total": sum(l.get("total", 0) for l in (getattr(lic_snap, "licenses_json", []) or [])) if lic_snap else 0,
-                    "used": sum(l.get("used", 0) for l in (getattr(lic_snap, "licenses_json", []) or [])) if lic_snap else 0,
+                    "total": sum(l.get("total", 0) for l in licenses_list),
+                    "used": sum(l.get("used", 0) for l in licenses_list),
+                    "internal_total": sum(l.get("total", 0) for l in internal_lics),
+                    "internal_used": sum(l.get("used", 0) for l in internal_lics),
+                    "external_total": sum(l.get("total", 0) for l in external_lics),
+                    "external_used": sum(l.get("used", 0) for l in external_lics),
                 },
                 "role_count": role_count,
                 "profile_count": profile_count,
+                "experience_sites": experience_sites,
             }
             org.settings_json = settings
 
