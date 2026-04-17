@@ -6,6 +6,7 @@ import ProcessesPage from '@/pages/Processes'
 import ProcessMapPage from '@/pages/Processes/ProcessMap'
 import RecommendationsPage from '@/pages/Recommendations'
 import AgentsPage from '@/pages/Agents'
+import PlatformDetailPage from '@/pages/Platforms'
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<Navigate to="/analysis" replace />} />
         <Route path="/analysis" element={<AnalysisPage />} />
+        <Route path="/platforms/:connectionId" element={<PlatformDetailPage />} />
         <Route path="/organization" element={<OrganizationPage />} />
         <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/processes/map" element={<Navigate to="/processes" replace />} />

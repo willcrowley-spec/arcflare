@@ -35,6 +35,8 @@ type DataTableProps<T> = {
   emptyLabel?: string
   resourceName?: string
   showSearch?: boolean
+  /** Optional per-row classes (e.g. muted empty rows). */
+  getRowClassName?: (row: T) => string | undefined
 }
 
 export function DataTable<T>({
@@ -47,6 +49,7 @@ export function DataTable<T>({
   emptyLabel = 'No rows to display',
   resourceName = 'items',
   showSearch = true,
+  getRowClassName,
 }: DataTableProps<T>) {
   const [query, setQuery] = React.useState('')
   const [sortCol, setSortCol] = React.useState<string | null>(null)
@@ -176,6 +179,7 @@ export function DataTable<T>({
                   className={clsx(
                     'border-b border-slate-100 last:border-0',
                     onRowClick && 'cursor-pointer hover:bg-slate-50/80',
+                    getRowClassName?.(row),
                   )}
                 >
                   {columns.map((c) => (
