@@ -9,6 +9,10 @@ class ProcessKpis(BaseModel):
     avg_efficiency: float | None = None
     draft_count: int = 0
     published_count: int = 0
+    domain_count: int = 0
+    needs_review_count: int = 0
+    handoff_count: int = 0
+    gap_count: int = 0
 
 
 class ProcessResponse(BaseModel):
@@ -27,6 +31,14 @@ class ProcessResponse(BaseModel):
     managed_asset_count: int
     metadata_json: dict
     created_at: datetime
+    parent_id: UUID | None = None
+    level: str = "process"
+    confidence_score: float | None = None
+    needs_review: bool = False
+    narrative: str | None = None
+    discovery_run_id: UUID | None = None
+    actors: list = []
+    artifacts: list = []
 
 
 class ProcessCreate(BaseModel):
