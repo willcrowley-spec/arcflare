@@ -96,6 +96,13 @@ export function SyncProgressPanel({
 
   if (dismissed) return null
   if (!isActive && (!data || data.status === 'idle')) return null
+  if (!data) {
+    return (
+      <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50/80 to-white p-5 shadow-sm">
+        <p className="text-sm font-medium text-sky-800">Preparing sync…</p>
+      </div>
+    )
+  }
 
   const phases = data.phases ?? {}
   const doneCount = PHASE_ORDER.filter((p) => phases[p]?.status === 'done').length
