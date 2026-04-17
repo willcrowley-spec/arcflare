@@ -1,5 +1,6 @@
 from app.models.agent import Agent, AgentUsageLog
 from app.models.connection import PlatformConnection
+from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.document import Document, DocumentChunk
 from app.models.entity import BusinessEntity
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
@@ -15,6 +16,7 @@ __all__ = [
     "BusinessProcess",
     "Document",
     "DocumentChunk",
+    "DiscoveryRun",
     "MetadataAutomation",
     "MetadataComponent",
     "MetadataField",
@@ -23,6 +25,7 @@ __all__ = [
     "OrgLicenseSnapshot",
     "PlatformConnection",
     "ProcessEdge",
+    "ProcessHandoff",
     "ProcessNode",
     "Recommendation",
     "RecordTelemetry",

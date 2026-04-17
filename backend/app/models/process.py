@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -50,8 +51,37 @@ class BusinessProcess(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    parent_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("business_processes.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    level: Mapped[str] = mapped_column(String(50), nullable=False, server_default="process")
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovery_run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("discovery_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    actors: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    artifacts: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
     organization: Mapped["Organization"] = relationship("Organization")
+    children: Mapped[list["BusinessProcess"]] = relationship(
+        "BusinessProcess",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        foreign_keys=[parent_id],
+    )
+    parent: Mapped["BusinessProcess | None"] = relationship(
+        "BusinessProcess",
+        back_populates="children",
+        remote_side=[id],
+        foreign_keys=[parent_id],
+    )
     nodes: Mapped[list["ProcessNode"]] = relationship(
         "ProcessNode", back_populates="process", cascade="all, delete-orphan"
     )
