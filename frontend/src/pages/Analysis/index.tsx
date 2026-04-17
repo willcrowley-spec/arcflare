@@ -97,7 +97,6 @@ export default function AnalysisPage() {
       })
       if (active) {
         setActiveSyncId(String(active.id))
-        setShowSyncModal(true)
       }
     }
   }, [connections, activeSyncId])

@@ -40,20 +40,20 @@ function PhaseChip({ name, info }: { name: string; info: PhaseInfo }) {
   return (
     <div
       className={clsx(
-        'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-all duration-300',
+        'flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border px-2.5 py-2 text-xs transition-all duration-300',
         isWaiting && 'border-slate-200 bg-slate-50 text-slate-400',
         isPulling && 'border-sky-300 bg-sky-50 text-sky-800 shadow-sm',
         isDone && 'border-emerald-200 bg-emerald-50 text-emerald-800',
       )}
     >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-        {isWaiting && <span className="h-2 w-2 rounded-full bg-slate-300" />}
-        {isPulling && <Loader2 className="h-4 w-4 animate-spin text-sky-600" />}
-        {isDone && <Check className="h-4 w-4 text-emerald-600" />}
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+        {isWaiting && <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />}
+        {isPulling && <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />}
+        {isDone && <Check className="h-3.5 w-3.5 text-emerald-600" />}
       </span>
-      <span className="font-medium">{label}</span>
+      <span className="truncate font-medium">{label}</span>
       {isDone && info.count > 0 && (
-        <span className="ml-auto tabular-nums text-xs font-semibold">{info.count.toLocaleString()}</span>
+        <span className="ml-auto shrink-0 tabular-nums font-semibold">{info.count.toLocaleString()}</span>
       )}
     </div>
   )
