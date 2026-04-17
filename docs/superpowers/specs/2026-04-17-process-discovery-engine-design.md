@@ -247,15 +247,85 @@ The discovery pipeline runs as a Celery task (`process_discovery_task`), similar
 
 **Langfuse tracing:** Each pass gets its own Langfuse generation event with prompt, response, token usage, and latency. The overall run gets a trace with `discovery_run_id` in metadata.
 
+## Re-run Semantics and Data Integrity
+
+### Full Pipeline Re-run
+
+When the user clicks "Generate" again (or "Re-run" if a previous run exists):
+
+1. A new `DiscoveryRun` is created. The old run's data is **not deleted** until the new run completes successfully.
+2. On successful completion, the old run's processes, handoffs, and graph nodes/edges are replaced atomically (delete old → insert new within a single transaction keyed on `discovery_run_id`).
+3. If the new run fails, the old data remains untouched. The `DiscoveryRun` is marked `failed` with error details.
+
+This ensures no orphaned or duplicate data — there's always exactly one "current" set of processes per org.
+
+### Per-Pass Re-run
+
+Users can re-run individual passes:
+
+- **Re-run Pass 1 (Domain Discovery):** Replaces all domain-level processes. Cascades: child processes from Pass 2 are deleted, Pass 3 handoffs are deleted. Effectively a full re-run but the user might want this after updating org intelligence.
+- **Re-run Pass 2 (for a specific domain):** Replaces all child processes under that domain. Cross-domain handoffs involving that domain's processes are deleted. Pass 3 results are invalidated (marked stale, user prompted to re-run synthesis).
+- **Re-run Pass 3 (Synthesis):** Replaces cross-domain handoffs and executive summary only. Domain and process data from Pass 1/2 are untouched.
+
+Each re-run creates a new `DiscoveryRun` (or updates the existing one's `pass_results` for partial re-runs — TBD during implementation based on what's cleaner).
+
+### Staleness Indicators
+
+When a downstream pass is invalidated by an upstream re-run:
+- Affected processes get a `stale` flag in their `metadata_json`.
+- The UI shows a subtle "outdated" indicator on stale items with a prompt to re-run the relevant pass.
+
+## Pipeline Progress UX
+
+### Stage Progression on Processes Page
+
+The Processes page shows a **persistent pipeline status bar** at the top when a discovery run is active or has completed. Three stages displayed horizontally:
+
+```
+[ 1. Domain Discovery ] → [ 2. Process Decomposition ] → [ 3. Cross-Domain Synthesis ]
+```
+
+Each stage shows one of four states:
+- **Waiting** — gray dot, muted text. Not yet started.
+- **Running** — spinning indicator, highlighted border. Shows sub-progress where available (e.g., "Decomposing 3 of 7 domains").
+- **Complete** — green check, count summary (e.g., "5 domains found", "23 processes mapped", "4 handoffs, 2 gaps").
+- **Failed** — red indicator with error message and "Retry" button.
+
+This bar is **not a modal** — it's inline at the top of the Processes page, always visible while a run is active. After completion it collapses to a summary line ("Last discovery: 5 domains, 23 processes, 2 gaps — 3 min ago") with an expand toggle to see the full stage breakdown.
+
+### Progress Tracking (Backend)
+
+Reuses the Redis `sync_progress` pattern with discovery-specific phases:
+
+```
+Phases: context_gathering, domain_discovery, domain_decomposition, cross_domain_synthesis, graph_generation
+```
+
+Within `domain_decomposition`, the progress callback reports sub-progress: `"3 of 7 domains"` via the existing `count` + new `total` field on phase info.
+
+The frontend polls `GET /processes/discovery-status` every 2 seconds (same pattern as `useSyncProgress`), which reads from Redis.
+
+### Re-run Controls
+
+After a discovery run completes, each stage in the progression bar shows a subtle "re-run" icon button:
+- Stage 1 re-run: warns "This will replace all discovered processes. Continue?"
+- Stage 2 re-run: appears per-domain in the domain accordion row, not on the stage bar
+- Stage 3 re-run: "Re-run Synthesis" button, no destructive warning needed
+
+The main "Generate" button changes label based on state:
+- No prior run: **"Discover Processes"**
+- Prior run exists: **"Re-discover"** (with a subtitle: "Replaces current process map")
+- Run in progress: **"Discovering…"** (disabled, spinning)
+
 ## Frontend Changes
 
 ### Processes Page
-- **Generate button** triggers the discovery pipeline via `POST /processes/generate` (now returns a `discovery_run_id`)
-- Show a progress modal (reuse `SyncProgressModal` pattern) with phase chips during the run
+- Pipeline status bar (described above) replaces the old Generate button area when a run exists
 - After completion, the page shows discovered domains as top-level accordion rows
-- Each domain row shows: name, description, confidence badge, "needs review" indicator, process count
+- Each domain row shows: name, description, confidence badge, "needs review" indicator, process count, "Re-run decomposition" action
 - Expand a domain to see its child processes, each with their own confidence and review status
 - **Confirm/Reject** buttons on `discovered` items to let users validate
+- Stale indicators on items invalidated by upstream re-runs
 
 ### Process Map Page
 - Already functional with ReactFlow. Graph generation step produces nodes/edges from the new hierarchy.
