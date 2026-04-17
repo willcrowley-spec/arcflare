@@ -30,16 +30,6 @@ def _describe_object(obj: MetadataObject, fields: list[MetadataField]) -> str:
     if obj.managed_package_namespace:
         lines.append(f"Managed Package: {obj.managed_package_namespace}")
 
-    auto_flags = []
-    if obj.has_triggers:
-        auto_flags.append("Apex Triggers")
-    if obj.has_flows:
-        auto_flags.append("Flows")
-    if obj.has_validation_rules:
-        auto_flags.append("Validation Rules")
-    if auto_flags:
-        lines.append(f"Automation: {', '.join(auto_flags)}")
-
     rels = (obj.metadata_json or {}).get("relationships", [])
     if rels:
         rel_strs = []

@@ -261,25 +261,6 @@ def pull_validation_rules(sf: Salesforce, object_name: str) -> list[dict]:
         return []
 
 
-def pull_objects_with_validation_rules(sf: Salesforce) -> set[str]:
-    """Return SObject API names that have at least one unmanaged validation rule."""
-    try:
-        raw = _tooling_query_all(
-            sf,
-            "SELECT EntityDefinition.QualifiedApiName objName "
-            "FROM ValidationRule WHERE NamespacePrefix = null",
-        )
-        names: set[str] = set()
-        for r in raw:
-            qn = r.get("objName") or (r.get("EntityDefinition") or {}).get("QualifiedApiName")
-            if qn:
-                names.add(qn)
-        return names
-    except Exception as e:
-        logger.warning("sf_validation_rule_object_names_failed error=%s", e)
-        return set()
-
-
 def pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
     try:
         raw = _tooling_query_all(sf, "SELECT Id,Name,TableEnumOrId FROM WorkflowRule")
@@ -766,35 +747,6 @@ async def sync_metadata(
             )
         )
     _progress("installed_packages", "done", len(packages))
-
-    auto_by_object: dict[str, dict[str, bool]] = {}
-    for auto in automations:
-        for rel in auto.related_objects:
-            entry = auto_by_object.setdefault(
-                rel, {"triggers": False, "flows": False, "validation_rules": False}
-            )
-            if auto.automation_type == "trigger":
-                entry["triggers"] = True
-            elif auto.automation_type in ("flow", "process_builder"):
-                entry["flows"] = True
-
-    vr_objects = pull_objects_with_validation_rules(sf)
-
-    for obj_name, flags in auto_by_object.items():
-        stmt = select(MetadataObject).where(
-            MetadataObject.connection_id == connection_id,
-            MetadataObject.api_name == obj_name,
-        )
-        res = await db.execute(stmt)
-        mo = res.scalar_one_or_none()
-        if mo:
-            mo.has_triggers = flags.get("triggers", False)
-            mo.has_flows = flags.get("flows", False)
-
-    stmt_vr = select(MetadataObject).where(MetadataObject.connection_id == connection_id)
-    res_vr = await db.execute(stmt_vr)
-    for mo in res_vr.scalars().all():
-        mo.has_validation_rules = mo.api_name in vr_objects
 
     _progress("licensing", "pulling", 0)
     try:

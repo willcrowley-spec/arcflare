@@ -17,11 +17,11 @@ class MetadataObjectResponse(BaseModel):
     record_count: int
     is_custom: bool
     managed_package_namespace: str | None
-    has_triggers: bool
-    has_flows: bool
-    has_validation_rules: bool
+    classification: str | None
+    classification_source: str
+    velocity_score: float
+    automation_count: int = 0
     metadata_json: dict
-    last_synced_at: datetime | None
 
 
 class MetadataFieldResponse(BaseModel):

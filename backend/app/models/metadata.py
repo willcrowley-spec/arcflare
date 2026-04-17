@@ -6,6 +6,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -55,13 +56,10 @@ class MetadataObject(Base):
     record_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     is_custom: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     managed_package_namespace: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    has_triggers: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    has_flows: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    has_validation_rules: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    classification: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    classification_source: Mapped[str] = mapped_column(String(10), nullable=False, server_default="auto")
+    velocity_score: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
     metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization")
     connection: Mapped["PlatformConnection"] = relationship(

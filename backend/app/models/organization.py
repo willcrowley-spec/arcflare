@@ -25,6 +25,15 @@ class Organization(Base):
     clerk_org_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     plan_tier: Mapped[str] = mapped_column(String(50), nullable=False, server_default="free")
     settings_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    analysis_config: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text(
+            "'{\"velocity_window_days\":30,\"classification_threshold\":0.1,"
+            "\"min_records_for_vectorization\":1,\"embedding_provider\":\"default\","
+            "\"vector_store_provider\":\"default\",\"llm_provider\":\"default\"}'::jsonb"
+        ),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
