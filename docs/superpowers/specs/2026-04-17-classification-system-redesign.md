@@ -1,7 +1,7 @@
 # Classification System Redesign
 
 **Date:** 2026-04-17  
-**Status:** Draft
+**Status:** Deferred — revisit after business process mapping pipeline is designed. See decision notes below.
 
 ## Problem
 
@@ -106,8 +106,25 @@ The `PhaseChip` component updates to show `{count} of {total}` when status is `p
 - Update `AnalysisField` component to accept `helpText` prop.
 - No data migration needed — next sync populates `creator_diversity_score`, next classification run uses the new logic. Old objects without the score get classified on velocity alone until re-synced.
 
+## Decision Notes (2026-04-17)
+
+**Deferred.** After discussion, the creator diversity heuristic (new SOQL queries, admin detection, ratio computation) is over-engineering an intermediate step. The metadata will go through a reasoning LLM during business process mapping anyway, which will classify objects with far more context than any heuristic.
+
+**What to keep from this spec:**
+- Collapse "empty" into "deprecated" (simple logic change, no new queries)
+- The three-bucket taxonomy: `operational`, `configuration`, `deprecated`
+- Sync progress polling improvements (incremental object count, spinning indicator)
+- Help text on Analysis Settings fields
+- Fix metadata richness gaps (object descriptions, field descriptions vs helpText, compliance/security classification) — these feed the LLM pipeline
+
+**What to defer:**
+- Creator diversity SOQL queries and admin detection
+- `creator_diversity_score` column and migration
+- `creator_diversity_threshold` config field
+
+**Revisit trigger:** After the business process mapping pipeline spec is written, evaluate whether classification needs its own preprocessing step or is handled entirely by the LLM.
+
 ## What This Does NOT Include
 
-- LLM-based classification (deferred — heuristics should cover 90%+ of cases)
 - Cross-platform classification signals (future: HubSpot, etc.)
 - Historical classification tracking or audit log
