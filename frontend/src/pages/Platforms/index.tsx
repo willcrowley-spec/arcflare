@@ -160,9 +160,9 @@ export default function PlatformDetailPage() {
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''
 
-  const objectsQuery = useMetadataObjects({ page: 1, page_size: 500 }, { enabled: hasConnection })
-  const automationQuery = useMetadataAutomation({ page: 1, page_size: 500 }, { enabled: hasConnection })
-  const componentsQuery = useMetadataComponents({ page: 1, page_size: 500 }, { enabled: hasConnection })
+  const objectsQuery = useMetadataObjects({ page: 1, page_size: 200 }, { enabled: hasConnection })
+  const automationQuery = useMetadataAutomation({ page: 1, page_size: 200 }, { enabled: hasConnection })
+  const componentsQuery = useMetadataComponents({ page: 1, page_size: 200 }, { enabled: hasConnection })
   const summaryQuery = useMetadataSummary({ enabled: hasConnection })
   const licensingQuery = useOrgLicensing()
   const velocityQuery = useUserVelocity()
