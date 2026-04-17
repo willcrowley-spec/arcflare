@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, DbSession
+from app.models.discovery import ProcessHandoff
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.schemas.process import (
     ProcessCreate,
@@ -59,11 +60,38 @@ async def list_processes(
             BusinessProcess.status == "published",
         )
     )
+    domain_c = await db.scalar(
+        select(func.count()).select_from(BusinessProcess).where(
+            BusinessProcess.org_id == org.id,
+            BusinessProcess.level == "domain",
+        )
+    )
+    review_c = await db.scalar(
+        select(func.count()).select_from(BusinessProcess).where(
+            BusinessProcess.org_id == org.id,
+            BusinessProcess.needs_review == True,
+        )
+    )
+    handoff_c = await db.scalar(
+        select(func.count()).select_from(ProcessHandoff).where(
+            ProcessHandoff.org_id == org.id,
+        )
+    )
+    gap_c = await db.scalar(
+        select(func.count()).select_from(ProcessHandoff).where(
+            ProcessHandoff.org_id == org.id,
+            ProcessHandoff.is_gap == True,
+        )
+    )
     kpis = ProcessKpis(
         total_processes=int(total or 0),
         avg_efficiency=float(avg_eff) if avg_eff is not None else None,
         draft_count=int(draft_c or 0),
         published_count=int(pub_c or 0),
+        domain_count=int(domain_c or 0),
+        needs_review_count=int(review_c or 0),
+        handoff_count=int(handoff_c or 0),
+        gap_count=int(gap_c or 0),
     )
     return ProcessListResponse(items=items, kpis=kpis)
 
