@@ -155,6 +155,44 @@ export function useUserVelocity() {
   })
 }
 
+export function useUpdateClassification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ objectId, classification }: { objectId: string; classification: string }) =>
+      api.metadata.updateClassification(objectId, classification),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['metadata'] })
+    },
+  })
+}
+
+export function useOrgSettings() {
+  return useQuery({
+    queryKey: ['organization', 'settings'],
+    queryFn: () => api.organization.settings(),
+  })
+}
+
+export function useUpdateOrgSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.organization.updateSettings(data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['organization', 'settings'] })
+    },
+  })
+}
+
+export function useReanalyze() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.organization.reanalyze(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['metadata'] })
+    },
+  })
+}
+
 export function useProcesses() {
   return useQuery({
     queryKey: ['processes'],

@@ -16,19 +16,16 @@ interface SyncProgressData {
 }
 
 const PHASE_LABELS: Record<string, string> = {
-  objects: 'Objects',
-  fields: 'Fields',
-  flows: 'Flows',
-  triggers: 'Triggers',
-  validation_rules: 'Validation Rules',
-  apex_classes: 'Apex Classes',
+  objects: 'Data Objects',
+  automations: 'Automations',
+  code: 'Code',
   permissions: 'Permissions',
   ui_components: 'UI Components',
-  reports: 'Reports & Dashboards',
   installed_packages: 'Packages',
   licensing: 'Licensing',
   user_velocity: 'User Velocity',
   entities: 'Org Hierarchy',
+  classification: 'Classification',
   vectorization: 'Vectorization',
 }
 

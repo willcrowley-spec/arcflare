@@ -46,6 +46,15 @@ export interface Organization {
   updated_at: string
 }
 
+export interface AnalysisConfig {
+  velocity_window_days: number
+  classification_threshold: number
+  min_records_for_vectorization: number
+  embedding_provider: string
+  vector_store_provider: string
+  llm_provider: string
+}
+
 export interface User {
   id: string
   email: string
@@ -85,11 +94,11 @@ export interface MetadataObject {
   record_count: number
   is_custom: boolean
   managed_package_namespace?: string | null
-  has_triggers: boolean
-  has_flows: boolean
-  has_validation_rules: boolean
+  classification?: string | null
+  classification_source?: string
+  velocity_score?: number
+  automation_count?: number
   metadata_json?: Record<string, unknown>
-  last_synced_at?: string | null
   /** Optional legacy / client-normalized fields */
   platform?: PlatformType
   type?: EntityType

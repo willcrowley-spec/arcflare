@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AnalysisConfig,
   BusinessEntity,
   Document,
   DocumentSearchResult,
@@ -131,6 +132,11 @@ export const api = {
     }) =>
       request<PaginatedResponse<MetadataComponent>>(withQuery('/metadata/components/', params)),
     getVelocity: () => request<VelocityMetrics>('/analysis/velocity'),
+    updateClassification: (objectId: string, classification: string) =>
+      request<unknown>(`/metadata/objects/${objectId}/classification`, {
+        method: 'PATCH',
+        body: JSON.stringify({ classification }),
+      }),
   },
   documents: {
     list: (params?: { page?: number; page_size?: number }) =>
@@ -196,6 +202,13 @@ export const api = {
     userVelocity: () => request<unknown[]>('/organization/user-velocity/'),
     syncFromSalesforce: () =>
       request<void>('/organization/sync-from-salesforce', { method: 'POST' }),
+    settings: () => request<unknown>('/organization/settings'),
+    updateSettings: (data: Record<string, unknown>) =>
+      request<unknown>('/organization/settings', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    reanalyze: () => request<unknown>('/organization/reanalyze', { method: 'POST' }),
   },
   agents: {
     list: () => request<unknown>('/agents'),
