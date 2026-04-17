@@ -17,7 +17,6 @@ from app.schemas.process import (
 )
 from app.services.processes.export import export_json, export_lucidchart, export_svg
 from app.services.processes.graph import build_process_graph
-from app.services.processes.miner import mine_from_documents, mine_from_metadata
 
 router = APIRouter()
 
@@ -158,9 +157,10 @@ async def generate_processes(
     db: DbSession,
     org: CurrentOrg,
 ) -> dict[str, str]:
-    meta = await mine_from_metadata(org.id, db)
-    docs = await mine_from_documents(org.id, db)
-    return {"status": "accepted", "candidates": str(len(meta) + len(docs))}
+    from app.workers.process_discovery import process_discovery_task
+
+    process_discovery_task.delay(str(org.id))
+    return {"status": "accepted"}
 
 
 @router.post("/{process_id}/export")
