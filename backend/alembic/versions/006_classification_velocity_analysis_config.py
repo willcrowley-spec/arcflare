@@ -27,13 +27,15 @@ def upgrade() -> None:
     op.drop_column("metadata_objects", "has_flows")
     op.drop_column("metadata_objects", "has_validation_rules")
     op.drop_column("metadata_objects", "last_synced_at")
+    import json
+    default_json = json.dumps(DEFAULT_ANALYSIS_CONFIG)
     op.add_column(
         "organizations",
         sa.Column(
             "analysis_config",
             JSONB(),
             nullable=False,
-            server_default=sa.text("'{\"velocity_window_days\":30,\"classification_threshold\":0.1,\"min_records_for_vectorization\":1,\"embedding_provider\":\"default\",\"vector_store_provider\":\"default\",\"llm_provider\":\"default\"}'::jsonb"),
+            server_default=default_json,
         ),
     )
 
