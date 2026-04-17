@@ -25,9 +25,11 @@ async def _embed(client, content: str) -> list[float]:
         return list(result.embeddings[0].values)
 
     import time as _time
+    from datetime import datetime, timezone
+
     _start = _time.time()
     vectors = await asyncio.to_thread(_sync)
-    _dur = (_time.time() - _start) * 1000
+    _end = _time.time()
 
     try:
         from app.core.observability import get_langfuse
@@ -37,9 +39,10 @@ async def _embed(client, content: str) -> list[float]:
                 name="embedding",
                 model=_EMBED_MODEL,
                 input=content[:200],
+                start_time=datetime.fromtimestamp(_start, tz=timezone.utc),
+                end_time=datetime.fromtimestamp(_end, tz=timezone.utc),
                 metadata={"dimensions": _EMBED_DIMS, "input_length": len(content)},
                 usage={"total": 1},
-                level="DEFAULT",
             )
     except Exception:
         pass
@@ -57,9 +60,11 @@ async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
         return [list(e.values) for e in result.embeddings]
 
     import time as _time
+    from datetime import datetime, timezone
+
     _start = _time.time()
     vectors = await asyncio.to_thread(_sync)
-    _dur = (_time.time() - _start) * 1000
+    _end = _time.time()
 
     try:
         from app.core.observability import get_langfuse
@@ -69,9 +74,10 @@ async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
                 name="embedding_batch",
                 model=_EMBED_MODEL,
                 input=f"[{len(texts)} texts]",
-                metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts), "duration_ms": round(_dur)},
+                start_time=datetime.fromtimestamp(_start, tz=timezone.utc),
+                end_time=datetime.fromtimestamp(_end, tz=timezone.utc),
+                metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts)},
                 usage={"total": len(texts)},
-                level="DEFAULT",
             )
     except Exception:
         pass

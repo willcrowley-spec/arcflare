@@ -260,17 +260,24 @@ def pull_apex_classes(sf: Salesforce) -> list[dict]:
         return []
 
 
-def pull_validation_rules(sf: Salesforce, object_name: str) -> list[dict]:
+def pull_validation_rules_bulk(sf: Salesforce, object_names: list[str]) -> dict[str, list[dict]]:
+    """Pull all validation rules in a single Tooling API query, grouped by object."""
+    result_map: dict[str, list[dict]] = {name: [] for name in object_names}
     try:
         soql = (
-            f"SELECT Id,ValidationName,Active,Description,ErrorMessage "
-            f"FROM ValidationRule "
-            f"WHERE EntityDefinition.QualifiedApiName='{object_name}'"
+            "SELECT Id,ValidationName,Active,Description,ErrorMessage,"
+            "EntityDefinition.QualifiedApiName "
+            "FROM ValidationRule"
         )
-        return _tooling_query_all(sf, soql)
+        rows = _tooling_query_all(sf, soql)
+        for vr in rows:
+            entity = (vr.get("EntityDefinition") or {}).get("QualifiedApiName", "")
+            if entity in result_map:
+                result_map[entity].append(vr)
+        logger.info("sf_validation_rules_bulk count=%d", len(rows))
     except Exception as e:
-        logger.warning("sf_validation_rules_failed object=%s error=%s", object_name, e)
-        return []
+        logger.warning("sf_validation_rules_bulk_failed error=%s", e)
+    return result_map
 
 
 def pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
@@ -609,13 +616,10 @@ async def sync_metadata(
 
     _progress("automations", "pulling", 0)
     automations = pull_all_automations(sf)
+    vr_by_object = pull_validation_rules_bulk(sf, object_names)
     all_validation_rules: list[dict] = []
-    for obj_name in object_names:
-        all_validation_rules.extend(
-            {**vr, "_related_object": obj_name}
-            for vr in pull_validation_rules(sf, obj_name)
-        )
-    logger.info("sf_validation_rules_pulled total=%d", len(all_validation_rules))
+    for obj_name, vrs in vr_by_object.items():
+        all_validation_rules.extend({**vr, "_related_object": obj_name} for vr in vrs)
     active_automation_count = sum(1 for a in automations if a.is_active)
     _progress("automations", "done", active_automation_count + len(all_validation_rules))
 

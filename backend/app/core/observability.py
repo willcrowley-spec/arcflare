@@ -28,7 +28,6 @@ def get_langfuse():
             secret_key=sk,
             public_key=pk,
             host=settings.LANGFUSE_BASE_URL or "https://cloud.langfuse.com",
-            enabled=True,
         )
         logger.info("langfuse_initialized host=%s", settings.LANGFUSE_BASE_URL)
         return _langfuse_client

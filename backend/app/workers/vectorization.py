@@ -17,6 +17,8 @@ def vectorize_document_task(document_id: str) -> str:
     from app.services.extraction.chunker import chunk_document
     from app.services.documents.vectorizer import vectorize_chunks
 
+    from app.core.observability import flush_langfuse
+
     async def _run() -> None:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
@@ -41,7 +43,8 @@ def vectorize_document_task(document_id: str) -> str:
             doc.status = "indexed"
             await session.commit()
 
-    asyncio.run(_run())
-    from app.core.observability import flush_langfuse
-    flush_langfuse()
-    return document_id
+    try:
+        asyncio.run(_run())
+        return document_id
+    finally:
+        flush_langfuse()

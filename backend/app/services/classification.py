@@ -25,7 +25,8 @@ def _get_config(org: Organization) -> dict:
 def classify_object(record_count: int, velocity_score: float, threshold: float) -> str:
     if record_count == 0:
         return "empty"
-    if velocity_score > threshold:
+    ratio = velocity_score / record_count if record_count > 0 else 0.0
+    if ratio > threshold:
         return "operational"
     return "configuration"
 

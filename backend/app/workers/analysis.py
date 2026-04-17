@@ -15,6 +15,8 @@ def generate_recommendations_task(org_id: str) -> str:
     from app.services.recommendations.analyzer import analyze_org
     from app.services.recommendations.scorer import score_recommendation
 
+    from app.core.observability import flush_langfuse
+
     async def _run() -> int:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
@@ -26,7 +28,8 @@ def generate_recommendations_task(org_id: str) -> str:
             await session.commit()
             return len(candidates)
 
-    asyncio.run(_run())
-    from app.core.observability import flush_langfuse
-    flush_langfuse()
-    return org_id
+    try:
+        asyncio.run(_run())
+        return org_id
+    finally:
+        flush_langfuse()

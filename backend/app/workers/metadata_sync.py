@@ -66,18 +66,12 @@ def sync_metadata_task(connection_id: str) -> str:
                 conn.status = "connected"
                 await session.commit()
 
+    from app.core.observability import get_langfuse, flush_langfuse
+
     try:
-        trace = None
-        try:
-            from app.core.observability import get_langfuse
-            lf = get_langfuse()
-            if lf is not None:
-                trace = lf.trace(
-                    name="metadata_sync",
-                    metadata={"connection_id": connection_id},
-                )
-        except Exception:
-            trace = None
+        lf = get_langfuse()
+        if lf is not None:
+            lf.trace(name="metadata_sync", metadata={"connection_id": connection_id})
 
         asyncio.run(_run_sync())
 
@@ -98,13 +92,10 @@ def sync_metadata_task(connection_id: str) -> str:
             update_phase(connection_id, "vectorization", "done", 0, r)
 
         complete_progress(connection_id, r=r)
+        asyncio.run(_mark_connected())
+        return connection_id
     except Exception as exc:
         complete_progress(connection_id, error=str(exc), r=r)
-        from app.core.observability import flush_langfuse
-        flush_langfuse()
         raise
-
-    asyncio.run(_mark_connected())
-    from app.core.observability import flush_langfuse
-    flush_langfuse()
-    return connection_id
+    finally:
+        flush_langfuse()

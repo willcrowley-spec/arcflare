@@ -162,10 +162,16 @@ export default function PlatformDetailPage() {
   )
 
   useEffect(() => {
+    setActiveSyncId(null)
+  }, [connectionId])
+
+  useEffect(() => {
     if (connection?.status === 'syncing' && connectionId && !activeSyncId) {
       setActiveSyncId(connectionId)
     }
   }, [connection?.status, connectionId, activeSyncId])
+
+  const dismissSyncPanel = useCallback(() => setActiveSyncId(null), [])
 
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''
@@ -369,7 +375,7 @@ export default function PlatformDetailPage() {
         <SyncProgressPanel
           data={syncProgressQuery.data}
           isActive={!!activeSyncId}
-          onDismiss={() => setActiveSyncId(null)}
+          onDismiss={dismissSyncPanel}
         />
       ) : null}
 

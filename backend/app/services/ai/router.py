@@ -119,14 +119,16 @@ def llm_call(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
-    duration_ms = (time.time() - start_time) * 1000
+    end_time = time.time()
+    duration_ms = (end_time - start_time) * 1000
 
     logger.info(
-        "llm_call provider=%s model=%s tier=%s in=%d out=%d",
-        provider, model, tier, result.input_tokens, result.output_tokens,
+        "llm_call provider=%s model=%s tier=%s in=%d out=%d dur=%.0fms",
+        provider, model, tier, result.input_tokens, result.output_tokens, duration_ms,
     )
 
     try:
+        from datetime import datetime, timezone
         from app.core.observability import get_langfuse
 
         lf = get_langfuse()
@@ -136,13 +138,14 @@ def llm_call(
                 model=model,
                 input=prompt,
                 output=result.text,
+                start_time=datetime.fromtimestamp(start_time, tz=timezone.utc),
+                end_time=datetime.fromtimestamp(end_time, tz=timezone.utc),
                 metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens},
                 usage={
                     "input": result.input_tokens,
                     "output": result.output_tokens,
                     "total": result.input_tokens + result.output_tokens,
                 },
-                level="DEFAULT",
             )
     except Exception:
         pass
