@@ -23,4 +23,5 @@ celery_app.conf.include = [
     "app.workers.telemetry_poll",
     "app.workers.vectorization",
     "app.workers.analysis",
+    "app.workers.process_discovery",
 ]
