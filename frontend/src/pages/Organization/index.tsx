@@ -491,7 +491,7 @@ export default function OrganizationPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Organization</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Organization</h1>
         <p className="mt-2 max-w-3xl text-sm text-slate-600">
           Business entity profiling, operating structure, and human-capital cost modeling across connected systems.
         </p>

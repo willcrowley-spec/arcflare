@@ -128,24 +128,37 @@ export function DataTable<T>({
         <table className="min-w-full border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/80">
-              {columns.map((c) => (
-                <th
-                  key={c.id}
-                  className={clsx(
-                    'px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500',
-                    c.sortValue && 'cursor-pointer select-none hover:text-slate-800',
-                    c.className,
-                  )}
-                  onClick={() => c.sortValue && toggleSort(c.id)}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    {c.header}
-                    {sortCol === c.id ? (
-                      <span className="text-[10px] text-navy-600">{sortDir === 'asc' ? '▲' : '▼'}</span>
-                    ) : null}
-                  </span>
-                </th>
-              ))}
+              {columns.map((c) => {
+                const isSortable = !!c.sortValue
+                const isSorted = sortCol === c.id
+                return (
+                  <th
+                    key={c.id}
+                    className={clsx(
+                      'px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500',
+                      isSortable && 'cursor-pointer select-none hover:text-slate-800 focus-visible:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-navy-200',
+                      c.className,
+                    )}
+                    onClick={() => isSortable && toggleSort(c.id)}
+                    onKeyDown={(e) => {
+                      if (isSortable && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault()
+                        toggleSort(c.id)
+                      }
+                    }}
+                    tabIndex={isSortable ? 0 : undefined}
+                    role={isSortable ? 'button' : undefined}
+                    aria-sort={isSorted ? (sortDir === 'asc' ? 'ascending' : 'descending') : isSortable ? 'none' : undefined}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {c.header}
+                      {isSorted ? (
+                        <span className="text-[10px] text-navy-600">{sortDir === 'asc' ? '▲' : '▼'}</span>
+                      ) : null}
+                    </span>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
@@ -207,7 +220,7 @@ export function DataTable<T>({
           <button
             type="button"
             aria-label="First page"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => setPage(0)}
             disabled={isFirstPage}
           >
@@ -216,7 +229,7 @@ export function DataTable<T>({
           <button
             type="button"
             aria-label="Previous page"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={isFirstPage}
           >
@@ -232,7 +245,7 @@ export function DataTable<T>({
                 key={item}
                 type="button"
                 className={clsx(
-                  'h-8 w-8 rounded-lg text-sm font-medium',
+                  'h-10 w-10 rounded-lg text-sm font-medium',
                   item === safePage
                     ? 'bg-navy-800 text-white'
                     : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
@@ -248,7 +261,7 @@ export function DataTable<T>({
           <button
             type="button"
             aria-label="Next page"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={isLastPage}
           >
@@ -257,7 +270,7 @@ export function DataTable<T>({
           <button
             type="button"
             aria-label="Last page"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             onClick={() => setPage(pageCount - 1)}
             disabled={isLastPage}
           >

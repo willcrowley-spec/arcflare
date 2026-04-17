@@ -181,7 +181,7 @@ export default function AgentsPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Agent Management</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Agent Management</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Monitor runtime health, spend guardrails, and task quality across the deployed agent fleet.
           </p>
@@ -195,7 +195,7 @@ export default function AgentsPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Agent Management</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Agent Management</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Monitor runtime health, spend guardrails, and task quality across the deployed agent fleet.
           </p>
@@ -216,7 +216,7 @@ export default function AgentsPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Agent Management</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Agent Management</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Monitor runtime health, spend guardrails, and task quality across the deployed agent fleet.
           </p>
@@ -274,7 +274,14 @@ export default function AgentsPage() {
                     <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Spend</p>
                       <p className="mt-2 text-xl font-semibold text-navy-900">{formatUsd(spent)}</p>
-                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white ring-1 ring-slate-200">
+                      <div
+                        className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white ring-1 ring-slate-200"
+                        role="progressbar"
+                        aria-valuenow={pct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label="Budget utilization"
+                      >
                         <div className="h-full rounded-full bg-orange-500" style={{ width: `${pct}%` }} />
                       </div>
                       <p className="mt-2 text-xs font-semibold text-slate-600">{pct}% of cap utilized</p>
@@ -285,7 +292,7 @@ export default function AgentsPage() {
                       {(tags.length ? tags : ['Agent']).map((t) => (
                         <span
                           key={t}
-                          className="rounded-full bg-navy-50 px-2.5 py-0.5 text-[11px] font-semibold text-navy-800 ring-1 ring-navy-200/80"
+                          className="rounded-full bg-navy-50 px-3 py-1 text-xs font-semibold text-navy-800 ring-1 ring-navy-200/80"
                         >
                           {t}
                         </span>
@@ -293,7 +300,9 @@ export default function AgentsPage() {
                     </div>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+                      disabled
+                      title="Coming soon"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Configure
                     </button>

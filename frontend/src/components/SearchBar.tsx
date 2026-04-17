@@ -22,7 +22,8 @@ export function SearchBar({ value, onChange, placeholder = 'Search…', classNam
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full min-w-0 border-0 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+        aria-label={placeholder}
+        className="w-full min-w-0 border-0 bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-200 focus-visible:rounded"
       />
     </div>
   )

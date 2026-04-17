@@ -212,7 +212,7 @@ export default function ProcessMapPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <BackHeader />
-          <h1 className="mt-4 text-3xl font-semibold tracking-tight text-navy-900">
+          <h1 className="mt-4 font-display text-3xl font-bold tracking-tight text-navy-900">
             {processName ? `Process Map · ${processName}` : 'Process Map'}
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">

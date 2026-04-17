@@ -96,7 +96,7 @@ export default function ProcessesPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Business Processes</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
           </p>
@@ -110,7 +110,7 @@ export default function ProcessesPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Business Processes</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
           </p>
@@ -131,7 +131,7 @@ export default function ProcessesPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Business Processes</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
           </p>
@@ -205,6 +205,7 @@ export default function ProcessesPage() {
             return (
               <AccordionRow
                 key={p.id}
+                id={p.id}
                 title={p.name}
                 meta={meta}
                 status={processHealthFromStatus(p.status)}
@@ -216,7 +217,7 @@ export default function ProcessesPage() {
                   <div className="flex flex-wrap gap-2">
                     <Link
                       to={`/processes/${p.id}/map`}
-                      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
                     >
                       <GitBranch className="h-3.5 w-3.5" />
                       Open process map
@@ -251,6 +252,7 @@ function AccordionRow({
   expanded,
   onToggle,
   children,
+  id,
 }: {
   title: string
   meta: string
@@ -258,16 +260,22 @@ function AccordionRow({
   expanded: boolean
   onToggle: () => void
   children: ReactNode
+  id: string
 }) {
+  const panelId = `panel-${id}`
+  const headerId = `header-${id}`
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-900/5">
       <button
         type="button"
+        id={headerId}
         onClick={onToggle}
+        aria-expanded={expanded}
+        aria-controls={panelId}
         className="flex w-full items-start justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50/80"
       >
         <div className="flex items-start gap-3">
-          <span className="mt-0.5 text-slate-400">
+          <span className="mt-0.5 text-slate-400" aria-hidden="true">
             {expanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
           </span>
           <div>
@@ -277,7 +285,11 @@ function AccordionRow({
         </div>
         <StatusBadge status={status} />
       </button>
-      {expanded ? <div className="border-t border-slate-100 bg-slate-50/40 px-5 py-4">{children}</div> : null}
+      {expanded ? (
+        <div id={panelId} role="region" aria-labelledby={headerId} className="border-t border-slate-100 bg-slate-50/40 px-5 py-4">
+          {children}
+        </div>
+      ) : null}
     </div>
   )
 }

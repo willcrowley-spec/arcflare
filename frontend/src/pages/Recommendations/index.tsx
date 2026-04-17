@@ -183,7 +183,7 @@ export default function RecommendationsPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Recommendations</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Recommendations</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Prioritized remediation and automation opportunities ranked by ROI, blast radius, and architectural fit.
           </p>
@@ -197,7 +197,7 @@ export default function RecommendationsPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Recommendations</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Recommendations</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Prioritized remediation and automation opportunities ranked by ROI, blast radius, and architectural fit.
           </p>
@@ -218,7 +218,7 @@ export default function RecommendationsPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Recommendations</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Recommendations</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
             Prioritized remediation and automation opportunities ranked by ROI, blast radius, and architectural fit.
           </p>
@@ -288,13 +288,17 @@ export default function RecommendationsPage() {
             <div className="mt-6 flex flex-wrap gap-3">
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-lg bg-navy-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900"
+                disabled
+                title="Coming soon"
+                className="inline-flex items-center justify-center rounded-lg bg-navy-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Initialize Deployment
               </button>
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+                disabled
+                title="Coming soon"
+                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Analysis Details
               </button>
@@ -331,7 +335,9 @@ export default function RecommendationsPage() {
           </div>
           <button
             type="button"
-            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-white/10 px-4 py-2.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15 sm:w-auto"
+            disabled
+            title="Coming soon"
+            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-white/10 px-4 py-2.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             Review Full Audit
           </button>
@@ -361,14 +367,16 @@ export default function RecommendationsPage() {
       </section>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Recommendation status filter">
           {(['active', 'implemented'] as const).map((t) => (
             <button
               key={t}
               type="button"
+              role="tab"
+              aria-selected={statusFilter === t}
               onClick={() => setTab(t)}
               className={clsx(
-                'rounded-full px-4 py-1.5 text-sm font-semibold ring-1 ring-inset transition-colors',
+                'rounded-full px-4 py-2 text-sm font-semibold ring-1 ring-inset transition-colors',
                 statusFilter === t ? 'bg-navy-800 text-white ring-navy-800' : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
               )}
             >
@@ -428,7 +436,9 @@ export default function RecommendationsPage() {
                 <div className="mt-auto pt-6">
                   <button
                     type="button"
-                    className="w-full rounded-lg bg-navy-800 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900"
+                    disabled
+                    title="Coming soon"
+                    className="w-full rounded-lg bg-navy-800 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {c.status === 'implemented' ? 'Review' : 'Implement'}
                   </button>
@@ -482,7 +492,14 @@ function HealthBar({ label, value, color }: { label: string; value: number; colo
         <span className="font-medium text-slate-700">{label}</span>
         <span className="font-semibold text-navy-900">{value}%</span>
       </div>
-      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80">
+      <div
+        className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80"
+        role="progressbar"
+        aria-valuenow={value}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+      >
         <div className={clsx('h-full rounded-full', color)} style={{ width: `${value}%` }} />
       </div>
     </div>

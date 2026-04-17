@@ -76,11 +76,9 @@ function LandingPage() {
             <Zap className="h-3.5 w-3.5" />
             Enterprise Platform Intelligence
           </div>
-          <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+          <h1 className="font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">
             Connect. Analyze.{' '}
-            <span className="bg-gradient-to-r from-orange-400 to-amber-300 bg-clip-text text-transparent">
-              Transform.
-            </span>
+            <span className="text-orange-400">Transform.</span>
           </h1>
           <p className="mx-auto mt-5 max-w-lg text-lg text-slate-400">
             Ingest metadata from Salesforce and business documents, discover automation opportunities, and
@@ -119,7 +117,7 @@ function LandingPage() {
           ].map((card) => (
             <div
               key={card.title}
-              className="rounded-xl border border-white/10 bg-white/5 p-5 backdrop-blur-sm"
+              className="rounded-xl border border-white/10 bg-white/8 p-5"
             >
               <card.icon className="h-6 w-6 text-orange-400" />
               <h3 className="mt-3 text-sm font-semibold text-white">{card.title}</h3>
@@ -194,14 +192,14 @@ export function AppLayout() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="rounded-lg p-2 text-slate-200 hover:bg-white/10 hover:text-white"
+              className="rounded-lg p-2.5 text-slate-200 hover:bg-white/10 hover:text-white"
               aria-label="Notifications"
             >
               <Bell className="h-5 w-5" />
             </button>
             <button
               type="button"
-              className="rounded-lg p-2 text-slate-200 hover:bg-white/10 hover:text-white"
+              className="rounded-lg p-2.5 text-slate-200 hover:bg-white/10 hover:text-white"
               aria-label="Settings"
             >
               <Settings className="h-5 w-5" />
@@ -268,16 +266,10 @@ export function AppLayout() {
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-3 px-6 py-6 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
           <p>© {new Date().getFullYear()} Arcflare AI. All rights reserved.</p>
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
-            <a className="hover:text-navy-800" href="#">
-              System Status
-            </a>
-            <a className="hover:text-navy-800" href="#">
-              API Docs
-            </a>
-            <a className="hover:text-navy-800" href="#">
-              Support
-            </a>
+          <div className="flex flex-wrap gap-x-6 gap-y-2 text-slate-400">
+            <span>System Status</span>
+            <span>API Docs</span>
+            <span>Support</span>
           </div>
         </div>
       </footer>

@@ -721,7 +721,7 @@ export default function AnalysisPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Analysis</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Analysis</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             Unified visibility across metadata, operational records, and business documentation with live platform
             health.
@@ -736,7 +736,7 @@ export default function AnalysisPage() {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Analysis</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Analysis</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             Unified visibility across metadata, operational records, and business documentation with live platform
             health.
@@ -890,7 +890,7 @@ export default function AnalysisPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-navy-900">Analysis</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Analysis</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             Unified visibility across metadata, operational records, and business documentation with live platform
             health.

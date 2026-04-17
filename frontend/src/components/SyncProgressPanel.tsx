@@ -118,7 +118,7 @@ export function SyncProgressPanel({
       )}
     >
       <div className="mb-4 flex items-center justify-between">
-        <div>
+        <div aria-live="polite">
           <p className="text-sm font-semibold text-slate-800">
             {isLoading && 'Preparing sync\u2026'}
             {isRunning && 'Syncing metadata\u2026'}
@@ -134,7 +134,14 @@ export function SyncProgressPanel({
         </div>
         {(isRunning || isLoading) && (
           <div className="flex items-center gap-2">
-            <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-2 w-24 overflow-hidden rounded-full bg-slate-200"
+              role="progressbar"
+              aria-valuenow={Math.round((doneCount / totalPhases) * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Sync progress"
+            >
               <div
                 className="h-full rounded-full bg-sky-500 transition-all duration-500"
                 style={{ width: `${(doneCount / totalPhases) * 100}%` }}

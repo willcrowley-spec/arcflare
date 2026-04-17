@@ -63,10 +63,30 @@ interface Props {
 
 export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecting }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        onClose()
+        return
+      }
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )
+        if (!focusable.length) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
     },
     [onClose],
   )
@@ -74,7 +94,12 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
   useEffect(() => {
     if (!open) return
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    const prev = document.activeElement as HTMLElement | null
+    closeRef.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      prev?.focus()
+    }
   }, [open, handleKeyDown])
 
   if (!open) return null
@@ -82,18 +107,28 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       onClick={(e) => {
         if (e.target === overlayRef.current) onClose()
       }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connect-platform-title"
+        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h2 className="text-lg font-semibold text-navy-900">Connect a Platform</h2>
+          <h2 id="connect-platform-title" className="text-lg font-semibold text-navy-900">
+            Connect a Platform
+          </h2>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Close"
+            className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-200"
           >
             <X className="h-5 w-5" />
           </button>
@@ -107,7 +142,7 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
               disabled={!p.enabled || connecting}
               onClick={() => p.enabled && onSelectPlatform(p.id)}
               className={clsx(
-                'flex w-full items-center gap-4 rounded-xl px-4 py-3.5 text-left transition-colors',
+                'flex w-full items-center gap-4 rounded-xl px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-200',
                 p.enabled
                   ? 'hover:bg-slate-50 active:bg-slate-100'
                   : 'cursor-not-allowed opacity-50',
