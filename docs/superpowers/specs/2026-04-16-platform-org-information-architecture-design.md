@@ -250,7 +250,20 @@ Exposed tuning variables:
 
 Provider settings (`embedding_provider`, `vector_store_provider`, `llm_provider`) are stored in `analysis_config` but not rendered in the UI. They're read by backend code and default to `"default"`.
 
-### 3.4 Content Removed from Organization Page
+### 3.4 Re-analyze Action
+
+A "Re-analyze" button in the Analysis Settings section. When clicked, it triggers a lightweight backend job that:
+
+1. Recomputes `velocity_score` for all objects across all connections using the updated `velocity_window_days` — querying existing `RecordTelemetry` data, no Salesforce API calls.
+2. Recomputes `classification` for all objects where `classification_source == 'auto'`, using the updated `classification_threshold` and `min_records_for_vectorization`.
+3. Does **not** re-sync metadata from the platform.
+4. Does **not** re-run vectorization. Vectorization gating applies naturally on the next sync. If the user wants to re-vectorize after changing settings, they trigger a sync explicitly.
+
+**API endpoint:** `POST /api/v1/organizations/{org_id}/reanalyze`
+
+The button shows a brief progress state ("Re-analyzing...") and refreshes the connected platform KPIs on completion. If the user is viewing a platform detail page afterward, the updated classifications and velocity scores are reflected immediately.
+
+### 3.5 Content Removed from Organization Page
 
 All of the following relocate to the Platform Detail page:
 - Org Hierarchy
@@ -318,7 +331,18 @@ Existing data can be cleared. No backward-compatible migration is required. The 
 
 ---
 
-## 8. Out of Scope
+## 8. UI Quality: Impeccable Skill
+
+All frontend work in this spec must use the `impeccable` design skill suite. Specifically:
+
+- **Platform Detail Page:** Use `/polish` on the header, KPI row, and data objects table after initial implementation. The classification inline-edit interaction, velocity indicators, and muted empty-row styling should follow `impeccable/reference/interaction-design.md` and `impeccable/reference/craft.md`.
+- **Organization Page — Company Profile:** Use `/polish` on the inline-editable card form. The Notion-style property editing pattern must follow `impeccable/reference/interaction-design.md` for focus states, transitions, and input affordances. Multi-value domain chips and the searchable industry select follow `impeccable/reference/ux-writing.md` for microcopy.
+- **Analysis Settings form:** The tunable config inputs (velocity window, threshold, min records) and the Re-analyze button follow `impeccable/reference/spatial-design.md` for layout and `impeccable/reference/typography.md` for label hierarchy.
+- **Analysis Page cleanup:** The sparse post-cleanup state needs a quality empty state — not a blank page. Use `impeccable/reference/ux-writing.md` for the empty state copy.
+
+---
+
+## 9. Out of Scope
 
 - Cross-platform ecosystem analysis on the Analysis page (separate brainstorm)
 - External enrichment pipeline for Organization (LinkedIn, web scraping, semantic search)
