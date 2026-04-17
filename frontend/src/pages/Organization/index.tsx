@@ -1,23 +1,24 @@
-import { useMemo, useState } from 'react'
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Building2, CreditCard, GitBranch, Globe, HelpCircle, Landmark, Shield, TrendingUp, Users } from 'lucide-react'
-import clsx from 'clsx'
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  useCostModel,
-  useOrgEntities,
-  useOrgHierarchy,
-  useOrgLicensing,
-  useOrgProfile,
-  useUserVelocity,
-} from '@/hooks/useApi'
+  Building2,
+  Cloud,
+  Database,
+  FileSpreadsheet,
+  Globe,
+  Landmark,
+  Layers,
+  Loader2,
+  Plug,
+  Sparkles,
+  Users,
+  Wrench,
+} from 'lucide-react'
+import clsx from 'clsx'
+import { useConnections, useOrgProfile, useOrgSettings, useReanalyze, useUpdateOrgSettings } from '@/hooks/useApi'
+import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
-
-type HierarchyNode = {
-  id: string
-  name: string
-  entity_type?: string | null
-  children?: HierarchyNode[]
-}
+import type { AnalysisConfig, PlatformConnection } from '@/types'
 
 type OrgProfileData = {
   name?: string
@@ -25,646 +26,487 @@ type OrgProfileData = {
   settings_json?: Record<string, unknown>
 }
 
-type CostModelData = {
-  annual_cost_deflection?: number | null
-  hires_deflected?: number | null
-  assumptions?: Record<string, unknown>
-}
+const cardClass =
+  'rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5'
 
-type EntityRow = {
-  headcount?: number
-}
-
-function getHttpStatus(err: unknown): number | undefined {
-  if (err && typeof err === 'object' && 'status' in err) {
-    const s = (err as { status: unknown }).status
-    return typeof s === 'number' ? s : undefined
+function platformTypeToLabel(raw: string | undefined): string {
+  const u = (raw ?? '').toUpperCase()
+  const labels: Record<string, string> = {
+    SALESFORCE: 'Salesforce',
+    HUBSPOT: 'HubSpot',
+    NETSUITE: 'NetSuite',
+    MULESOFT: 'MuleSoft',
+    CONFLUENCE: 'Confluence',
+    CUSTOM: 'Custom',
   }
-  return undefined
+  return labels[u] ?? (raw ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : 'Platform')
 }
 
-function parseHierarchyRoots(data: unknown): HierarchyNode[] {
-  if (!data || typeof data !== 'object') return []
-  const o = data as { roots?: unknown; nodes?: unknown }
-  const raw = Array.isArray(o.roots) ? o.roots : Array.isArray(o.nodes) ? o.nodes : []
-  return raw.filter((n): n is HierarchyNode => {
-    if (!n || typeof n !== 'object') return false
-    const x = n as { id?: unknown; name?: unknown }
-    return typeof x.id === 'string' && typeof x.name === 'string'
-  })
+function platformTypeToIcon(raw: string | undefined) {
+  const u = (raw ?? '').toUpperCase()
+  const map: Record<string, typeof Cloud> = {
+    SALESFORCE: Cloud,
+    HUBSPOT: Users,
+    NETSUITE: Database,
+    MULESOFT: Layers,
+    CONFLUENCE: FileSpreadsheet,
+    CUSTOM: Wrench,
+  }
+  return map[u] ?? Plug
 }
 
-function formatUsdCompact(value: number | null | undefined): string {
+function connectionBadgeStatus(status: string): string {
+  const k = status.toLowerCase()
+  const map: Record<string, string> = {
+    connected: 'CONNECTED',
+    pending: 'PENDING',
+    syncing: 'SYNCING',
+    error: 'ERROR',
+    disconnected: 'DISCONNECTED',
+  }
+  return map[k] ?? status.replace(/_/g, ' ').toUpperCase()
+}
+
+function formatTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatUsd(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—'
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(value)
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
 }
 
-function formatNumberCompact(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return '—'
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
-}
-
-function formatInt(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return '—'
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
-}
-
-function pickString(obj: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+function readNumber(obj: Record<string, unknown> | undefined, keys: string[]): number | undefined {
   if (!obj) return undefined
   for (const k of keys) {
     const v = obj[k]
-    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === 'number' && !Number.isNaN(v)) return v
+    if (typeof v === 'string' && v.trim()) {
+      const n = Number(v)
+      if (!Number.isNaN(n)) return n
+    }
   }
   return undefined
 }
 
-function TreeNode({ node, depth = 0 }: { node: HierarchyNode; depth?: number }) {
-  const subtitle = node.entity_type?.trim() || '—'
-  return (
-    <li className="space-y-2">
-      <div
-        className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm"
-        style={{ marginLeft: depth * 16 }}
-      >
-        <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-md bg-navy-50 text-navy-800">
-          <Users className="h-4 w-4" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-navy-900">{node.name}</p>
-          <p className="text-xs text-slate-500">{subtitle}</p>
-        </div>
-      </div>
-      {node.children?.length ? (
-        <ul className="space-y-2 border-l border-dashed border-slate-200 pl-4">
-          {node.children.map((c) => (
-            <TreeNode key={c.id} node={c} depth={depth + 1} />
-          ))}
-        </ul>
-      ) : null}
-    </li>
-  )
+function parseProfile(data: unknown): OrgProfileData {
+  if (!data || typeof data !== 'object') return {}
+  const o = data as Record<string, unknown>
+  return {
+    name: typeof o.name === 'string' ? o.name : undefined,
+    plan_tier: typeof o.plan_tier === 'string' ? o.plan_tier : undefined,
+    settings_json: o.settings_json && typeof o.settings_json === 'object' ? (o.settings_json as Record<string, unknown>) : undefined,
+  }
 }
 
-type LicenseRow = { type: string; key?: string; category?: string; total: number; used: number; status: string }
-type PslRow = { name: string; developer_name?: string; total: number; used: number }
-type LicData = {
-  edition?: string
-  is_sandbox?: boolean
-  licenses_json?: LicenseRow[]
-  package_licenses_json?: { namespace: string; total: number; used: number }[]
-  psl_json?: PslRow[]
-  limits_json?: Record<string, unknown>
-  estimated_annual_spend?: number | null
+function readCompanyFromSettings(settings: Record<string, unknown> | undefined) {
+  const company_name = typeof settings?.company_name === 'string' ? settings.company_name : undefined
+  const domains = Array.isArray(settings?.domains)
+    ? (settings.domains as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    : []
+  const industry = typeof settings?.industry === 'string' ? settings.industry : undefined
+  const headcount = readNumber(settings, ['headcount', 'estimated_headcount'])
+  const annual_revenue = readNumber(settings, ['annual_revenue', 'estimated_annual_revenue'])
+  return { company_name, domains, industry, headcount, annual_revenue }
 }
 
-const LICENSE_TABS = ['internal', 'external', 'feature'] as const
-type LicTab = (typeof LICENSE_TABS)[number]
-const TAB_LABELS: Record<LicTab, string> = { internal: 'Core (Internal)', external: 'External (Community)', feature: 'Feature / Entitlement' }
+function connectionEstimatedSpend(c: PlatformConnection): number | undefined {
+  const cfg = c.sync_config_json
+  return readNumber(cfg, ['estimated_annual_spend', 'annual_spend', 'estimated_spend'])
+}
 
-function LicenseBar({ label, used, total }: { label: string; used: number; total: number }) {
-  const pct = total > 0 ? Math.round((used / total) * 100) : 0
+function normalizeAnalysisSettings(x: unknown): AnalysisConfig | null {
+  if (!x || typeof x !== 'object') return null
+  const o = x as Record<string, unknown>
+  const velocity = typeof o.velocity_window_days === 'number' ? o.velocity_window_days : 30
+  const threshold = typeof o.classification_threshold === 'number' ? o.classification_threshold : 0.1
+  const minVec = typeof o.min_records_for_vectorization === 'number' ? o.min_records_for_vectorization : 1
+  return {
+    velocity_window_days: velocity,
+    classification_threshold: threshold,
+    min_records_for_vectorization: minVec,
+    embedding_provider: typeof o.embedding_provider === 'string' ? o.embedding_provider : 'default',
+    vector_store_provider: typeof o.vector_store_provider === 'string' ? o.vector_store_provider : 'default',
+    llm_provider: typeof o.llm_provider === 'string' ? o.llm_provider : 'default',
+  }
+}
+
+function ProfileRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 text-xs">
-      <span className="w-40 truncate text-slate-700" title={label}>{label}</span>
-      <div className="h-2 flex-1 rounded-full bg-slate-100">
-        <div
-          className={`h-2 rounded-full ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-400' : 'bg-emerald-500'}`}
-          style={{ width: `${Math.min(pct, 100)}%` }}
-        />
-      </div>
-      <span className="w-16 text-right tabular-nums text-slate-600">{used}/{total}</span>
+    <div className="group flex flex-col gap-1 border-b border-slate-100 py-3 last:border-b-0 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+      <span className="shrink-0 text-sm font-medium text-slate-500">{label}</span>
+      <div className="min-w-0 flex-1 text-sm text-navy-900 sm:text-right">{children}</div>
     </div>
   )
 }
 
-function LicensingSection({ licensingQuery, experienceSites }: {
-  licensingQuery: { data?: unknown }
-  experienceSites: { name: string; status: string; url_prefix: string }[]
+function AnalysisField({
+  id,
+  label,
+  suffix,
+  value,
+  onChange,
+  onBlur,
+  inputMode,
+  step,
+  disabled,
+}: {
+  id: string
+  label: string
+  suffix?: string
+  value: string
+  onChange: (v: string) => void
+  onBlur: () => void
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']
+  step?: string
+  disabled?: boolean
 }) {
-  const [tab, setTab] = useState<LicTab>('internal')
-  const [showMethodology, setShowMethodology] = useState(false)
-
-  if (!licensingQuery.data) return null
-  const lic = licensingQuery.data as LicData
-  const licenses = lic.licenses_json ?? []
-  const pslList = lic.psl_json ?? []
-
-  const internal = licenses.filter((l) => l.total > 0 && (l.category === 'internal' || !l.category))
-  const external = licenses.filter((l) => l.total > 0 && l.category === 'external')
-  const identity = licenses.filter((l) => l.total > 0 && l.category === 'identity')
-  const featureItems = [...identity, ...pslList.filter((p) => p.total > 0).map((p) => ({ type: p.name, total: p.total, used: p.used, status: '', category: 'feature' as const, key: p.developer_name ?? '' }))]
-
-  const currentList = tab === 'internal' ? internal : tab === 'external' ? external : featureItems
-
-  const totalLic = licenses.reduce((s, l) => s + (l.total || 0), 0)
-  const usedLic = licenses.reduce((s, l) => s + (l.used || 0), 0)
-  const pkgCount = (lic.package_licenses_json ?? []).length
-
-  const limitsJson = (lic.limits_json ?? {}) as Record<string, { Max?: number; Remaining?: number }>
-  const storage = limitsJson.DataStorageMB as { Max?: number; Remaining?: number } | undefined
-  const apiLimits = limitsJson.DailyApiRequests as { Max?: number; Remaining?: number } | undefined
-  const methodology = typeof limitsJson.cost_methodology === 'string' ? limitsJson.cost_methodology : null
-
-  const liveSites = experienceSites.filter((s) => s.status === 'Live' || s.status === 'Active')
-
   return (
-    <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-      <div className="flex items-center gap-3">
-        <CreditCard className="h-6 w-6 text-navy-700" />
-        <div>
-          <h2 className="text-lg font-semibold text-navy-900">Salesforce Licensing</h2>
-          <p className="text-sm text-slate-600">License utilization and estimated platform spend</p>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-navy-100 px-3 py-1 text-xs font-semibold text-navy-800">
-              {lic.edition || 'Unknown Edition'}
-            </span>
-            {lic.is_sandbox && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Sandbox</span>
-            )}
-          </div>
-          <div className="relative">
-            <div className="flex items-center gap-1.5">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Estimated Annual Spend</p>
-              {methodology && (
-                <button
-                  type="button"
-                  className="text-slate-400 hover:text-slate-600"
-                  onClick={() => setShowMethodology((v) => !v)}
-                  aria-label="Cost methodology"
-                >
-                  <HelpCircle className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            <p className="mt-1 text-3xl font-bold text-navy-900">
-              {lic.estimated_annual_spend
-                ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 0 }).format(lic.estimated_annual_spend)
-                : '—'}
-            </p>
-            {showMethodology && methodology && (
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
-                {methodology}
-              </div>
-            )}
-          </div>
-          <div className="flex gap-4 text-sm">
-            <div>
-              <span className="text-slate-500">Licenses: </span>
-              <span className="font-semibold text-slate-900">{usedLic}/{totalLic}</span>
-            </div>
-            <div>
-              <span className="text-slate-500">Packages: </span>
-              <span className="font-semibold text-slate-900">{pkgCount}</span>
-            </div>
-          </div>
-          {storage && (
-            <p className="text-xs text-slate-500">
-              Storage:{' '}
-              {storage.Remaining != null && storage.Max != null
-                ? `${((storage.Max - storage.Remaining) / 1024).toFixed(1)} / ${(storage.Max / 1024).toFixed(1)} GB`
-                : '—'}
-            </p>
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-slate-700">
+        {label}
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          inputMode={inputMode}
+          step={step}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          }}
+          className={clsx(
+            'w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
+            'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
+            disabled && 'cursor-not-allowed opacity-60',
           )}
-          {apiLimits && (
-            <p className="text-xs text-slate-500">
-              Daily API:{' '}
-              {apiLimits.Remaining != null && apiLimits.Max != null
-                ? `${(apiLimits.Max - apiLimits.Remaining).toLocaleString()} / ${apiLimits.Max.toLocaleString()} used`
-                : '—'}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-3 lg:col-span-2">
-          <div className="flex items-center gap-1 border-b border-slate-100">
-            {LICENSE_TABS.map((t) => (
-              <button
-                key={t}
-                type="button"
-                className={clsx(
-                  'px-3 py-1.5 text-xs font-medium transition-colors',
-                  t === tab ? 'border-b-2 border-navy-700 text-navy-800' : 'text-slate-500 hover:text-slate-700',
-                )}
-                onClick={() => setTab(t)}
-              >
-                {TAB_LABELS[t]}
-                <span className="ml-1.5 tabular-nums text-slate-400">
-                  ({(t === 'internal' ? internal : t === 'external' ? external : featureItems).length})
-                </span>
-              </button>
-            ))}
-          </div>
-          <div className="max-h-[220px] space-y-1.5 overflow-auto pr-2">
-            {currentList.length === 0 ? (
-              <p className="py-4 text-center text-xs text-slate-400">No licenses in this category</p>
-            ) : (
-              currentList.map((l) => (
-                <LicenseBar key={l.type} label={l.type} used={l.used} total={l.total} />
-              ))
-            )}
-          </div>
-        </div>
+        />
+        {suffix ? <span className="text-sm text-slate-500">{suffix}</span> : null}
       </div>
-
-      {liveSites.length > 0 && (
-        <div className="mt-5 border-t border-slate-100 pt-4">
-          <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-navy-700" />
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Experience Cloud Sites</p>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {liveSites.map((s) => (
-              <span key={s.name} className="inline-flex items-center gap-1.5 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-medium text-teal-800">
-                <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
-                {s.name}
-                {s.url_prefix && <span className="text-teal-600">/{s.url_prefix}</span>}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-    </section>
-  )
-}
-
-type VelocitySnap = {
-  snapshot_at: string
-  active_user_count: number
-  internal_active_count?: number
-  external_active_count?: number
-  system_user_count?: number
-  new_users_this_month: number
-  deactivated_this_month: number
-  by_role_json: Record<string, number>
-  by_profile_json: Record<string, number>
-  by_created_month_json?: Record<string, { human: number; system: number; external: number }>
-}
-
-function VelocitySection({ velocityQuery }: { velocityQuery: { data?: unknown } }) {
-  if (!velocityQuery.data || !Array.isArray(velocityQuery.data) || velocityQuery.data.length === 0) return null
-
-  const snapshots = (velocityQuery.data as VelocitySnap[]).slice().reverse()
-  const latestSnap = snapshots[snapshots.length - 1]
-
-  const monthlyBuckets = latestSnap?.by_created_month_json
-  let chartData: { date: string; human: number; system: number; external: number }[]
-
-  if (monthlyBuckets && Object.keys(monthlyBuckets).length > 0) {
-    const months = Object.keys(monthlyBuckets).sort()
-    let cumHuman = 0
-    let cumSystem = 0
-    let cumExternal = 0
-    chartData = months.map((m) => {
-      const bucket = monthlyBuckets[m] ?? { human: 0, system: 0, external: 0 }
-      cumHuman += bucket.human ?? 0
-      cumSystem += bucket.system ?? 0
-      cumExternal += bucket.external ?? 0
-      const [y, mo] = m.split('-')
-      const label = new Date(Number(y), Number(mo) - 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
-      return { date: label, human: cumHuman, system: cumSystem, external: cumExternal }
-    })
-  } else {
-    chartData = snapshots.map((s) => ({
-      date: new Date(s.snapshot_at).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }),
-      human: s.internal_active_count ?? s.active_user_count,
-      system: s.system_user_count ?? 0,
-      external: s.external_active_count ?? 0,
-    }))
-  }
-
-  const humanCount = latestSnap?.internal_active_count ?? latestSnap?.active_user_count ?? 0
-  const systemCount = latestSnap?.system_user_count ?? 0
-  const externalCount = latestSnap?.external_active_count ?? 0
-  const roleEntries = Object.entries(latestSnap?.by_role_json ?? {}).sort((a, b) => b[1] - a[1])
-  const profileEntries = Object.entries(latestSnap?.by_profile_json ?? {}).sort((a, b) => b[1] - a[1])
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-        <div className="flex items-center gap-3">
-          <TrendingUp className="h-6 w-6 text-navy-700" />
-          <div>
-            <h2 className="text-lg font-semibold text-navy-900">Platform Adoption</h2>
-            <p className="text-sm text-slate-600">Cumulative user growth by classification</p>
-          </div>
-        </div>
-        <div className="mt-4 h-56">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="humanGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="externalGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0d9488" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#0d9488" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Area type="monotone" dataKey="human" name="Human" stroke="#1e3a5f" fill="url(#humanGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="external" name="External" stroke="#0d9488" fill="url(#externalGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="system" name="System" stroke="#94a3b8" fill="none" strokeWidth={1.5} strokeDasharray="4 3" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-        {chartData.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-600">
-            <span>Human: <strong className="text-navy-900">{humanCount}</strong></span>
-            <span>System: <strong className="text-slate-500">{systemCount}</strong></span>
-            <span>External: <strong className="text-teal-700">{externalCount}</strong></span>
-            <span>New this month: <strong className="text-emerald-700">+{latestSnap?.new_users_this_month ?? 0}</strong></span>
-            <span>Deactivated: <strong className="text-red-600">-{latestSnap?.deactivated_this_month ?? 0}</strong></span>
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-        <div className="flex items-center gap-3">
-          <Shield className="h-6 w-6 text-navy-700" />
-          <div>
-            <h2 className="text-lg font-semibold text-navy-900">Role & Profile Distribution</h2>
-            <p className="text-sm text-slate-600">Human users by role and profile</p>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">By Role</p>
-            <div className="max-h-[180px] space-y-1 overflow-auto pr-1">
-              {roleEntries.length === 0 ? (
-                <p className="text-xs text-slate-400">No role data</p>
-              ) : (
-                roleEntries.map(([name, count]) => (
-                  <div key={name} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="truncate text-slate-700">{name}</span>
-                    <span className="font-semibold text-slate-900">{count}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">By Profile</p>
-            <div className="max-h-[180px] space-y-1 overflow-auto pr-1">
-              {profileEntries.length === 0 ? (
-                <p className="text-xs text-slate-400">No profile data</p>
-              ) : (
-                profileEntries.map(([name, count]) => (
-                  <div key={name} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="truncate text-slate-700">{name}</span>
-                    <span className="font-semibold text-slate-900">{count}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   )
 }
 
 export default function OrganizationPage() {
+  const navigate = useNavigate()
   const profileQuery = useOrgProfile()
-  const hierarchyQuery = useOrgHierarchy()
-  const licensingQuery = useOrgLicensing()
-  const velocityQuery = useUserVelocity()
-  const costModelQuery = useCostModel()
-  const entitiesQuery = useOrgEntities({ page: 1, page_size: 200 })
+  const connectionsQuery = useConnections()
+  const settingsQuery = useOrgSettings()
+  const updateSettings = useUpdateOrgSettings()
+  const reanalyze = useReanalyze()
 
-  const roots = useMemo(() => parseHierarchyRoots(hierarchyQuery.data), [hierarchyQuery.data])
+  const [reanalyzeBanner, setReanalyzeBanner] = useState<string | null>(null)
 
-  const profile = profileQuery.data as OrgProfileData | undefined
-  const cost = costModelQuery.data as CostModelData | undefined
+  const profile = useMemo(() => parseProfile(profileQuery.data), [profileQuery.data])
+  const company = useMemo(() => readCompanyFromSettings(profile.settings_json), [profile.settings_json])
 
-  const settings = profile?.settings_json
-  const sfOrgName = pickString(settings, ['sf_org_name']) || profile?.name
-  const edition = pickString(settings, ['edition'])
-  const isSandbox = settings?.is_sandbox === true
-  const instanceUrl = pickString(settings, ['instance_url'])
-  const activeUsers = typeof settings?.active_users === 'number' ? settings.active_users : null
-  const humanUsers = typeof settings?.human_users === 'number' ? settings.human_users : null
-  const systemUsers = typeof settings?.system_users === 'number' ? settings.system_users : null
-  const externalUsers = typeof settings?.external_users === 'number' ? settings.external_users : null
-  const annualSpend = typeof settings?.estimated_annual_spend === 'number' ? settings.estimated_annual_spend : null
-  const licenseSummary = settings?.license_summary as {
-    total?: number; used?: number;
-    internal_total?: number; internal_used?: number;
-    external_total?: number; external_used?: number;
-  } | undefined
-  const experienceSites = Array.isArray(settings?.experience_sites) ? (settings.experience_sites as { name: string; status: string; url_prefix: string }[]) : []
-  const roleCount = typeof settings?.role_count === 'number' ? settings.role_count : null
-  const profileCount = typeof settings?.profile_count === 'number' ? settings.profile_count : null
-  const topPackages = Array.isArray(settings?.top_packages) ? (settings.top_packages as string[]) : []
+  const displayCompanyName = company.company_name?.trim() || profile.name || '—'
+  const displayIndustry = company.industry?.trim() || '—'
 
-  const entityItems = (entitiesQuery.data?.items ?? []) as EntityRow[]
-  const entityTotal = entitiesQuery.data?.total ?? 0
-  const headcountListed = entityItems.reduce((acc, e) => acc + (Number(e.headcount) || 0), 0)
-  const employeesDisplay =
-    entityTotal === 0
-      ? (activeUsers != null ? formatInt(activeUsers) : '—')
-      : entityItems.length >= entityTotal
-        ? formatInt(headcountListed)
-        : `${formatInt(headcountListed)}+`
+  const connections = connectionsQuery.data?.items ?? []
 
-  const modelNote =
-    typeof cost?.assumptions?.model === 'string' && cost.assumptions.model
-      ? String(cost.assumptions.model)
-      : 'Entity-linked cost signals'
+  const aggregateSpend = useMemo(() => {
+    let sum = 0
+    let any = false
+    for (const c of connections) {
+      const n = connectionEstimatedSpend(c)
+      if (n != null) {
+        sum += n
+        any = true
+      }
+    }
+    return any ? sum : null
+  }, [connections])
 
-  const profileLoading = profileQuery.isLoading
-  const profileError = profileQuery.isError && getHttpStatus(profileQuery.error) !== 404
+  const settings = settingsQuery.data
+  const analysis = useMemo(() => normalizeAnalysisSettings(settings), [settings])
+
+  const [velocityDraft, setVelocityDraft] = useState('')
+  const [thresholdDraft, setThresholdDraft] = useState('')
+  const [minVecDraft, setMinVecDraft] = useState('')
+
+  useEffect(() => {
+    if (!analysis) return
+    setVelocityDraft(String(analysis.velocity_window_days))
+    setThresholdDraft(String(analysis.classification_threshold))
+    setMinVecDraft(String(analysis.min_records_for_vectorization))
+  }, [analysis])
+
+  const patchSetting = useCallback(
+    (payload: Record<string, unknown>) => {
+      updateSettings.mutate(payload)
+    },
+    [updateSettings],
+  )
+
+  const saveVelocity = useCallback(() => {
+    const n = parseInt(velocityDraft, 10)
+    if (Number.isNaN(n) || n < 1) {
+      if (analysis) setVelocityDraft(String(analysis.velocity_window_days))
+      return
+    }
+    if (analysis && n === analysis.velocity_window_days) return
+    patchSetting({ velocity_window_days: n })
+  }, [velocityDraft, analysis, patchSetting])
+
+  const saveThreshold = useCallback(() => {
+    const n = parseFloat(thresholdDraft)
+    if (Number.isNaN(n) || n < 0) {
+      if (analysis) setThresholdDraft(String(analysis.classification_threshold))
+      return
+    }
+    if (analysis && n === analysis.classification_threshold) return
+    patchSetting({ classification_threshold: n })
+  }, [thresholdDraft, analysis, patchSetting])
+
+  const saveMinVec = useCallback(() => {
+    const n = parseInt(minVecDraft, 10)
+    if (Number.isNaN(n) || n < 0) {
+      if (analysis) setMinVecDraft(String(analysis.min_records_for_vectorization))
+      return
+    }
+    if (analysis && n === analysis.min_records_for_vectorization) return
+    patchSetting({ min_records_for_vectorization: n })
+  }, [minVecDraft, analysis, patchSetting])
+
+  const onReanalyze = () => {
+    setReanalyzeBanner(null)
+    reanalyze.mutate(undefined, {
+      onSuccess: (raw) => {
+        const data = raw as { objects_reclassified?: number }
+        const count = typeof data.objects_reclassified === 'number' ? data.objects_reclassified : 0
+        setReanalyzeBanner(`Complete — ${count} object${count === 1 ? '' : 's'} reclassified`)
+        window.setTimeout(() => setReanalyzeBanner(null), 4500)
+      },
+    })
+  }
 
   return (
-    <div className="space-y-8">
-      <div>
+    <div className="mx-auto max-w-5xl space-y-10 px-4 py-8 sm:px-6 lg:px-8">
+      <header>
         <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Organization</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-600">
-          Business entity profiling, operating structure, and human-capital cost modeling across connected systems.
-        </p>
-      </div>
+        <p className="mt-1 text-sm text-slate-600">Company intelligence, connected platforms, and analysis configuration.</p>
+      </header>
 
-      {profileLoading ? (
-        <LoadingState message="Loading organization data..." />
-      ) : profileError ? (
-        <ErrorState message={profileQuery.error instanceof Error ? profileQuery.error.message : undefined} />
-      ) : (
-        <>
-          <div className="grid gap-6 lg:grid-cols-3">
-            <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-1">
-              <div className="flex items-center gap-3">
-                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-navy-800 text-white shadow">
-                  <Building2 className="h-6 w-6" />
-                </span>
-                <div>
-                  <h2 className="text-lg font-semibold text-navy-900">Business Profile</h2>
-                  <p className="text-xs text-slate-500">Synced from Salesforce</p>
-                </div>
+      {/* Section 1: Company profile */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-navy-900">Company profile</h2>
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-900/5"
+            title="Inline editing will be available when profile updates are supported."
+          >
+            <Sparkles className="h-3 w-3" aria-hidden />
+            Editing coming soon
+          </span>
+        </div>
+        {profileQuery.isError ? (
+          <ErrorState message="Could not load organization profile." />
+        ) : profileQuery.isPending ? (
+          <div className={cardClass}>
+            <LoadingState message="Loading profile…" />
+          </div>
+        ) : (
+          <div className={clsx(cardClass, 'transition-shadow duration-200')}>
+            <div className="mb-4 flex items-center gap-3">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-navy-50 text-navy-800 ring-1 ring-navy-900/5">
+                <Building2 className="h-5 w-5" aria-hidden />
+              </span>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Read-only</p>
+                <p className="text-base font-semibold text-navy-900">{displayCompanyName}</p>
+                {profile.plan_tier ? <p className="text-xs text-slate-500">Plan: {profile.plan_tier}</p> : null}
               </div>
-              <dl className="mt-6 space-y-4 text-sm">
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Company</dt>
-                  <dd className="font-medium text-slate-900">{sfOrgName ?? '—'}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Edition</dt>
-                  <dd className="font-medium text-slate-900">
-                    {edition || '—'}
-                    {isSandbox && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Sandbox</span>}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Human Users</dt>
-                  <dd className="font-medium text-slate-900">{humanUsers != null ? formatInt(humanUsers) : employeesDisplay}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-400">System / Integration</dt>
-                  <dd className="font-medium text-slate-500">{systemUsers != null ? formatInt(systemUsers) : '—'}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">External Users</dt>
-                  <dd className="font-medium text-slate-900">{externalUsers != null ? formatInt(externalUsers) : '—'}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Roles / Profiles</dt>
-                  <dd className="font-medium text-slate-900">
-                    {roleCount != null ? roleCount : '—'} / {profileCount != null ? profileCount : '—'}
-                  </dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Est. Annual Spend</dt>
-                  <dd className="font-medium text-slate-900">{annualSpend ? formatUsdCompact(annualSpend) : '—'}</dd>
-                </div>
-                <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-3">
-                  <dt className="text-slate-500">Licenses</dt>
-                  <dd className="font-medium text-slate-900">
-                    {licenseSummary ? `${formatInt(licenseSummary.used)} / ${formatInt(licenseSummary.total)}` : '—'}
-                  </dd>
-                </div>
-                {instanceUrl && (
-                  <div className="flex items-center justify-between gap-4">
-                    <dt className="text-slate-500">Instance</dt>
-                    <dd className="font-medium text-slate-900 truncate max-w-[180px]">
-                      <a href={instanceUrl} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline">
-                        {pickString(settings, ['instance_name']) || instanceUrl.replace('https://', '')}
-                      </a>
-                    </dd>
-                  </div>
-                )}
-              </dl>
-              {topPackages.length > 0 && (
-                <div className="mt-5 border-t border-slate-100 pt-4">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Installed Packages</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {topPackages.slice(0, 12).map((pkg) => (
-                      <span key={pkg} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">{pkg}</span>
+            </div>
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-100 bg-slate-50/40 px-4">
+              <ProfileRow label="Company name">{displayCompanyName}</ProfileRow>
+              <ProfileRow label="Domains / websites">
+                {company.domains.length ? (
+                  <div className="flex flex-wrap justify-end gap-1.5 sm:justify-end">
+                    {company.domains.map((d) => (
+                      <span
+                        key={d}
+                        className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-navy-800 ring-1 ring-slate-200/80"
+                      >
+                        <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
+                        {d}
+                      </span>
                     ))}
-                    {topPackages.length > 12 && (
-                      <span className="text-xs text-slate-400">+{topPackages.length - 12} more</span>
-                    )}
                   </div>
-                </div>
-              )}
-            </section>
-
-            <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5 lg:col-span-2">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <GitBranch className="h-6 w-6 text-navy-700" />
-                  <div>
-                    <h2 className="text-lg font-semibold text-navy-900">Org hierarchy</h2>
-                    <p className="text-sm text-slate-600">Leadership tree with key operational pillars</p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-6 max-h-[420px] overflow-auto pr-2">
-                {roots.length === 0 ? (
-                  <p className="text-sm text-slate-500">No hierarchy nodes yet. Import entities or sync from Salesforce.</p>
                 ) : (
-                  <ul className="space-y-3">
-                    {roots.map((n) => (
-                      <TreeNode key={n.id} node={n} />
-                    ))}
-                  </ul>
+                  <span className="text-slate-400">—</span>
                 )}
-              </div>
-            </section>
+              </ProfileRow>
+              <ProfileRow label="Industry">{displayIndustry}</ProfileRow>
+              <ProfileRow label="Estimated headcount">
+                {company.headcount != null ? (
+                  <span className="tabular-nums">{new Intl.NumberFormat('en-US').format(company.headcount)}</span>
+                ) : (
+                  <span className="text-slate-400">—</span>
+                )}
+              </ProfileRow>
+              <ProfileRow label="Estimated annual revenue">
+                {company.annual_revenue != null ? (
+                  <span className="tabular-nums">{formatUsd(company.annual_revenue)}</span>
+                ) : (
+                  <span className="text-slate-400">—</span>
+                )}
+              </ProfileRow>
+            </div>
           </div>
+        )}
+      </section>
 
-          <LicensingSection licensingQuery={licensingQuery} experienceSites={experienceSites} />
-
-          <VelocitySection velocityQuery={velocityQuery} />
-
-          <div className="grid gap-6 lg:grid-cols-2">
-            <section className="rounded-xl border border-slate-200/80 bg-navy-800 p-6 text-white shadow-md ring-1 ring-black/10">
-              <div className="flex items-center gap-3">
-                <Landmark className="h-6 w-6 text-orange-300" />
-                <div>
-                  <h2 className="text-lg font-semibold">Cost modeling</h2>
-                  <p className="text-sm text-slate-200">Annualized IT + labor baseline</p>
-                </div>
-              </div>
-              <div className="mt-6 grid gap-4 sm:grid-cols-3">
-                <div className="rounded-lg bg-white/5 p-4 ring-1 ring-white/10">
-                  <p className="text-xs uppercase tracking-wide text-slate-300">Annual cost deflection</p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatUsdCompact(cost?.annual_cost_deflection ?? null)}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-200">From modeled entity cost signals</p>
-                </div>
-                <div className="rounded-lg bg-white/5 p-4 ring-1 ring-white/10">
-                  <p className="text-xs uppercase tracking-wide text-slate-300">Hires deflected (est.)</p>
-                  <p className="mt-2 text-2xl font-semibold">
-                    {formatNumberCompact(cost?.hires_deflected ?? null)}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-200">FTE-equivalent from headcount model</p>
-                </div>
-                <div className="rounded-lg bg-white/5 p-4 ring-1 ring-white/10">
-                  <p className="text-xs uppercase tracking-wide text-slate-300">Entities modeled</p>
-                  <p className="mt-2 text-2xl font-semibold">{formatInt(entityTotal)}</p>
-                  <p className="mt-1 text-xs text-orange-200">Synced org records</p>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-              <h2 className="text-lg font-semibold text-navy-900">Human capital cost deflection</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Modeled deflection from synced entity costs and headcount signals.
-              </p>
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Annual deflection</p>
-                  <p className="mt-2 text-3xl font-semibold text-emerald-900">
-                    {formatUsdCompact(cost?.annual_cost_deflection ?? null)}
-                  </p>
-                  <p className="mt-1 text-xs text-emerald-800/90">Roll-up from entity cost_data</p>
-                </div>
-                <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-sky-900">Hires deflected</p>
-                  <p className="mt-2 text-3xl font-semibold text-sky-900">
-                    {formatNumberCompact(cost?.hires_deflected ?? null)}
-                  </p>
-                  <p className="mt-1 text-xs text-sky-800/90">{modelNote}</p>
-                </div>
-              </div>
-            </section>
+      {/* Section 2: Connected platforms */}
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-navy-900">Connected platforms</h2>
+            <p className="text-sm text-slate-600">Open a platform for licensing, adoption, and technical detail.</p>
           </div>
-        </>
-      )}
+          <div className="rounded-lg border border-slate-200/80 bg-white px-4 py-2 shadow-sm ring-1 ring-slate-900/5">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Aggregate est. spend</p>
+            <p className="text-lg font-bold tabular-nums text-navy-900">{aggregateSpend != null ? formatUsd(aggregateSpend) : '—'}</p>
+          </div>
+        </div>
+        {connectionsQuery.isError ? (
+          <ErrorState message="Could not load connections." />
+        ) : connectionsQuery.isPending ? (
+          <div className={cardClass}>
+            <LoadingState message="Loading connections…" />
+          </div>
+        ) : connections.length === 0 ? (
+          <EmptyState
+            title="No platforms connected"
+            description="Connect a platform to see it here and drill into environment details."
+            icon={<Plug className="h-10 w-10" />}
+          />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {connections.map((c) => {
+              const rawType = c.platform_type ?? c.platform
+              const label = c.label?.trim() || platformTypeToLabel(typeof rawType === 'string' ? rawType : undefined)
+              const Icon = platformTypeToIcon(typeof rawType === 'string' ? rawType : undefined)
+              const spend = connectionEstimatedSpend(c)
+              const badgeStatus = connectionBadgeStatus(String(c.status))
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => navigate(`/platforms/${c.id}`)}
+                  className={clsx(
+                    cardClass,
+                    'cursor-pointer text-left transition',
+                    'hover:border-navy-200 hover:shadow-md hover:ring-navy-900/10',
+                    'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-500',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-navy-800">
+                        <Icon className="h-4 w-4" aria-hidden />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-navy-900">{label}</p>
+                        <p className="truncate text-xs text-slate-500">{platformTypeToLabel(typeof rawType === 'string' ? rawType : undefined)}</p>
+                      </div>
+                    </div>
+                    <StatusBadge status={badgeStatus} />
+                  </div>
+                  <dl className="mt-4 space-y-2 text-xs">
+                    <div className="flex justify-between gap-2 text-slate-600">
+                      <dt>Last sync</dt>
+                      <dd className="font-medium text-navy-900">{formatTimestamp(c.last_sync_at)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2 text-slate-600">
+                      <dt>Est. annual spend</dt>
+                      <dd className="font-medium tabular-nums text-navy-900">{spend != null ? formatUsd(spend) : '—'}</dd>
+                    </div>
+                  </dl>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Section 3: Analysis settings */}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold text-navy-900">Analysis settings</h2>
+          <p className="text-sm text-slate-600">Values apply org-wide. Changes save when you leave a field or press Enter.</p>
+        </div>
+        {settingsQuery.isError ? (
+          <ErrorState message="Could not load analysis settings." />
+        ) : settingsQuery.isPending ? (
+          <div className={cardClass}>
+            <LoadingState message="Loading settings…" />
+          </div>
+        ) : !analysis ? (
+          <ErrorState message="Analysis settings response was invalid." />
+        ) : (
+          <div className={clsx(cardClass, 'space-y-6')}>
+            <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-3">
+              <AnalysisField
+                id="velocity-window"
+                label="Velocity window"
+                suffix="days"
+                value={velocityDraft}
+                onChange={setVelocityDraft}
+                onBlur={saveVelocity}
+                disabled={updateSettings.isPending}
+              />
+              <AnalysisField
+                id="classification-threshold"
+                label="Classification threshold"
+                value={thresholdDraft}
+                onChange={setThresholdDraft}
+                onBlur={saveThreshold}
+                step="0.01"
+                inputMode="decimal"
+                disabled={updateSettings.isPending}
+              />
+              <AnalysisField
+                id="min-vectorization"
+                label="Min records for vectorization"
+                value={minVecDraft}
+                onChange={setMinVecDraft}
+                onBlur={saveMinVec}
+                disabled={updateSettings.isPending}
+              />
+            </div>
+            {updateSettings.isError ? <p className="text-sm text-red-600">Could not save settings. Check values and try again.</p> : null}
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                onClick={onReanalyze}
+                disabled={reanalyze.isPending}
+                className="rounded-lg bg-navy-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm ring-1 ring-navy-900/10 hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {reanalyze.isPending ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Re-analyzing…
+                  </span>
+                ) : (
+                  'Re-analyze'
+                )}
+              </button>
+              {reanalyzeBanner ? (
+                <span className="text-sm font-medium text-emerald-700 transition-opacity duration-300">{reanalyzeBanner}</span>
+              ) : null}
+              {reanalyze.isError ? <span className="text-sm text-red-600">Re-analyze failed. Try again.</span> : null}
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   )
 }
