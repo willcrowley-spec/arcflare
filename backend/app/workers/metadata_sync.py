@@ -67,28 +67,44 @@ def sync_metadata_task(connection_id: str) -> str:
                 await session.commit()
 
     try:
+        trace = None
+        try:
+            from app.core.observability import get_langfuse
+            lf = get_langfuse()
+            if lf is not None:
+                trace = lf.trace(
+                    name="metadata_sync",
+                    metadata={"connection_id": connection_id},
+                )
+        except Exception:
+            trace = None
+
         asyncio.run(_run_sync())
 
         update_phase(connection_id, "classification", "pulling", 0, r)
         try:
             count = asyncio.run(_run_classification())
             update_phase(connection_id, "classification", "done", count, r)
-        except Exception as ce:
-            logger.warning("classification_failed connection=%s error=%s", connection_id, ce)
+        except Exception:
+            logger.exception("classification_failed connection=%s", connection_id)
             update_phase(connection_id, "classification", "done", 0, r)
 
         update_phase(connection_id, "vectorization", "pulling", 0, r)
         try:
             count = asyncio.run(_run_vectorize())
             update_phase(connection_id, "vectorization", "done", count, r)
-        except Exception as ve:
-            logger.warning("vectorization_failed connection=%s error=%s", connection_id, ve)
+        except Exception:
+            logger.exception("vectorization_failed connection=%s", connection_id)
             update_phase(connection_id, "vectorization", "done", 0, r)
 
         complete_progress(connection_id, r=r)
     except Exception as exc:
         complete_progress(connection_id, error=str(exc), r=r)
+        from app.core.observability import flush_langfuse
+        flush_langfuse()
         raise
 
     asyncio.run(_mark_connected())
+    from app.core.observability import flush_langfuse
+    flush_langfuse()
     return connection_id

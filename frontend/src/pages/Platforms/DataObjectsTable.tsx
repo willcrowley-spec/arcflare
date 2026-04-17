@@ -8,11 +8,11 @@ import type { MetadataObject } from '@/types'
 const CLASSIFICATIONS = ['operational', 'configuration', 'empty', 'deprecated'] as const
 type ClassificationValue = (typeof CLASSIFICATIONS)[number]
 
-const CLASS_BADGE: Record<ClassificationValue, string> = {
-  operational: 'bg-emerald-50 text-emerald-900 ring-emerald-200',
-  configuration: 'bg-sky-50 text-sky-900 ring-sky-200',
-  empty: 'bg-slate-100 text-slate-800 ring-slate-200',
-  deprecated: 'bg-amber-50 text-amber-900 ring-amber-200',
+const CLASS_SELECT_STYLE: Record<ClassificationValue, string> = {
+  operational: 'bg-emerald-50 text-emerald-900 border-emerald-200',
+  configuration: 'bg-sky-50 text-sky-900 border-sky-200',
+  empty: 'bg-slate-100 text-slate-800 border-slate-200',
+  deprecated: 'bg-amber-50 text-amber-900 border-amber-200',
 }
 
 function normalizeClassification(raw: string | null | undefined): ClassificationValue {
@@ -21,9 +21,12 @@ function normalizeClassification(raw: string | null | undefined): Classification
   return 'empty'
 }
 
-function velocityPresentation(score: number | undefined) {
+function velocityPresentation(score: number | undefined, recordCount: number | undefined) {
   const s = score ?? 0
-  if (s > 0.1) return { dot: 'bg-emerald-500', label: 'hot' as const }
+  const r = recordCount ?? 0
+  if (r === 0) return { dot: 'bg-slate-300', label: 'none' as const }
+  const pct = r > 0 ? s / r : 0
+  if (pct > 0.5) return { dot: 'bg-emerald-500', label: 'hot' as const }
   if (s > 0) return { dot: 'bg-amber-500', label: 'warm' as const }
   return { dot: 'bg-slate-300', label: 'cold' as const }
 }
@@ -71,25 +74,21 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
           const value = pending
             ? normalizeClassification(updateClassification.variables?.classification)
             : normalizeClassification(row.classification)
-          const badgeClass = CLASS_BADGE[value]
+          const selectStyle = CLASS_SELECT_STYLE[value]
 
           return (
             <div
-              className="inline-flex items-center gap-2"
+              className="inline-flex items-center"
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => e.stopPropagation()}
             >
-              <span
-                className={clsx(
-                  'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset',
-                  badgeClass,
-                )}
-              >
-                {value}
-              </span>
               <select
                 aria-label={`Classification for ${row.api_name}`}
-                className="max-w-[140px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-800 shadow-sm"
+                className={clsx(
+                  'cursor-pointer appearance-none rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-colors',
+                  selectStyle,
+                  pending && 'opacity-50',
+                )}
                 value={value}
                 disabled={pending}
                 onChange={(e) => {
@@ -121,11 +120,11 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
         sortValue: (row) => row.velocity_score ?? 0,
         cell: (row) => {
           const score = row.velocity_score ?? 0
-          const { dot, label } = velocityPresentation(row.velocity_score)
+          const { dot, label } = velocityPresentation(row.velocity_score, row.record_count)
           return (
             <div className="flex items-center gap-2">
               <span className={clsx('h-2.5 w-2.5 shrink-0 rounded-full', dot)} title={label} />
-              <span className="tabular-nums text-slate-700">{score.toFixed(3)}</span>
+              <span className="tabular-nums text-slate-700">{score.toLocaleString()}</span>
             </div>
           )
         },
@@ -160,7 +159,14 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
       searchPlaceholder="Search entities…"
       pageSize={25}
       emptyLabel="No metadata objects for this connection."
-      getRowClassName={(r) => ((r.record_count ?? 0) === 0 ? 'opacity-60' : undefined)}
+      defaultSortCol="records"
+      defaultSortDir="desc"
+      getRowClassName={(r) => {
+        const rc = r.record_count ?? 0
+        const cls = normalizeClassification(r.classification)
+        if (rc === 0 || cls === 'empty' || cls === 'deprecated') return 'opacity-60'
+        return undefined
+      }}
     />
   )
 }

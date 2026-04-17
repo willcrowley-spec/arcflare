@@ -148,6 +148,17 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
             is_managed, namespace = _detect_namespace(api_name)
             fields = _extract_fields(describe)
             relationships = _extract_relationships(describe)
+            record_type_infos = [
+                {
+                    "name": rt.get("name", ""),
+                    "developer_name": rt.get("developerName", ""),
+                    "is_active": rt.get("active", False),
+                    "is_master": rt.get("master", False),
+                    "record_type_id": rt.get("recordTypeId", ""),
+                }
+                for rt in describe.get("recordTypeInfos", [])
+                if not rt.get("master", False)  # skip the Master record type
+            ]
 
             results.append(
                 PlatformObjectMeta(
@@ -159,6 +170,7 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
                     is_custom=is_custom,
                     fields=fields,
                     relationships=relationships,
+                    record_types=record_type_infos,
                 )
             )
         except Exception as e:
@@ -308,6 +320,29 @@ def pull_approval_processes(sf: Salesforce) -> list[AutomationMeta]:
         return []
 
 
+def pull_business_processes(sf: Salesforce) -> list[dict]:
+    """Pull BusinessProcess metadata (SalesProcess, SupportProcess, LeadProcess)."""
+    try:
+        raw = _tooling_query_all(
+            sf,
+            "SELECT Id,Name,TableEnumOrId,IsActive,Description FROM BusinessProcess",
+        )
+        results = []
+        for bp in raw:
+            results.append({
+                "id": bp.get("Id", ""),
+                "name": bp.get("Name", ""),
+                "related_object": bp.get("TableEnumOrId", ""),
+                "is_active": bp.get("IsActive", True),
+                "description": bp.get("Description"),
+            })
+        logger.info("sf_business_processes_pulled count=%d", len(results))
+        return results
+    except Exception as e:
+        logger.warning("sf_business_processes_failed error=%s", e)
+        return []
+
+
 def pull_permission_sets(sf: Salesforce) -> list[PermissionMeta]:
     try:
         raw = _rest_query_all(
@@ -445,10 +480,16 @@ def pull_installed_packages(sf: Salesforce) -> list[dict]:
         return []
 
 
-def pull_usage_data(sf: Salesforce, object_names: list[str], recency_days: int = 365) -> UsageData:
+def pull_usage_data(
+    sf: Salesforce,
+    object_names: list[str],
+    recency_days: int = 365,
+    velocity_window_days: int = 30,
+) -> UsageData:
     """Query record counts (total and recent) for each object."""
     total_counts: dict[str, int] = {}
     recent_counts: dict[str, int] = {}
+    velocity_counts: dict[str, int] = {}
 
     for obj_name in object_names:
         try:
@@ -466,6 +507,16 @@ def pull_usage_data(sf: Salesforce, object_names: list[str], recency_days: int =
         except Exception:
             recent_counts[obj_name] = 0
 
+        if total_counts[obj_name] > 0:
+            try:
+                result = sf.query(
+                    f"SELECT COUNT() FROM {obj_name} "
+                    f"WHERE LastModifiedDate >= LAST_N_DAYS:{velocity_window_days}"
+                )
+                velocity_counts[obj_name] = result.get("totalSize", 0)
+            except Exception:
+                velocity_counts[obj_name] = 0
+
     active_user_count = None
     try:
         result = sf.query("SELECT COUNT() FROM User WHERE IsActive = true")
@@ -482,6 +533,7 @@ def pull_usage_data(sf: Salesforce, object_names: list[str], recency_days: int =
     return UsageData(
         object_record_counts=total_counts,
         object_recent_counts=recent_counts,
+        velocity_counts=velocity_counts,
         active_user_count=active_user_count,
     )
 
@@ -545,15 +597,27 @@ async def sync_metadata(
     object_names = [o.api_name for o in objects]
     _progress("objects", "done", len(objects))
 
-    usage = pull_usage_data(sf, object_names)
+    org = await db.get(Organization, org_id)
+    velocity_window_days = 30
+    if org and org.analysis_config:
+        velocity_window_days = org.analysis_config.get("velocity_window_days", 30)
+
+    usage = pull_usage_data(sf, object_names, velocity_window_days=velocity_window_days)
     for obj in objects:
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
     _progress("automations", "pulling", 0)
     automations = pull_all_automations(sf)
+    all_validation_rules: list[dict] = []
+    for obj_name in object_names:
+        all_validation_rules.extend(
+            {**vr, "_related_object": obj_name}
+            for vr in pull_validation_rules(sf, obj_name)
+        )
+    logger.info("sf_validation_rules_pulled total=%d", len(all_validation_rules))
     active_automation_count = sum(1 for a in automations if a.is_active)
-    _progress("automations", "done", active_automation_count)
+    _progress("automations", "done", active_automation_count + len(all_validation_rules))
 
     _progress("permissions", "pulling", 0)
     permissions = pull_all_permissions(sf)
@@ -581,11 +645,13 @@ async def sync_metadata(
             record_count=obj.record_count,
             is_custom=obj.is_custom,
             managed_package_namespace=obj.namespace_prefix,
+            velocity_score=float(usage.velocity_counts.get(obj.api_name, 0)),
             metadata_json={
                 "relationships": obj.relationships,
                 "is_managed_package": obj.is_managed_package,
                 "namespace_prefix": obj.namespace_prefix,
                 "recent_record_count": obj.recent_record_count,
+                "record_types": obj.record_types,
             },
         )
         db.add(meta_obj)
@@ -601,7 +667,10 @@ async def sync_metadata(
                     field_type=fld.get("type", ""),
                     is_custom=fname.endswith("__c"),
                     is_required=not fld.get("nillable", True),
-                    metadata_json={"description": fld.get("description", "")},
+                    metadata_json={
+                        "description": fld.get("description", ""),
+                        "picklist_values": fld.get("picklistValues", []),
+                    },
                 )
             )
 
@@ -622,6 +691,24 @@ async def sync_metadata(
                     "description": auto.description,
                     "related_objects": auto.related_objects,
                     "is_active": auto.is_active,
+                },
+            )
+        )
+
+    for vr in all_validation_rules:
+        db.add(
+            MetadataAutomation(
+                connection_id=connection_id,
+                org_id=org_id,
+                api_name=vr.get("ValidationName", vr.get("Id", "")),
+                label=vr.get("ValidationName", ""),
+                automation_type="validation_rule",
+                status="Active" if vr.get("Active") else "Inactive",
+                related_object=vr.get("_related_object"),
+                metadata_json={
+                    "description": vr.get("Description"),
+                    "error_message": vr.get("ErrorMessage"),
+                    "is_active": vr.get("Active", False),
                 },
             )
         )
@@ -693,6 +780,25 @@ async def sync_metadata(
             )
         )
     _progress("installed_packages", "done", len(packages))
+
+    business_processes = pull_business_processes(sf)
+    for bp in business_processes:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category="business_process",
+                api_name=bp.get("name", bp.get("id", "")),
+                label=bp.get("name", ""),
+                related_object=bp.get("related_object"),
+                status="Active" if bp.get("is_active") else "Inactive",
+                metadata_json={
+                    "description": bp.get("description"),
+                    "related_object": bp.get("related_object"),
+                    "is_active": bp.get("is_active"),
+                },
+            )
+        )
 
     _progress("licensing", "pulling", 0)
     try:

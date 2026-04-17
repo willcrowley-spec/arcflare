@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { StatusBadge } from '@/components/StatusBadge'
+import { SyncProgressPanel } from '@/components/SyncProgressPanel'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import {
   useConnections,
@@ -26,6 +27,7 @@ import {
   useOrgLicensing,
   useReauthConnection,
   useSyncConnection,
+  useSyncProgress,
   useUserVelocity,
 } from '@/hooks/useApi'
 import type { MetadataComponent, MetadataSummary } from '@/types'
@@ -146,6 +148,8 @@ export default function PlatformDetailPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [syncingId, setSyncingId] = useState<string | null>(null)
+  const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const syncProgressQuery = useSyncProgress(activeSyncId)
 
   const connectionsQuery = useConnections()
   const syncConnection = useSyncConnection()
@@ -156,6 +160,12 @@ export default function PlatformDetailPage() {
     () => connections.find((c) => String(c.id) === String(connectionId)),
     [connections, connectionId],
   )
+
+  useEffect(() => {
+    if (connection?.status === 'syncing' && connectionId && !activeSyncId) {
+      setActiveSyncId(connectionId)
+    }
+  }, [connection?.status, connectionId, activeSyncId])
 
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''
@@ -229,9 +239,11 @@ export default function PlatformDetailPage() {
 
   const onSync = useCallback(() => {
     if (!connection) return
-    qc.removeQueries({ queryKey: ['sync-progress', String(connection.id)] })
-    setSyncingId(String(connection.id))
-    syncConnection.mutate(String(connection.id), {
+    const cid = String(connection.id)
+    qc.removeQueries({ queryKey: ['sync-progress', cid] })
+    setSyncingId(cid)
+    setActiveSyncId(cid)
+    syncConnection.mutate(cid, {
       onSettled: () => setSyncingId(null),
     })
   }, [syncConnection, qc, connection])
@@ -352,6 +364,14 @@ export default function PlatformDetailPage() {
           </div>
         </div>
       </div>
+
+      {activeSyncId ? (
+        <SyncProgressPanel
+          data={syncProgressQuery.data}
+          isActive={!!activeSyncId}
+          onDismiss={() => setActiveSyncId(null)}
+        />
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard

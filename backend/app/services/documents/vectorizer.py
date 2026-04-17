@@ -24,7 +24,27 @@ async def _embed(client, content: str) -> list[float]:
         )
         return list(result.embeddings[0].values)
 
-    return await asyncio.to_thread(_sync)
+    import time as _time
+    _start = _time.time()
+    vectors = await asyncio.to_thread(_sync)
+    _dur = (_time.time() - _start) * 1000
+
+    try:
+        from app.core.observability import get_langfuse
+        lf = get_langfuse()
+        if lf is not None:
+            lf.generation(
+                name="embedding",
+                model=_EMBED_MODEL,
+                input=content[:200],
+                metadata={"dimensions": _EMBED_DIMS, "input_length": len(content)},
+                usage={"total": 1},
+                level="DEFAULT",
+            )
+    except Exception:
+        pass
+
+    return vectors
 
 
 async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
@@ -36,7 +56,27 @@ async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
         )
         return [list(e.values) for e in result.embeddings]
 
-    return await asyncio.to_thread(_sync)
+    import time as _time
+    _start = _time.time()
+    vectors = await asyncio.to_thread(_sync)
+    _dur = (_time.time() - _start) * 1000
+
+    try:
+        from app.core.observability import get_langfuse
+        lf = get_langfuse()
+        if lf is not None:
+            lf.generation(
+                name="embedding_batch",
+                model=_EMBED_MODEL,
+                input=f"[{len(texts)} texts]",
+                metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts), "duration_ms": round(_dur)},
+                usage={"total": len(texts)},
+                level="DEFAULT",
+            )
+    except Exception:
+        pass
+
+    return vectors
 
 
 async def vectorize_chunks(

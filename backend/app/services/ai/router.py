@@ -108,6 +108,7 @@ def llm_call(
             time.sleep(rate_delay - elapsed)
 
     _last_call_time = time.time()
+    start_time = time.time()
 
     if provider == "gemini":
         result = _call_gemini(prompt, max_tokens, model)
@@ -118,10 +119,34 @@ def llm_call(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
 
+    duration_ms = (time.time() - start_time) * 1000
+
     logger.info(
         "llm_call provider=%s model=%s tier=%s in=%d out=%d",
         provider, model, tier, result.input_tokens, result.output_tokens,
     )
+
+    try:
+        from app.core.observability import get_langfuse
+
+        lf = get_langfuse()
+        if lf is not None:
+            lf.generation(
+                name="llm_call",
+                model=model,
+                input=prompt,
+                output=result.text,
+                metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens},
+                usage={
+                    "input": result.input_tokens,
+                    "output": result.output_tokens,
+                    "total": result.input_tokens + result.output_tokens,
+                },
+                level="DEFAULT",
+            )
+    except Exception:
+        pass
+
     return result
 
 

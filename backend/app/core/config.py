@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = Field(default="http://localhost:3000")
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
 
+    LANGFUSE_SECRET_KEY: str = Field(default="")
+    LANGFUSE_PUBLIC_KEY: str = Field(default="")
+    LANGFUSE_BASE_URL: str = Field(default="https://cloud.langfuse.com")
+
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",

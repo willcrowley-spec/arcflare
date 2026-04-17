@@ -27,4 +27,6 @@ def generate_recommendations_task(org_id: str) -> str:
             return len(candidates)
 
     asyncio.run(_run())
+    from app.core.observability import flush_langfuse
+    flush_langfuse()
     return org_id

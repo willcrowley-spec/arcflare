@@ -20,6 +20,7 @@ class PlatformObjectMeta:
     is_custom: bool = False
     fields: list[dict] = field(default_factory=list)
     relationships: list[dict] = field(default_factory=list)
+    record_types: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +59,7 @@ class UsageData:
     """Record-count usage data for platform objects."""
     object_record_counts: dict[str, int] = field(default_factory=dict)
     object_recent_counts: dict[str, int] = field(default_factory=dict)
+    velocity_counts: dict[str, int] = field(default_factory=dict)
     active_user_count: Optional[int] = None
 
 

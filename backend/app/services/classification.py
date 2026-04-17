@@ -1,12 +1,11 @@
 """Object classification and velocity scoring."""
 import logging
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.metadata import MetadataObject, RecordTelemetry
+from app.models.metadata import MetadataObject
 from app.models.organization import Organization
 
 logger = logging.getLogger(__name__)
@@ -23,25 +22,6 @@ def _get_config(org: Organization) -> dict:
     return {**DEFAULT_CONFIG, **config}
 
 
-async def compute_velocity_for_object(
-    object_id: UUID,
-    window_days: int,
-    db: AsyncSession,
-) -> float:
-    since = datetime.now(tz=UTC) - timedelta(days=window_days)
-    q = await db.execute(
-        select(
-            func.coalesce(func.sum(RecordTelemetry.created_count_delta), 0),
-            func.coalesce(func.sum(RecordTelemetry.modified_count_delta), 0),
-        ).where(
-            RecordTelemetry.object_id == object_id,
-            RecordTelemetry.snapshot_at >= since,
-        )
-    )
-    created_sum, modified_sum = q.one()
-    return float((created_sum or 0) + (modified_sum or 0))
-
-
 def classify_object(record_count: int, velocity_score: float, threshold: float) -> str:
     if record_count == 0:
         return "empty"
@@ -55,12 +35,12 @@ async def run_classification(
     db: AsyncSession,
     connection_id: UUID | None = None,
 ) -> int:
-    """Compute velocity and classification for all auto-classified objects in an org."""
+    """Classify all auto-classified objects using pre-computed velocity_score."""
     org = await db.get(Organization, org_id)
     if org is None:
+        logger.warning("classification_skipped org=%s reason=org_not_found", org_id)
         return 0
     config = _get_config(org)
-    window = config["velocity_window_days"]
     threshold = config["classification_threshold"]
 
     filters = [
@@ -73,16 +53,17 @@ async def run_classification(
     result = await db.execute(select(MetadataObject).where(*filters))
     objects = result.scalars().all()
 
-    count = 0
+    counts = {"operational": 0, "configuration": 0, "empty": 0}
     for obj in objects:
-        velocity = await compute_velocity_for_object(obj.id, window, db)
-        obj.velocity_score = velocity
-        obj.classification = classify_object(obj.record_count, velocity, threshold)
-        count += 1
+        obj.classification = classify_object(obj.record_count, obj.velocity_score, threshold)
+        counts[obj.classification] = counts.get(obj.classification, 0) + 1
 
     await db.flush()
-    logger.info("classification_complete org=%s objects=%d", org_id, count)
-    return count
+    logger.info(
+        "classification_complete org=%s objects=%d distribution=%s",
+        org_id, len(objects), counts,
+    )
+    return len(objects)
 
 
 async def reanalyze_org(org_id: UUID, db: AsyncSession) -> int:

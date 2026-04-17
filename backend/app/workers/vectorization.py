@@ -42,4 +42,6 @@ def vectorize_document_task(document_id: str) -> str:
             await session.commit()
 
     asyncio.run(_run())
+    from app.core.observability import flush_langfuse
+    flush_langfuse()
     return document_id

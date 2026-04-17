@@ -37,6 +37,8 @@ type DataTableProps<T> = {
   showSearch?: boolean
   /** Optional per-row classes (e.g. muted empty rows). */
   getRowClassName?: (row: T) => string | undefined
+  defaultSortCol?: string
+  defaultSortDir?: 'asc' | 'desc'
 }
 
 export function DataTable<T>({
@@ -50,10 +52,12 @@ export function DataTable<T>({
   resourceName = 'items',
   showSearch = true,
   getRowClassName,
+  defaultSortCol,
+  defaultSortDir = 'asc',
 }: DataTableProps<T>) {
   const [query, setQuery] = React.useState('')
-  const [sortCol, setSortCol] = React.useState<string | null>(null)
-  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
+  const [sortCol, setSortCol] = React.useState<string | null>(defaultSortCol ?? null)
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>(defaultSortCol ? defaultSortDir : 'asc')
   const [page, setPage] = React.useState(0)
   const [userPageSize, setUserPageSize] = React.useState(pageSize)
 
