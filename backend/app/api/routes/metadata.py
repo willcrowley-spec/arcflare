@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, tuple_
 
 from app.api.deps import CurrentOrg, DbSession
 from app.models.connection import PlatformConnection
@@ -23,6 +23,7 @@ from app.schemas.metadata import (
     TelemetryResponse,
     VelocityPoint,
 )
+from app.schemas.settings import ClassificationUpdate
 from app.services.salesforce.telemetry import calculate_velocity
 
 router = APIRouter()
@@ -163,9 +164,60 @@ async def list_metadata_objects(
     )
     result = await db.execute(stmt)
     rows = result.scalars().all()
-    items = [MetadataObjectResponse.model_validate(r) for r in rows]
+
+    count_map: dict[tuple[UUID, str], int] = {}
+    if rows:
+        pairs = list({(r.connection_id, r.api_name) for r in rows})
+        cnt_rows = await db.execute(
+            select(
+                MetadataAutomation.connection_id,
+                MetadataAutomation.related_object,
+                func.count(),
+            )
+            .where(
+                MetadataAutomation.org_id == org.id,
+                tuple_(MetadataAutomation.connection_id, MetadataAutomation.related_object).in_(pairs),
+            )
+            .group_by(MetadataAutomation.connection_id, MetadataAutomation.related_object)
+        )
+        for conn_id, related_object, cnt in cnt_rows.all():
+            if related_object is not None:
+                count_map[(conn_id, related_object)] = int(cnt or 0)
+
+    items: list[MetadataObjectResponse] = []
+    for r in rows:
+        resp = MetadataObjectResponse.model_validate(r)
+        resp.automation_count = count_map.get((r.connection_id, r.api_name), 0)
+        items.append(resp)
+
     pages = max((total + page_size - 1) // page_size, 1)
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
+
+
+@router.patch("/objects/{object_id}/classification", response_model=MetadataObjectResponse)
+async def update_classification(
+    object_id: UUID,
+    body: ClassificationUpdate,
+    db: DbSession,
+    org: CurrentOrg,
+) -> MetadataObjectResponse:
+    obj = await db.get(MetadataObject, object_id)
+    if obj is None or obj.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Object not found")
+    obj.classification = body.classification
+    obj.classification_source = "manual"
+    await db.commit()
+    await db.refresh(obj)
+
+    automation_count = await db.scalar(
+        select(func.count()).select_from(MetadataAutomation).where(
+            MetadataAutomation.related_object == obj.api_name,
+            MetadataAutomation.connection_id == obj.connection_id,
+        )
+    )
+    resp = MetadataObjectResponse.model_validate(obj)
+    resp.automation_count = int(automation_count or 0)
+    return resp
 
 
 @router.get("/objects/{object_id}", response_model=MetadataObjectResponse)

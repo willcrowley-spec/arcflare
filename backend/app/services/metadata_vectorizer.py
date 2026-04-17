@@ -2,6 +2,7 @@
 import logging
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -193,7 +194,14 @@ async def vectorize_org_metadata(
 
     objects = (
         await db.execute(
-            select(MetadataObject).where(MetadataObject.connection_id == connection_id)
+            select(MetadataObject).where(
+                MetadataObject.connection_id == connection_id,
+                MetadataObject.record_count > 0,
+                sa.or_(
+                    MetadataObject.classification.is_(None),
+                    MetadataObject.classification.notin_(["empty", "deprecated"]),
+                ),
+            )
         )
     ).scalars().all()
 

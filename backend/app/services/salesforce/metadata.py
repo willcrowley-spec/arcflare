@@ -1,8 +1,8 @@
 """Salesforce metadata synchronization.
 
 Pulls object describes, fields, flows, apex classes/triggers, validation rules,
-workflow rules, approval processes, page layouts, flexipages, reports, dashboards,
-profiles, and permission sets using the Metadata and Tooling APIs.
+workflow rules, approval processes, page layouts, flexipages, profiles, and permission
+sets using the Metadata and Tooling APIs.
 """
 import json
 import logging
@@ -416,46 +416,6 @@ def pull_flexipages(sf: Salesforce) -> list[UIComponentMeta]:
         return []
 
 
-def pull_reports(sf: Salesforce) -> list[UIComponentMeta]:
-    try:
-        raw = _tooling_query_all(
-            sf,
-            "SELECT Id,Name,DeveloperName,Description,Format FROM Report WHERE NamespacePrefix=null",
-        )
-        return [
-            UIComponentMeta(
-                api_name=r.get("DeveloperName", r.get("Id", "")),
-                label=r.get("Name", ""),
-                component_type="report",
-                description=r.get("Description"),
-            )
-            for r in raw
-        ]
-    except Exception as e:
-        logger.warning("sf_reports_failed error=%s", e)
-        return []
-
-
-def pull_dashboards(sf: Salesforce) -> list[UIComponentMeta]:
-    try:
-        raw = _tooling_query_all(
-            sf,
-            "SELECT Id,Title,DeveloperName,Description FROM Dashboard WHERE NamespacePrefix=null",
-        )
-        return [
-            UIComponentMeta(
-                api_name=r.get("DeveloperName", r.get("Id", "")),
-                label=r.get("Title", ""),
-                component_type="dashboard",
-                description=r.get("Description"),
-            )
-            for r in raw
-        ]
-    except Exception as e:
-        logger.warning("sf_dashboards_failed error=%s", e)
-        return []
-
-
 def pull_installed_packages(sf: Salesforce) -> list[dict]:
     try:
         raw = _tooling_query_all(
@@ -548,8 +508,6 @@ def pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UICo
     components: list[UIComponentMeta] = []
     components.extend(pull_page_layouts(sf, object_names))
     components.extend(pull_flexipages(sf))
-    components.extend(pull_reports(sf))
-    components.extend(pull_dashboards(sf))
     logger.info("sf_all_ui_components_complete total=%d", len(components))
     return components
 
@@ -592,29 +550,18 @@ async def sync_metadata(
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
-    _progress("fields", "pulling", sum(o.field_count for o in objects))
-    _progress("flows", "pulling", 0)
-    _progress("triggers", "pulling", 0)
-    _progress("validation_rules", "pulling", 0)
-
+    _progress("automations", "pulling", 0)
     automations = pull_all_automations(sf)
-    flow_count = sum(1 for a in automations if a.automation_type in ("flow", "process_builder") and a.is_active)
-    trigger_count = sum(1 for a in automations if a.automation_type == "trigger" and a.is_active)
-    vr_count = sum(1 for a in automations if a.automation_type == "validation_rule" and a.is_active)
-    _progress("flows", "done", flow_count)
-    _progress("triggers", "done", trigger_count)
-    _progress("validation_rules", "done", vr_count)
+    active_automation_count = sum(1 for a in automations if a.is_active)
+    _progress("automations", "done", active_automation_count)
 
     _progress("permissions", "pulling", 0)
     permissions = pull_all_permissions(sf)
     _progress("permissions", "done", len(permissions))
 
     _progress("ui_components", "pulling", 0)
-    _progress("reports", "pulling", 0)
     ui_components = pull_all_ui_components(sf, object_names)
-    report_count = sum(1 for c in ui_components if c.component_type in ("report", "dashboard"))
-    _progress("ui_components", "done", len(ui_components) - report_count)
-    _progress("reports", "done", report_count)
+    _progress("ui_components", "done", len(ui_components))
 
     mo_subq = select(MetadataObject.id).where(MetadataObject.connection_id == connection_id)
 
@@ -679,8 +626,7 @@ async def sync_metadata(
             )
         )
 
-    _progress("fields", "done", sum(o.field_count for o in objects))
-    _progress("apex_classes", "pulling", 0)
+    _progress("code", "pulling", 0)
     apex_classes = pull_apex_classes(sf)
     apex_classes = [ac for ac in apex_classes if ac.get("Status") != "Deleted"]
     for ac in apex_classes:
@@ -698,7 +644,7 @@ async def sync_metadata(
                 },
             )
         )
-    _progress("apex_classes", "done", len(apex_classes))
+    _progress("code", "done", len(apex_classes))
 
     for perm in permissions:
         db.add(

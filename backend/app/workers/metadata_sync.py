@@ -14,6 +14,7 @@ def sync_metadata_task(connection_id: str) -> str:
 
     from app.core.database import engine
     from app.models.connection import PlatformConnection
+    from app.services.classification import run_classification
     from app.services.salesforce.metadata import sync_metadata
     from app.services.sync_progress import (
         complete_progress,
@@ -37,6 +38,16 @@ def sync_metadata_task(connection_id: str) -> str:
                 await session.commit()
             return await sync_metadata(UUID(connection_id), session, progress_callback=progress_cb)
 
+    async def _run_classification() -> int:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            conn = await session.get(PlatformConnection, UUID(connection_id))
+            if conn is None:
+                return 0
+            count = await run_classification(conn.org_id, session, connection_id=UUID(connection_id))
+            await session.commit()
+            return count
+
     async def _run_vectorize() -> int:
         from app.services.metadata_vectorizer import vectorize_org_metadata
 
@@ -57,6 +68,14 @@ def sync_metadata_task(connection_id: str) -> str:
 
     try:
         asyncio.run(_run_sync())
+
+        update_phase(connection_id, "classification", "pulling", 0, r)
+        try:
+            count = asyncio.run(_run_classification())
+            update_phase(connection_id, "classification", "done", count, r)
+        except Exception as ce:
+            logger.warning("classification_failed connection=%s error=%s", connection_id, ce)
+            update_phase(connection_id, "classification", "done", 0, r)
 
         update_phase(connection_id, "vectorization", "pulling", 0, r)
         try:

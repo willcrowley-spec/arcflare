@@ -9,18 +9,15 @@ logger = logging.getLogger(__name__)
 
 PHASES = [
     "objects",
-    "fields",
-    "flows",
-    "triggers",
-    "validation_rules",
-    "apex_classes",
+    "automations",
+    "code",
     "permissions",
     "ui_components",
-    "reports",
     "installed_packages",
     "licensing",
     "user_velocity",
     "entities",
+    "classification",
     "vectorization",
 ]
 

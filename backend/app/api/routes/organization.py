@@ -21,6 +21,7 @@ from app.schemas.organization import (
     OrgProfileResponse,
     UserVelocityResponse,
 )
+from app.schemas.settings import AnalysisConfig, AnalysisConfigUpdate
 from app.services.entities.cost_model import calculate_cost_deflection, calculate_hires_deflected
 from app.services.entities.profiler import build_hierarchy, sync_from_salesforce
 
@@ -39,6 +40,38 @@ def _to_hierarchy_nodes(data: list[dict]) -> list[HierarchyNode]:
             )
         )
     return out
+
+
+@router.get("/settings", response_model=AnalysisConfig)
+async def get_settings(org: CurrentOrg) -> AnalysisConfig:
+    config = org.analysis_config or {}
+    return AnalysisConfig(**config)
+
+
+@router.patch("/settings", response_model=AnalysisConfig)
+async def update_settings(
+    body: AnalysisConfigUpdate,
+    db: DbSession,
+    org: CurrentOrg,
+) -> AnalysisConfig:
+    config = dict(org.analysis_config or {})
+    for k, v in body.model_dump(exclude_unset=True).items():
+        config[k] = v
+    org.analysis_config = config
+    await db.commit()
+    await db.refresh(org)
+    return AnalysisConfig(**org.analysis_config)
+
+
+@router.post("/reanalyze")
+async def reanalyze(
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict[str, str | int]:
+    from app.services.classification import reanalyze_org
+
+    count = await reanalyze_org(org.id, db)
+    return {"status": "completed", "objects_reclassified": count}
 
 
 @router.get("/profile", response_model=OrgProfileResponse)
