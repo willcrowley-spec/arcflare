@@ -2,6 +2,7 @@ import type {
   Agent,
   AnalysisConfig,
   BusinessEntity,
+  DiscoveryStatus,
   Document,
   DocumentSearchResult,
   FleetAnalytics,
@@ -12,6 +13,7 @@ import type {
   MetadataSummary,
   PaginatedResponse,
   PlatformConnection,
+  ProcessHandoffItem,
   Recommendation,
   RecordTelemetry,
   SalesforceInitiateResponse,
@@ -172,6 +174,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ format }),
       }),
+  },
+  discovery: {
+    start: () => request<void>('/discovery/start', { method: 'POST' }),
+    status: () => request<DiscoveryStatus>('/discovery/status'),
+    handoffs: () => request<ProcessHandoffItem[]>('/discovery/handoffs'),
+    confirmProcess: (id: string) =>
+      request<void>(`/discovery/${id}/confirm`, { method: 'POST' }),
+    rejectProcess: (id: string) =>
+      request<void>(`/discovery/${id}/reject`, { method: 'POST' }),
   },
   recommendations: {
     list: (params?: { page?: number; page_size?: number; status?: string }) =>

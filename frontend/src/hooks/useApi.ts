@@ -287,3 +287,47 @@ export function useSyncProgress(connectionId: string | null) {
 
   return query
 }
+
+export function useDiscoveryStatus() {
+  return useQuery({
+    queryKey: ['discovery-status'],
+    queryFn: () => api.discovery.status(),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === 'completed' || status === 'failed' || status === 'idle') return false
+      return 2000
+    },
+  })
+}
+
+export function useStartDiscovery() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.discovery.start(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['discovery-status'] })
+    },
+  })
+}
+
+export function useConfirmProcess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.discovery.confirmProcess(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['processes'] })
+      void qc.invalidateQueries({ queryKey: ['discovery-status'] })
+    },
+  })
+}
+
+export function useRejectProcess() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.discovery.rejectProcess(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['processes'] })
+      void qc.invalidateQueries({ queryKey: ['discovery-status'] })
+    },
+  })
+}

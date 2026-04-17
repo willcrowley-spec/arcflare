@@ -345,3 +345,29 @@ export interface FleetAnalytics {
   total_agents: number
   monthly_spend_usd: number
 }
+
+export interface DiscoveryPhase {
+  status: string
+  count: number
+  total: number
+}
+
+export interface DiscoveryStatus {
+  run_id: string | null
+  status: string
+  phases: Record<string, DiscoveryPhase>
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+}
+
+export interface ProcessHandoffItem {
+  id: string
+  source_process_id: string
+  target_process_id: string
+  handoff_type: string
+  description: string | null
+  confidence_score: number
+  is_gap: boolean
+  needs_review: boolean
+}
