@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import { StatusBadge } from '@/components/StatusBadge'
 import { ConnectPlatformModal } from '@/components/ConnectPlatformModal'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
-import { SyncProgressPanel } from '@/components/SyncProgressPanel'
+import { SyncProgressModal } from '@/components/SyncProgressModal'
 import {
   useConnections,
   useDeleteConnection,
@@ -76,6 +76,7 @@ export default function AnalysisPage() {
   const navigate = useNavigate()
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const [showSyncModal, setShowSyncModal] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
   const qc = useQueryClient()
   const syncProgressQuery = useSyncProgress(activeSyncId)
@@ -96,6 +97,7 @@ export default function AnalysisPage() {
       })
       if (active) {
         setActiveSyncId(String(active.id))
+        setShowSyncModal(true)
       }
     }
   }, [connections, activeSyncId])
@@ -128,6 +130,7 @@ export default function AnalysisPage() {
       qc.removeQueries({ queryKey: ['sync-progress', id] })
       setSyncingId(id)
       setActiveSyncId(id)
+      setShowSyncModal(true)
       syncConnection.mutate(id, {
         onSettled: () => setSyncingId(null),
       })
@@ -220,13 +223,19 @@ export default function AnalysisPage() {
         </p>
       )}
 
-      {hasConnections && activeSyncId ? (
-        <SyncProgressPanel
-          data={syncProgressQuery.data}
-          isActive={!!activeSyncId}
-          onDismiss={() => setActiveSyncId(null)}
-        />
-      ) : null}
+      <SyncProgressModal
+        open={showSyncModal && !!activeSyncId}
+        onClose={() => setShowSyncModal(false)}
+        data={syncProgressQuery.data}
+        platformLabel={
+          activeSyncId
+            ? platformLabelFromType(
+                connections.find((c) => String(c.id) === activeSyncId)?.platform_type ??
+                  (connections.find((c) => String(c.id) === activeSyncId)?.platform as string | undefined),
+              )
+            : undefined
+        }
+      />
 
       <section className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
         <div className="flex items-center justify-between gap-4">

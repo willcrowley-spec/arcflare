@@ -58,12 +58,12 @@ def sync_metadata_task(connection_id: str) -> str:
                 return 0
             return await vectorize_org_metadata(UUID(connection_id), conn.org_id, session)
 
-    async def _mark_connected() -> None:
+    async def _set_connection_status(target_status: str) -> None:
         factory = async_sessionmaker(engine, expire_on_commit=False)
         async with factory() as session:
             conn = await session.get(PlatformConnection, UUID(connection_id))
             if conn:
-                conn.status = "connected"
+                conn.status = target_status
                 await session.commit()
 
     from app.core.observability import get_langfuse, flush_langfuse
@@ -92,10 +92,15 @@ def sync_metadata_task(connection_id: str) -> str:
             update_phase(connection_id, "vectorization", "done", 0, r)
 
         complete_progress(connection_id, r=r)
-        asyncio.run(_mark_connected())
+        asyncio.run(_set_connection_status("connected"))
         return connection_id
     except Exception as exc:
+        logger.exception("sync_task_failed connection=%s", connection_id)
         complete_progress(connection_id, error=str(exc), r=r)
+        try:
+            asyncio.run(_set_connection_status("error"))
+        except Exception:
+            logger.exception("failed_to_set_error_status connection=%s", connection_id)
         raise
     finally:
         flush_langfuse()
