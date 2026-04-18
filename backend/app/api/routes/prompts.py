@@ -15,6 +15,7 @@ from app.services.ai.operations import MODEL_OPERATIONS, OPERATION_GROUPS
 from app.services.prompts.registry import BLOCK_REGISTRY, get_block_meta, get_registry_for_operation, is_block_editable
 from app.services.prompts.resolver import (
     _invalidate_cache,
+    resolve_prompt_blocks,
     resolve_prompt_blocks_with_meta,
     validate_required_vars,
 )
@@ -91,6 +92,28 @@ def _block_out_from_merged_row(row: dict) -> PromptBlockOut:
         available_vars=list(row["available_vars"]),
         version=row["version"],
     )
+
+
+@router.get("/templates/{operation_id}/{block_type}")
+async def get_template(
+    operation_id: str,
+    block_type: str,
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Return a single resolved template block as `{content: str}`.
+
+    Lightweight endpoint designed for frontend components that need
+    a single editable template (e.g. the gap-opener message).
+    """
+    if not get_registry_for_operation(operation_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown operation")
+    if get_block_meta(operation_id, block_type) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown block type")
+
+    blocks = await resolve_prompt_blocks(operation_id, org.id, db)
+    content = blocks.get(block_type, "")
+    return {"content": content}
 
 
 @router.get("/operations", response_model=OperationsListOut)

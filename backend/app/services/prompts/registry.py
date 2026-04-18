@@ -166,6 +166,21 @@ BLOCK_REGISTRY: dict[str, list[dict]] = {
             "order": 3,
         },
     ],
+    "chat_templates": [
+        {
+            "type": "gap_opener",
+            "label": "Gap Opener",
+            "editable": True,
+            "required_vars": [
+                "source_process",
+                "source_domain",
+                "target_process",
+                "target_domain",
+                "confidence",
+            ],
+            "order": 1,
+        },
+    ],
 }
 
 

@@ -82,6 +82,14 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "group": "chat",
         "description": "Guided discovery agent (Arc). Returns structured JSON responses for interactive UI rendering.",
     },
+    "chat_templates": {
+        "tier": "none",
+        "thinking_budget": 0,
+        "output_format": "none",
+        "label": "Chat Templates",
+        "group": "chat",
+        "description": "User-facing message templates that seed contextual chat conversations (e.g. gap opener).",
+    },
 }
 
 OPERATION_GROUPS: dict[str, str] = {

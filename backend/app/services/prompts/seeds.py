@@ -238,6 +238,10 @@ _RECOMMENDATIONS_PROTOCOL = """Return ONLY a JSON object:
     "confidence": 0.0 to 1.0
 }"""
 
+_GAP_OPENER_TEMPLATE = """I'm looking at a cross-domain gap between "{source_process}" ({source_domain}) and "{target_process}" ({target_domain}). Confidence is {confidence}%.{description}
+
+Can you help me document what currently happens at this handoff point?"""
+
 SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "chat", "block_type": "identity", "content": _CHAT_IDENTITY},
     {"operation_id": "chat", "block_type": "rules", "content": _CHAT_RULES},
@@ -264,4 +268,5 @@ SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "recommendations", "block_type": "instructions", "content": _RECOMMENDATIONS_INSTRUCTIONS},
     {"operation_id": "recommendations", "block_type": "protocol", "content": _RECOMMENDATIONS_PROTOCOL},
     {"operation_id": "recommendations", "block_type": "examples", "content": ""},
+    {"operation_id": "chat_templates", "block_type": "gap_opener", "content": _GAP_OPENER_TEMPLATE},
 ]

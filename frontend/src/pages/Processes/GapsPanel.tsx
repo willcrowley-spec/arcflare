@@ -1,9 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { ArrowRight, ChevronDown, Loader2, MessageSquareText, Undo2 } from 'lucide-react'
 import clsx from 'clsx'
 import { useGaps, useUpdateGap } from '@/hooks/useChat'
+import { usePromptTemplate } from '@/hooks/useApi'
 import { useChatStore } from '@/stores/chatStore'
 import type { GapItem } from '@/types'
+
+const FALLBACK_GAP_OPENER =
+  'I\'m looking at a cross-domain gap between "{source_process}" ({source_domain}) ' +
+  'and "{target_process}" ({target_domain}). Confidence is {confidence}%.{description}\n\n' +
+  'Can you help me document what currently happens at this handoff point?'
 
 function confidenceTone(score: number): { className: string; label: string } {
   if (score > 0.7) return { className: 'bg-emerald-100 text-emerald-800 ring-emerald-200/80', label: 'Higher confidence' }
@@ -33,17 +39,15 @@ function statusPill(status: GapItem['gap_status']) {
   )
 }
 
-function buildGapPrompt(g: GapItem): string {
-  const src = g.source_process_name ?? 'Unknown'
-  const tgt = g.target_process_name ?? 'Unknown'
-  const srcDom = g.source_domain_name ?? 'Unknown domain'
-  const tgtDom = g.target_domain_name ?? 'Unknown domain'
+function interpolateTemplate(template: string, g: GapItem): string {
   const desc = g.description ? `\n\nDescription: "${g.description}"` : ''
-  return (
-    `I'm looking at a cross-domain gap between "${src}" (${srcDom}) and "${tgt}" (${tgtDom}). ` +
-    `Confidence is ${Math.round(g.confidence_score * 100)}%.${desc}\n\n` +
-    `Can you help me document what currently happens at this handoff point?`
-  )
+  return template
+    .replace(/\{source_process\}/g, g.source_process_name ?? 'Unknown')
+    .replace(/\{source_domain\}/g, g.source_domain_name ?? 'Unknown domain')
+    .replace(/\{target_process\}/g, g.target_process_name ?? 'Unknown')
+    .replace(/\{target_domain\}/g, g.target_domain_name ?? 'Unknown domain')
+    .replace(/\{confidence\}/g, String(Math.round(g.confidence_score * 100)))
+    .replace(/\{description\}/g, desc)
 }
 
 export function GapsPanel() {
@@ -53,6 +57,13 @@ export function GapsPanel() {
   const dismissedGaps = useChatStore((s) => s.dismissedGaps)
   const dismissGap = useChatStore((s) => s.dismissGap)
   const undoGapDismiss = useChatStore((s) => s.undoGapDismiss)
+  const templateQuery = usePromptTemplate('chat_templates', 'gap_opener')
+  const gapTemplate = templateQuery.data?.content ?? FALLBACK_GAP_OPENER
+
+  const buildGapPrompt = useCallback(
+    (g: GapItem) => interpolateTemplate(gapTemplate, g),
+    [gapTemplate],
+  )
 
   const openGaps = gaps.filter((g) => g.gap_status !== 'resolved')
   const visibleGaps = useMemo(() => {

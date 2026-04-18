@@ -375,3 +375,11 @@ export function useRestorePromptBlock() {
     },
   })
 }
+
+export function usePromptTemplate(operationId: string, blockType: string) {
+  return useQuery({
+    queryKey: ['prompts', 'template', operationId, blockType],
+    queryFn: () => api.prompts.template(operationId, blockType),
+    staleTime: 5 * 60 * 1000,
+  })
+}

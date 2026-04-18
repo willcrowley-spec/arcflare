@@ -317,5 +317,7 @@ export const api = {
       request<PromptBlock>(`/prompts/${operationId}/blocks/${blockType}`, {
         method: 'DELETE',
       }),
+    template: (operationId: string, blockType: string) =>
+      request<{ content: string }>(`/prompts/templates/${operationId}/${blockType}`),
   },
 }

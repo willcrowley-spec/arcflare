@@ -352,9 +352,13 @@ export function ChatPanel() {
             {sortedMessages.length === 0 && !streamingText ? (
               <p className="px-4 py-6 text-center text-xs text-slate-400">Send a message to start…</p>
             ) : (
-              sortedMessages.map((m: ChatMessageRow) => (
+              sortedMessages.map((m: ChatMessageRow, idx: number) => (
                 <div key={m.id}>
-                  <ChatMessage message={m} onQuickReply={handleQuickReply} />
+                  <ChatMessage
+                    message={m}
+                    onQuickReply={handleQuickReply}
+                    animate={m.role === 'assistant' && idx === sortedMessages.length - 1 && !streamingText}
+                  />
                   {(proposedByMessageId.get(m.id) ?? []).map((a) => (
                     <ActionCard
                       key={a.id}

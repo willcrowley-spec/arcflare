@@ -3,7 +3,7 @@ import type { ChatMessage as ChatMessageRow, ArcResponse } from '@/types'
 import { QuickReplyBar } from '@/components/Chat/QuickReplyBar'
 import { OptionCardGroup } from '@/components/Chat/OptionCard'
 import { SummaryCard } from '@/components/Chat/SummaryCard'
-import { useChatStore } from '@/stores/chatStore'
+import { useTypewriter } from '@/hooks/useTypewriter'
 
 function formatTimestamp(iso: string) {
   try {
@@ -29,11 +29,25 @@ function tryParseArc(content: string): ArcResponse | null {
   return null
 }
 
-function ArcBubble({ text, time }: { text: string; time: string }) {
+function ArcBubble({
+  text,
+  time,
+  displayedText,
+  showCursor,
+}: {
+  text: string
+  time: string
+  displayedText?: string
+  showCursor?: boolean
+}) {
+  const shown = displayedText ?? text
   return (
     <div className="flex justify-start px-2 py-1.5">
       <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm">
-        <p className="whitespace-pre-wrap break-words">{text}</p>
+        <p className="whitespace-pre-wrap break-words">
+          {shown}
+          {showCursor ? <span className="inline-block h-3.5 w-[2px] animate-pulse bg-slate-400 align-text-bottom" /> : null}
+        </p>
         <p className="mt-1 text-[10px] text-slate-400">{time}</p>
       </div>
     </div>
@@ -43,16 +57,26 @@ function ArcBubble({ text, time }: { text: string; time: string }) {
 interface Props {
   message: ChatMessageRow
   onQuickReply?: (text: string) => void
+  /** When true, text reveals word-by-word and interactive controls fade in after. */
+  animate?: boolean
 }
 
-export function ChatMessage({ message, onQuickReply }: Props) {
+export function ChatMessage({ message, onQuickReply, animate }: Props) {
   const time = formatTimestamp(message.created_at)
-  const agentName = useChatStore((s) => s.agentName)
 
   const arcResponse = useMemo(() => {
     if (message.role !== 'assistant') return null
     return tryParseArc(message.content)
   }, [message.role, message.content])
+
+  const fullText = arcResponse
+    ? arcResponse.type === 'question' || arcResponse.type === 'card_question'
+      ? `${arcResponse.text}\n\n${arcResponse.question}`
+      : arcResponse.text
+    : message.content
+
+  const { displayed, done: textDone } = useTypewriter(fullText, !!animate)
+  const showCursor = !!animate && !textDone
 
   if (message.role === 'system' || message.role === 'tool_result') {
     return (
@@ -79,23 +103,28 @@ export function ChatMessage({ message, onQuickReply }: Props) {
   }
 
   if (!arcResponse) {
-    return <ArcBubble text={message.content} time={time} />
+    return <ArcBubble text={message.content} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
   }
 
   const r = arcResponse
+  const showControls = !animate || textDone
 
   if (r.type === 'message') {
-    return <ArcBubble text={r.text} time={time} />
+    return <ArcBubble text={r.text} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
   }
 
   if (r.type === 'question') {
     return (
       <div>
-        <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} />
-        <QuickReplyBar
-          options={r.options}
-          onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-        />
+        <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
+        {showControls ? (
+          <div className={animate ? 'animate-[fade-in_300ms_ease-out]' : undefined}>
+            <QuickReplyBar
+              options={r.options}
+              onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
+            />
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -103,22 +132,33 @@ export function ChatMessage({ message, onQuickReply }: Props) {
   if (r.type === 'card_question') {
     return (
       <div>
-        <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} />
-        <OptionCardGroup
-          options={r.options}
-          onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-        />
+        <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
+        {showControls ? (
+          <div className={animate ? 'animate-[fade-in_300ms_ease-out]' : undefined}>
+            <OptionCardGroup
+              options={r.options}
+              onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
+            />
+          </div>
+        ) : null}
       </div>
     )
   }
 
   if (r.type === 'summary') {
-    return <SummaryCard text={r.text} findings={r.findings} nextSteps={r.next_steps} />
+    if (!showControls) {
+      return <ArcBubble text={r.text} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
+    }
+    return (
+      <div className={animate ? 'animate-[fade-in_300ms_ease-out]' : undefined}>
+        <SummaryCard text={r.text} findings={r.findings} nextSteps={r.next_steps} />
+      </div>
+    )
   }
 
   if (r.type === 'action_proposal') {
-    return <ArcBubble text={r.text} time={time} />
+    return <ArcBubble text={r.text} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
   }
 
-  return <ArcBubble text={message.content} time={time} />
+  return <ArcBubble text={message.content} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
 }
