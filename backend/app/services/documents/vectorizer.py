@@ -16,71 +16,57 @@ _EMBED_DIMS = 3072
 
 
 async def _embed(client, content: str) -> list[float]:
-    def _sync() -> list[float]:
-        result = client.models.embed_content(
-            model=_EMBED_MODEL,
-            contents=content,
-            config={"output_dimensionality": _EMBED_DIMS},
-        )
-        return list(result.embeddings[0].values)
+    from app.core.observability import langfuse_generation
 
-    import time as _time
-    from datetime import datetime, timezone
-
-    _start = _time.time()
-    vectors = await asyncio.to_thread(_sync)
-    _end = _time.time()
-
-    try:
-        from app.core.observability import get_langfuse
-        lf = get_langfuse()
-        if lf is not None:
-            lf.generation(
-                name="embedding",
+    with langfuse_generation(
+        name="embedding",
+        model=_EMBED_MODEL,
+        input=content[:200],
+        metadata={"dimensions": _EMBED_DIMS, "input_length": len(content)},
+    ) as gen:
+        def _sync() -> list[float]:
+            result = client.models.embed_content(
                 model=_EMBED_MODEL,
-                input=content[:200],
-                start_time=datetime.fromtimestamp(_start, tz=timezone.utc),
-                end_time=datetime.fromtimestamp(_end, tz=timezone.utc),
-                metadata={"dimensions": _EMBED_DIMS, "input_length": len(content)},
-                usage={"total": 1},
+                contents=content,
+                config={"output_dimensionality": _EMBED_DIMS},
             )
-    except Exception:
-        pass
+            return list(result.embeddings[0].values)
+
+        vectors = await asyncio.to_thread(_sync)
+
+        if gen is not None:
+            try:
+                gen.update(usage={"total": 1})
+            except Exception:
+                pass
 
     return vectors
 
 
 async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
-    def _sync() -> list[list[float]]:
-        result = client.models.embed_content(
-            model=_EMBED_MODEL,
-            contents=texts,
-            config={"output_dimensionality": _EMBED_DIMS},
-        )
-        return [list(e.values) for e in result.embeddings]
+    from app.core.observability import langfuse_generation
 
-    import time as _time
-    from datetime import datetime, timezone
-
-    _start = _time.time()
-    vectors = await asyncio.to_thread(_sync)
-    _end = _time.time()
-
-    try:
-        from app.core.observability import get_langfuse
-        lf = get_langfuse()
-        if lf is not None:
-            lf.generation(
-                name="embedding_batch",
+    with langfuse_generation(
+        name="embedding_batch",
+        model=_EMBED_MODEL,
+        input=f"[{len(texts)} texts]",
+        metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts)},
+    ) as gen:
+        def _sync() -> list[list[float]]:
+            result = client.models.embed_content(
                 model=_EMBED_MODEL,
-                input=f"[{len(texts)} texts]",
-                start_time=datetime.fromtimestamp(_start, tz=timezone.utc),
-                end_time=datetime.fromtimestamp(_end, tz=timezone.utc),
-                metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts)},
-                usage={"total": len(texts)},
+                contents=texts,
+                config={"output_dimensionality": _EMBED_DIMS},
             )
-    except Exception:
-        pass
+            return [list(e.values) for e in result.embeddings]
+
+        vectors = await asyncio.to_thread(_sync)
+
+        if gen is not None:
+            try:
+                gen.update(usage={"total": len(texts)})
+            except Exception:
+                pass
 
     return vectors
 

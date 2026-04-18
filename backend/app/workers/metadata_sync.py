@@ -86,13 +86,10 @@ def sync_metadata_task(connection_id: str) -> str:
                 logger.exception("failed_to_set_error_status connection=%s", connection_id)
             raise
 
-    from app.core.observability import get_langfuse, flush_langfuse
+    from app.core.observability import flush_langfuse, langfuse_span
 
     try:
-        lf = get_langfuse()
-        if lf is not None:
-            lf.trace(name="metadata_sync", metadata={"connection_id": connection_id})
-
-        return asyncio.run(_pipeline())
+        with langfuse_span("metadata_sync", metadata={"connection_id": connection_id}):
+            return asyncio.run(_pipeline())
     finally:
         flush_langfuse()

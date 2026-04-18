@@ -127,47 +127,46 @@ def llm_call(
             time.sleep(rate_delay - elapsed)
 
     _last_call_time = time.time()
-    start_time = time.time()
 
-    if provider == "gemini":
-        result = _call_gemini(prompt, max_tokens, model)
-    elif provider == "anthropic":
-        result = _call_anthropic(prompt, max_tokens, model)
-    elif provider == "openai":
-        result = _call_openai(prompt, max_tokens, model)
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}")
+    from app.core.observability import langfuse_generation
 
-    end_time = time.time()
-    duration_ms = (end_time - start_time) * 1000
+    with langfuse_generation(
+        name=operation or "llm_call",
+        model=model,
+        input=prompt,
+        metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens, "operation": operation},
+    ) as gen:
+        start_time = time.time()
+
+        if provider == "gemini":
+            result = _call_gemini(prompt, max_tokens, model)
+        elif provider == "anthropic":
+            result = _call_anthropic(prompt, max_tokens, model)
+        elif provider == "openai":
+            result = _call_openai(prompt, max_tokens, model)
+        else:
+            raise ValueError(f"Unknown LLM provider: {provider}")
+
+        end_time = time.time()
+        duration_ms = (end_time - start_time) * 1000
+
+        if gen is not None:
+            try:
+                gen.update(
+                    output=result.text,
+                    usage={
+                        "input": result.input_tokens,
+                        "output": result.output_tokens,
+                        "total": result.input_tokens + result.output_tokens,
+                    },
+                )
+            except Exception:
+                logger.debug("langfuse_generation_update_failed model=%s", model)
 
     logger.info(
         "llm_call provider=%s model=%s tier=%s in=%d out=%d dur=%.0fms",
         provider, model, tier, result.input_tokens, result.output_tokens, duration_ms,
     )
-
-    try:
-        from datetime import datetime, timezone
-        from app.core.observability import get_langfuse
-
-        lf = get_langfuse()
-        if lf is not None:
-            lf.generation(
-                name="llm_call",
-                model=model,
-                input=prompt,
-                output=result.text,
-                start_time=datetime.fromtimestamp(start_time, tz=timezone.utc),
-                end_time=datetime.fromtimestamp(end_time, tz=timezone.utc),
-                metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens, "operation": operation},
-                usage={
-                    "input": result.input_tokens,
-                    "output": result.output_tokens,
-                    "total": result.input_tokens + result.output_tokens,
-                },
-            )
-    except Exception:
-        pass
 
     return result
 
