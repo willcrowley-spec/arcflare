@@ -1,14 +1,77 @@
 import { AlertCircle, Check, Loader2, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
-import type { DiscoveryStatus } from '@/types'
+import type { DiscoveryPhase, DiscoveryProgressPhaseKey, DiscoveryStatus } from '@/types'
+import { DISCOVERY_PHASE_LABELS } from '@/types'
 
-export const STAGES = [
-  { key: 'domain_discovery', label: 'Domain Discovery', passNum: 1 },
-  { key: 'domain_decomposition', label: 'Process Decomposition', passNum: 2 },
-  { key: 'cross_domain_synthesis', label: 'Cross-Domain Synthesis', passNum: 3 },
-] as const
+type StageDef = {
+  key: DiscoveryProgressPhaseKey
+  label: string
+  passNum: number
+  /** If set, phase progress for this chip may come from these keys (older workers). */
+  legacySourceKeys?: readonly DiscoveryProgressPhaseKey[]
+}
 
-export type DiscoveryPipelineStageKey = (typeof STAGES)[number]['key']
+const NEW_PIPELINE_MARKERS = new Set([
+  'context_gathering',
+  'structural_decomposition',
+  'step_enrichment',
+  'flow_analysis',
+  'validation',
+  'quality_scoring',
+  'graph_generation',
+])
+
+const PIPELINE_STAGES: StageDef[] = [
+  { key: 'context_gathering', label: DISCOVERY_PHASE_LABELS.context_gathering, passNum: 1 },
+  { key: 'domain_discovery', label: DISCOVERY_PHASE_LABELS.domain_discovery, passNum: 2 },
+  {
+    key: 'structural_decomposition',
+    label: DISCOVERY_PHASE_LABELS.structural_decomposition,
+    passNum: 3,
+    legacySourceKeys: ['domain_decomposition'],
+  },
+  { key: 'step_enrichment', label: DISCOVERY_PHASE_LABELS.step_enrichment, passNum: 4 },
+  { key: 'flow_analysis', label: DISCOVERY_PHASE_LABELS.flow_analysis, passNum: 5 },
+  { key: 'validation', label: DISCOVERY_PHASE_LABELS.validation, passNum: 6 },
+  { key: 'cross_domain_synthesis', label: DISCOVERY_PHASE_LABELS.cross_domain_synthesis, passNum: 7 },
+  { key: 'quality_scoring', label: DISCOVERY_PHASE_LABELS.quality_scoring, passNum: 8 },
+  { key: 'graph_generation', label: DISCOVERY_PHASE_LABELS.graph_generation, passNum: 9 },
+]
+
+/** Pre–7-stage workers typically only reported these three phases. */
+const LEGACY_PIPELINE_STAGES: StageDef[] = [
+  { key: 'domain_discovery', label: DISCOVERY_PHASE_LABELS.domain_discovery, passNum: 1 },
+  {
+    key: 'domain_decomposition',
+    label: DISCOVERY_PHASE_LABELS.domain_decomposition,
+    passNum: 2,
+  },
+  { key: 'cross_domain_synthesis', label: DISCOVERY_PHASE_LABELS.cross_domain_synthesis, passNum: 3 },
+]
+
+function pickStages(phases: Record<string, DiscoveryPhase | undefined>): StageDef[] {
+  const keys = Object.keys(phases)
+  if (keys.length === 0) return PIPELINE_STAGES
+  const usesNewPipeline = keys.some((k) => NEW_PIPELINE_MARKERS.has(k))
+  return usesNewPipeline ? PIPELINE_STAGES : LEGACY_PIPELINE_STAGES
+}
+
+function resolvePhase(
+  phases: DiscoveryStatus['phases'],
+  stage: StageDef,
+): DiscoveryPhase | undefined {
+  const direct = phases[stage.key]
+  if (direct) return direct
+  if (stage.legacySourceKeys) {
+    for (const k of stage.legacySourceKeys) {
+      const p = phases[k]
+      if (p) return p
+    }
+  }
+  return undefined
+}
+
+export type DiscoveryPipelineStageKey = DiscoveryProgressPhaseKey
 
 function hasPriorDiscovery(data: DiscoveryStatus | undefined): boolean {
   if (!data) return false
@@ -49,7 +112,7 @@ function StageChip({
   return (
     <div
       className={clsx(
-        'flex flex-1 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-all duration-300',
+        'flex min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-all duration-300',
         isWaiting && 'border-slate-200 bg-slate-50 text-slate-400',
         isRunning && 'border-sky-300 bg-sky-50 text-sky-800 shadow-sm',
         isDone && 'border-emerald-200 bg-emerald-50 text-emerald-800',
@@ -98,6 +161,7 @@ export function DiscoveryPipeline({
 
   const phases = data?.phases ?? {}
   const overallStatus = data?.status ?? 'idle'
+  const stages = pickStages(phases)
 
   return (
     <div
@@ -120,9 +184,9 @@ export function DiscoveryPipeline({
           {overallStatus === 'idle' && 'Ready to discover'}
         </p>
       </div>
-      <div className="flex gap-2">
-        {STAGES.map((stage) => {
-          const phase = phases[stage.key]
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {stages.map((stage) => {
+          const phase = resolvePhase(phases, stage)
           return (
             <StageChip
               key={stage.key}
@@ -131,9 +195,7 @@ export function DiscoveryPipeline({
               status={phase?.status ?? 'waiting'}
               count={phase?.count ?? 0}
               total={phase?.total ?? 0}
-              onRerun={
-                onRerunStage ? () => onRerunStage(stage.key) : undefined
-              }
+              onRerun={onRerunStage ? () => onRerunStage(stage.key) : undefined}
             />
           )
         })}

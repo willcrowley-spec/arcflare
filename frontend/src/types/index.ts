@@ -417,6 +417,37 @@ export interface DiscoveryPhase {
   total: number
 }
 
+/**
+ * Discovery worker phase keys on the wire (7-stage pipeline + graph build).
+ * Older workers may still emit `domain_decomposition` instead of `structural_decomposition`.
+ */
+export type DiscoveryProgressPhaseKey =
+  | 'context_gathering'
+  | 'domain_discovery'
+  | 'structural_decomposition'
+  /** Legacy; same pipeline stage as `structural_decomposition`. */
+  | 'domain_decomposition'
+  | 'step_enrichment'
+  | 'flow_analysis'
+  | 'validation'
+  | 'cross_domain_synthesis'
+  | 'quality_scoring'
+  | 'graph_generation'
+
+/** Human-readable labels for discovery progress phases (status API / Redis). */
+export const DISCOVERY_PHASE_LABELS: Record<DiscoveryProgressPhaseKey, string> = {
+  context_gathering: 'Context Gathering',
+  domain_discovery: 'Domain Discovery',
+  structural_decomposition: 'Structural Decomposition',
+  domain_decomposition: 'Structural Decomposition',
+  step_enrichment: 'Step Enrichment',
+  flow_analysis: 'Flow Analysis',
+  validation: 'Validation',
+  cross_domain_synthesis: 'Cross-Domain Synthesis',
+  quality_scoring: 'Quality Scoring',
+  graph_generation: 'Graph Generation',
+}
+
 export interface DiscoveryStatus {
   run_id: string | null
   status: string
