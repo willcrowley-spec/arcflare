@@ -7,7 +7,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.model_prices import compute_cost
 from app.models.document import DocumentChunk
 from app.services.ai.router import get_embedding_provider
 
@@ -47,9 +46,10 @@ async def _embed(client, content: str) -> list[float]:
         if gen is not None:
             try:
                 estimated_tokens = max(1, len(content) // 4)
+                embedding_cost = estimated_tokens * 0.006e-6
                 gen.update(
                     usage_details={"input": estimated_tokens},
-                    cost_details=compute_cost(model, estimated_tokens, 0),
+                    cost_details={"input": embedding_cost, "output": 0},
                 )
             except Exception:
                 pass
@@ -82,9 +82,10 @@ async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
         if gen is not None:
             try:
                 estimated_tokens = max(1, sum(len(t) // 4 for t in texts))
+                embedding_cost = estimated_tokens * 0.006e-6
                 gen.update(
                     usage_details={"input": estimated_tokens},
-                    cost_details=compute_cost(model, estimated_tokens, 0),
+                    cost_details={"input": embedding_cost, "output": 0},
                 )
             except Exception:
                 pass

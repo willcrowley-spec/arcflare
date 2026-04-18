@@ -259,22 +259,20 @@ def get_tool_declarations() -> list[dict]:
     ]
 
 
-def build_gemini_tools():
-    """Build a ``google.genai.types.Tool`` with FunctionDeclarations for the chat tools.
+def get_openai_tools() -> list[dict]:
+    """Return tool definitions in OpenAI function-calling format.
 
-    Returns the Tool object ready to be passed to ``GenerateContentConfig(tools=[...])``.
-    Uses ``parameters_json_schema`` (dict) rather than ``parameters`` (Schema) to avoid
-    serialization issues noted in googleapis/python-genai#121.
+    This is the industry-standard format that LiteLLM accepts and
+    translates to provider-native format automatically.
     """
-    from google.genai import types
-
-    declarations = []
-    for t in TOOL_REGISTRY:
-        declarations.append(
-            types.FunctionDeclaration(
-                name=t["name"],
-                description=t["description"],
-                parameters_json_schema=t["parameters"],
-            )
-        )
-    return types.Tool(function_declarations=declarations)
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            },
+        }
+        for t in TOOL_REGISTRY
+    ]

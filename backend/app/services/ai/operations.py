@@ -1,7 +1,8 @@
-"""Named LLM operations with default tier mappings.
+"""Named LLM operations with default tier mappings and model routing.
 
-Single source of truth for what pipeline operations exist,
-which tier they default to, and their UI-facing metadata.
+Single source of truth for what pipeline operations exist, which model
+they default to, and their UI-facing metadata.  Model strings use LiteLLM
+``provider/model`` format for automatic provider dispatch.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ TierName = Literal["lite", "fast", "strong"]
 
 MODEL_OPERATIONS: dict[str, dict] = {
     "metadata_enrichment": {
+        "model": "gemini/gemini-2.0-flash-lite",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -19,6 +21,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates business-context descriptions for platform objects with few fields/records. Uses the cheapest model for bulk throughput.",
     },
     "entity_extraction": {
+        "model": "gemini/gemini-2.5-flash",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -27,6 +30,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Extracts business entities (processes, metrics, teams) from document text when rule-based NER falls short.",
     },
     "process_matching": {
+        "model": "gemini/gemini-2.5-flash",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -35,6 +39,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Disambiguates fuzzy entity matches across documents and data sources.",
     },
     "discovery_domain": {
+        "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
         "thinking_budget": 4096,
         "output_format": "json",
@@ -43,6 +48,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 1: identifies top-level business domains from metadata, documents, and org context.",
     },
     "discovery_structure": {
+        "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
         "thinking_budget": 8192,
         "output_format": "json",
@@ -51,6 +57,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 2: decomposes each domain into hierarchical processes, subprocesses, and steps.",
     },
     "discovery_enrichment": {
+        "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
         "thinking_budget": 8192,
         "output_format": "json",
@@ -59,6 +66,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 3: enriches each step with triggers, decision logic, system touchpoints, and value classification.",
     },
     "discovery_flow": {
+        "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
         "thinking_budget": 4096,
         "output_format": "json",
@@ -67,6 +75,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 4: identifies step-to-step flows, parallel groups, and within-domain handoffs.",
     },
     "discovery_validation": {
+        "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
         "thinking_budget": 8192,
         "output_format": "json",
@@ -75,6 +84,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 5: critiques the complete process map against raw evidence and patches issues.",
     },
     "discovery_synthesis": {
+        "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
         "thinking_budget": 4096,
         "output_format": "json",
@@ -83,6 +93,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 6: identifies cross-domain handoffs, gaps, and orphaned artifacts across the full process landscape.",
     },
     "recommendations": {
+        "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
         "thinking_budget": 10000,
         "output_format": "text",
@@ -99,6 +110,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Vector embeddings for RAG search across metadata, documents, and org context. Uses a dedicated embedding model.",
     },
     "chat": {
+        "model": "gemini/gemini-2.5-pro",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -122,6 +134,24 @@ OPERATION_GROUPS: dict[str, str] = {
     "discovery": "Discovery Pipeline",
     "synthesis": "Synthesis",
     "chat": "Chat Assistant",
+}
+
+PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "anthropic": {
+        "lite": "anthropic/claude-3-haiku-20240307",
+        "fast": "anthropic/claude-sonnet-4-6",
+        "strong": "anthropic/claude-opus-4-6",
+    },
+    "openai": {
+        "lite": "openai/gpt-4o-mini",
+        "fast": "openai/gpt-4o",
+        "strong": "openai/gpt-4o",
+    },
+    "gemini": {
+        "lite": "gemini/gemini-2.0-flash-lite",
+        "fast": "gemini/gemini-2.5-flash",
+        "strong": "gemini/gemini-2.5-pro",
+    },
 }
 
 
@@ -153,23 +183,26 @@ def get_output_format(operation: str | None) -> str:
     return "text"
 
 
-def resolve_model_for_operation(
-    operation: str | None,
-    model_config: dict | None,
-    tier: TierName,
-) -> tuple[str, str] | None:
-    """Check org-level model_config for an operation override.
+def resolve_model(
+    operation: str | None = None,
+    model_config: dict | None = None,
+    tier: TierName = "fast",
+) -> str:
+    """Resolve a LiteLLM model string via: org override -> op default -> tier default.
 
-    Returns (provider, model) if an override exists, else None
-    so the caller falls through to env-var / hardcoded defaults.
+    Returns a ``provider/model`` string that LiteLLM dispatches automatically.
     """
-    if not model_config or not operation:
-        return None
-    overrides = model_config.get("model_overrides")
-    if not overrides or not isinstance(overrides, dict):
-        return None
-    override = overrides.get(operation)
-    if not override or not isinstance(override, str) or "/" not in override:
-        return None
-    provider, model = override.split("/", 1)
-    return provider.strip(), model.strip()
+    if model_config and operation:
+        overrides = model_config.get("model_overrides")
+        if isinstance(overrides, dict):
+            override = overrides.get(operation)
+            if override and isinstance(override, str):
+                return override.strip()
+
+    if operation:
+        op = MODEL_OPERATIONS.get(operation, {})
+        if op.get("model"):
+            return op["model"]
+
+    defaults = PROVIDER_DEFAULTS.get("anthropic", {})
+    return defaults.get(tier, "anthropic/claude-sonnet-4-6")

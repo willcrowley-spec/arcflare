@@ -14,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
-from app.core.model_prices import compute_cost
 from app.core.observability import langfuse_context, langfuse_generation, langfuse_span
 from app.core.security import CurrentUser
 from app.models.chat import ChatAction, ChatMessage, ChatThread
@@ -31,7 +30,7 @@ from app.schemas.chat import (
 )
 from app.services.chat.actions import execute_action, execute_auto_tool
 from app.services.chat.context import build_chat_context
-from app.services.chat.tools import build_gemini_tools, get_tool
+from app.services.chat.tools import get_openai_tools, get_tool
 from app.services.chat.validation import validate_tool_call
 from app.services.ai.router import (
     ChatStreamChunk,
@@ -101,15 +100,15 @@ def parse_arc_response(raw: str) -> dict:
 
 def _collect_stream_chunks(
     ctx: list[dict],
-    gemini_tools: object | None,
+    tools: list[dict] | None,
     analysis_config: dict | None,
 ) -> list[ChatStreamChunk]:
     """Run sync streaming/LLM work (call from ``asyncio.to_thread``)."""
-    if gemini_tools is not None:
+    if tools is not None:
         return list(
             stream_chat_with_tools(
                 messages=ctx,
-                tools=gemini_tools,
+                tools=tools,
                 max_tokens=4096,
                 operation="chat",
                 model_config=analysis_config,
@@ -352,14 +351,14 @@ async def send_message(
             yield f"event: done\ndata: {json.dumps({'message_id': str(assistant_msg.id)})}\n\n"
             return
 
-        gemini_tools: object | None = None
+        chat_tools: list[dict] | None = None
         try:
-            gemini_tools = build_gemini_tools()
+            chat_tools = get_openai_tools()
         except Exception as tools_exc:
             logger.warning(
-                "build_gemini_tools_failed thread=%s err=%s", thread_id_str, tools_exc,
+                "get_openai_tools_failed thread=%s err=%s", thread_id_str, tools_exc,
             )
-            gemini_tools = None
+            chat_tools = None
 
         org_id_str = str(thread.org_id)
 
@@ -376,7 +375,7 @@ async def send_message(
                 yield f"event: status\ndata: {json.dumps({'phase': 'thinking'})}\n\n"
                 try:
                     chunks = await asyncio.to_thread(
-                        _collect_stream_chunks, ctx, gemini_tools, analysis_config,
+                        _collect_stream_chunks, ctx, chat_tools, analysis_config,
                     )
                 except Exception as collect_exc:
                     logger.exception("chat_stream_collect_failed thread=%s", thread_id_str)
@@ -518,15 +517,24 @@ async def send_message(
                         input=body.content[:500],
                     ) as gen:
                         if gen is not None:
+                            cost_details = None
+                            try:
+                                import litellm as _ll
+                                ic = _ll.cost_per_token(model=dc.model, prompt_tokens=dc.input_tokens, completion_tokens=0)
+                                oc = _ll.cost_per_token(model=dc.model, prompt_tokens=0, completion_tokens=dc.output_tokens)
+                                cost_details = {
+                                    "input": ic[0] if isinstance(ic, tuple) else ic,
+                                    "output": oc[1] if isinstance(oc, tuple) else oc,
+                                }
+                            except Exception:
+                                pass
                             gen.update(
                                 output=full_response_text[:1000] if full_response_text else "",
                                 usage_details={
                                     "input": dc.input_tokens,
                                     "output": dc.output_tokens,
                                 },
-                                cost_details=compute_cost(
-                                    dc.model, dc.input_tokens, dc.output_tokens,
-                                ),
+                                cost_details=cost_details,
                             )
 
                 assistant_msg = ChatMessage(

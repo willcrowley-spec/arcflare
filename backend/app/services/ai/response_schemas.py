@@ -1,326 +1,349 @@
-"""Gemini response_schema definitions for structured output operations.
+"""JSON Schema definitions for structured output operations.
 
-When passed to GenerateContentConfig alongside response_mime_type="application/json",
-these schemas enable constrained decoding — the model is structurally unable to
-return a shape that violates the schema. This replaces prompt-level "please return
-this JSON" instructions with API-level enforcement.
+Used with LiteLLM's ``response_format`` parameter to enable constrained
+decoding across providers (Anthropic, OpenAI, Gemini).  LiteLLM handles
+the provider-specific translation automatically.
 
-Gemini response_schema supports a subset of JSON Schema:
-  type, properties, required, items, enum, description, nullable
+All schemas follow standard JSON Schema (lowercase types).
 """
 from __future__ import annotations
 
 DISCOVERY_DOMAIN_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "domains": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "name": {"type": "STRING"},
-                    "description": {"type": "STRING"},
-                    "confidence": {"type": "NUMBER"},
-                    "associated_objects": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "associated_automations": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "associated_documents": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "actors": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "reasoning": {"type": "STRING"},
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "associated_objects": {"type": "array", "items": {"type": "string"}},
+                    "associated_automations": {"type": "array", "items": {"type": "string"}},
+                    "associated_documents": {"type": "array", "items": {"type": "string"}},
+                    "actors": {"type": "array", "items": {"type": "string"}},
+                    "reasoning": {"type": "string"},
                 },
                 "required": ["name", "description", "confidence", "reasoning"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["domains"],
+    "additionalProperties": False,
 }
 
 DISCOVERY_STRUCTURE_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "processes": {
-            "type": "ARRAY",
+            "type": "array",
             "description": "Flat list of ALL items at every level. Use parent_name to express hierarchy.",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "name": {"type": "STRING"},
-                    "level": {"type": "STRING", "enum": ["process", "subprocess", "step"]},
+                    "name": {"type": "string"},
+                    "level": {"type": "string", "enum": ["process", "subprocess", "step"]},
                     "parent_name": {
-                        "type": "STRING",
-                        "nullable": True,
+                        "type": ["string", "null"],
                         "description": "Name of the parent process/subprocess. null for top-level processes.",
                     },
-                    "description": {"type": "STRING"},
-                    "narrative": {"type": "STRING"},
-                    "confidence": {"type": "NUMBER"},
-                    "needs_review": {"type": "BOOLEAN"},
+                    "description": {"type": "string"},
+                    "narrative": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "needs_review": {"type": "boolean"},
                     "artifacts": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "type": {"type": "STRING", "enum": ["object", "flow", "validation_rule"]},
-                                "api_name": {"type": "STRING"},
+                                "type": {"type": "string", "enum": ["object", "flow", "validation_rule"]},
+                                "api_name": {"type": "string"},
                             },
                             "required": ["type", "api_name"],
+                            "additionalProperties": False,
                         },
                     },
-                    "actors": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "actors": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["name", "level", "description", "confidence"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["processes"],
+    "additionalProperties": False,
 }
 
 _TRIGGER_CONDITION = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
-        "event": {"type": "STRING"},
-        "condition": {"type": "STRING"},
-        "source_object": {"type": "STRING"},
-        "source_field": {"type": "STRING"},
+        "event": {"type": "string"},
+        "condition": {"type": "string"},
+        "source_object": {"type": "string"},
+        "source_field": {"type": "string"},
     },
     "required": ["event"],
+    "additionalProperties": False,
 }
 
 _DECISION_LOGIC = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
-        "rule": {"type": "STRING"},
-        "outcome": {"type": "STRING"},
-        "evidence": {"type": "STRING"},
+        "rule": {"type": "string"},
+        "outcome": {"type": "string"},
+        "evidence": {"type": "string"},
     },
     "required": ["rule"],
+    "additionalProperties": False,
 }
 
 _SYSTEM_TOUCHPOINT = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
-        "object_api_name": {"type": "STRING"},
-        "fields": {"type": "ARRAY", "items": {"type": "STRING"}},
-        "operation": {"type": "STRING", "enum": ["read", "write", "create"]},
-        "automation_name": {"type": "STRING", "nullable": True},
+        "object_api_name": {"type": "string"},
+        "fields": {"type": "array", "items": {"type": "string"}},
+        "operation": {"type": "string", "enum": ["read", "write", "create"]},
+        "automation_name": {"type": ["string", "null"]},
     },
     "required": ["object_api_name", "operation"],
+    "additionalProperties": False,
 }
 
 DISCOVERY_ENRICHMENT_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "enriched_steps": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "name": {"type": "STRING"},
-                    "trigger_conditions": {"type": "ARRAY", "items": _TRIGGER_CONDITION},
-                    "decision_logic": {"type": "ARRAY", "items": _DECISION_LOGIC},
-                    "system_touchpoints": {"type": "ARRAY", "items": _SYSTEM_TOUCHPOINT},
+                    "name": {"type": "string"},
+                    "trigger_conditions": {"type": "array", "items": _TRIGGER_CONDITION},
+                    "decision_logic": {"type": "array", "items": _DECISION_LOGIC},
+                    "system_touchpoints": {"type": "array", "items": _SYSTEM_TOUCHPOINT},
                     "actors": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "name": {"type": "STRING"},
-                                "type": {"type": "STRING", "enum": ["user", "integration", "system"]},
+                                "name": {"type": "string"},
+                                "type": {"type": "string", "enum": ["user", "integration", "system"]},
                             },
                             "required": ["name", "type"],
+                            "additionalProperties": False,
                         },
                     },
                     "success_criteria": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "criterion": {"type": "STRING"},
-                                "measurable": {"type": "BOOLEAN"},
+                                "criterion": {"type": "string"},
+                                "measurable": {"type": "boolean"},
                             },
                             "required": ["criterion"],
+                            "additionalProperties": False,
                         },
                     },
                     "failure_modes": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "mode": {"type": "STRING"},
-                                "impact": {"type": "STRING"},
-                                "recovery": {"type": "STRING"},
+                                "mode": {"type": "string"},
+                                "impact": {"type": "string"},
+                                "recovery": {"type": "string"},
                             },
                             "required": ["mode"],
+                            "additionalProperties": False,
                         },
                     },
-                    "value_classification": {"type": "STRING", "enum": ["VA", "BVA", "NVA"]},
-                    "complexity_score": {"type": "STRING", "enum": ["low", "medium", "high"]},
-                    "automation_potential": {"type": "STRING", "enum": ["high", "medium", "low", "none"]},
-                    "estimated_duration": {"type": "STRING", "enum": ["minutes", "hours", "days"]},
-                    "estimated_frequency": {"type": "STRING", "enum": ["per_transaction", "daily", "weekly", "monthly"]},
-                    "confidence": {"type": "NUMBER"},
-                    "needs_review": {"type": "BOOLEAN"},
+                    "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+                    "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                    "estimated_duration": {"type": "string", "enum": ["minutes", "hours", "days"]},
+                    "estimated_frequency": {"type": "string", "enum": ["per_transaction", "daily", "weekly", "monthly"]},
+                    "confidence": {"type": "number"},
+                    "needs_review": {"type": "boolean"},
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["enriched_steps"],
+    "additionalProperties": False,
 }
 
 DISCOVERY_FLOW_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "step_flows": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "source_step": {"type": "STRING"},
-                    "target_step": {"type": "STRING"},
-                    "condition": {"type": "STRING", "nullable": True},
-                    "evidence": {"type": "STRING"},
-                    "type": {"type": "STRING", "enum": ["automated", "manual", "integration", "inferred"]},
+                    "source_step": {"type": "string"},
+                    "target_step": {"type": "string"},
+                    "condition": {"type": ["string", "null"]},
+                    "evidence": {"type": "string"},
+                    "type": {"type": "string", "enum": ["automated", "manual", "integration", "inferred"]},
                 },
                 "required": ["source_step", "target_step", "type"],
+                "additionalProperties": False,
             },
         },
         "parallel_groups": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "group_name": {"type": "STRING"},
-                    "step_names": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "group_name": {"type": "string"},
+                    "step_names": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["group_name", "step_names"],
+                "additionalProperties": False,
             },
         },
         "handoffs": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "source": {"type": "STRING"},
-                    "target": {"type": "STRING"},
-                    "type": {"type": "STRING", "enum": ["integration", "manual", "automated", "unknown"]},
-                    "description": {"type": "STRING"},
-                    "confidence": {"type": "NUMBER"},
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "number"},
                     "data_transferred": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "object": {"type": "STRING"},
-                                "fields": {"type": "ARRAY", "items": {"type": "STRING"}},
+                                "object": {"type": "string"},
+                                "fields": {"type": "array", "items": {"type": "string"}},
                             },
                             "required": ["object"],
+                            "additionalProperties": False,
                         },
                     },
-                    "transfer_mechanism": {"type": "STRING", "nullable": True},
+                    "transfer_mechanism": {"type": ["string", "null"]},
                 },
                 "required": ["source", "target", "type"],
+                "additionalProperties": False,
             },
         },
-        "entry_points": {"type": "ARRAY", "items": {"type": "STRING"}},
-        "terminal_points": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "entry_points": {"type": "array", "items": {"type": "string"}},
+        "terminal_points": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["step_flows"],
+    "additionalProperties": False,
 }
 
 DISCOVERY_VALIDATION_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "critique": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
                     "issue_type": {
-                        "type": "STRING",
+                        "type": "string",
                         "enum": [
                             "orphaned_metadata", "phantom_reference", "structural",
                             "confidence_inflation", "missing_flow", "handoff_gap",
                         ],
                     },
-                    "severity": {"type": "STRING", "enum": ["high", "medium", "low"]},
-                    "description": {"type": "STRING"},
-                    "affected_items": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "fix_applied": {"type": "STRING"},
+                    "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "description": {"type": "string"},
+                    "affected_items": {"type": "array", "items": {"type": "string"}},
+                    "fix_applied": {"type": "string"},
                 },
                 "required": ["issue_type", "severity", "description"],
+                "additionalProperties": False,
             },
         },
         "patches": {
-            "type": "OBJECT",
+            "type": "object",
             "properties": {
-                "updated_steps": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                "removed_steps": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "updated_steps": {"type": "array", "items": {"type": "object"}},
+                "removed_steps": {"type": "array", "items": {"type": "string"}},
                 "confidence_adjustments": {
-                    "type": "ARRAY",
+                    "type": "array",
                     "items": {
-                        "type": "OBJECT",
+                        "type": "object",
                         "properties": {
-                            "step_name": {"type": "STRING"},
-                            "old": {"type": "NUMBER"},
-                            "new": {"type": "NUMBER"},
-                            "reason": {"type": "STRING"},
+                            "step_name": {"type": "string"},
+                            "old": {"type": "number"},
+                            "new": {"type": "number"},
+                            "reason": {"type": "string"},
                         },
                         "required": ["step_name", "new"],
+                        "additionalProperties": False,
                     },
                 },
             },
+            "additionalProperties": False,
         },
     },
     "required": ["critique", "patches"],
+    "additionalProperties": False,
 }
 
 DISCOVERY_SYNTHESIS_SCHEMA: dict = {
-    "type": "OBJECT",
+    "type": "object",
     "properties": {
         "cross_domain_handoffs": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "source_domain": {"type": "STRING"},
-                    "source_process": {"type": "STRING"},
-                    "target_domain": {"type": "STRING"},
-                    "target_process": {"type": "STRING"},
-                    "type": {"type": "STRING", "enum": ["integration", "manual", "automated", "unknown"]},
-                    "is_gap": {"type": "BOOLEAN"},
-                    "confidence": {"type": "NUMBER"},
-                    "reasoning": {"type": "STRING"},
+                    "source_domain": {"type": "string"},
+                    "source_process": {"type": "string"},
+                    "target_domain": {"type": "string"},
+                    "target_process": {"type": "string"},
+                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                    "is_gap": {"type": "boolean"},
+                    "confidence": {"type": "number"},
+                    "reasoning": {"type": "string"},
                     "data_transferred": {
-                        "type": "ARRAY",
+                        "type": "array",
                         "items": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
-                                "object": {"type": "STRING"},
-                                "fields": {"type": "ARRAY", "items": {"type": "STRING"}},
+                                "object": {"type": "string"},
+                                "fields": {"type": "array", "items": {"type": "string"}},
                             },
                             "required": ["object"],
+                            "additionalProperties": False,
                         },
                     },
-                    "transfer_mechanism": {"type": "STRING", "nullable": True},
+                    "transfer_mechanism": {"type": ["string", "null"]},
                 },
                 "required": ["source_process", "target_process", "type"],
+                "additionalProperties": False,
             },
         },
         "orphaned_artifacts": {
-            "type": "ARRAY",
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "type": {"type": "STRING", "enum": ["object", "automation"]},
-                    "api_name": {"type": "STRING"},
-                    "reasoning": {"type": "STRING"},
+                    "type": {"type": "string", "enum": ["object", "automation"]},
+                    "api_name": {"type": "string"},
+                    "reasoning": {"type": "string"},
                 },
                 "required": ["type", "api_name"],
+                "additionalProperties": False,
             },
         },
-        "executive_summary": {"type": "STRING"},
+        "executive_summary": {"type": "string"},
     },
     "required": ["cross_domain_handoffs", "executive_summary"],
+    "additionalProperties": False,
 }
 
 
@@ -335,7 +358,7 @@ OPERATION_SCHEMAS: dict[str, dict] = {
 
 
 def get_response_schema(operation: str | None) -> dict | None:
-    """Return the Gemini response_schema for an operation, or None if unschemaed."""
+    """Return the JSON Schema for an operation, or None if unschemaed."""
     if not operation:
         return None
     return OPERATION_SCHEMAS.get(operation)

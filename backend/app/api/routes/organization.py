@@ -47,8 +47,7 @@ def _to_hierarchy_nodes(data: list[dict]) -> list[HierarchyNode]:
 async def get_model_catalog(org: CurrentOrg) -> dict:
     """Return available providers/models and per-operation effective model mapping."""
     from app.core.config import get_settings as get_app_settings
-    from app.services.ai.operations import MODEL_OPERATIONS, OPERATION_GROUPS
-    from app.services.ai.router import PROVIDER_DEFAULTS, _resolve_model
+    from app.services.ai.operations import MODEL_OPERATIONS, OPERATION_GROUPS, PROVIDER_DEFAULTS, resolve_model
 
     settings = get_app_settings()
     org_config = org.analysis_config or {}
@@ -65,7 +64,7 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
             continue
         models = []
         for tier_name, model_id in PROVIDER_DEFAULTS.get(pid, {}).items():
-            models.append({"id": f"{pid}/{model_id}", "model_id": model_id, "label": model_id, "tier_default": tier_name})
+            models.append({"id": model_id, "model_id": model_id, "label": model_id, "tier_default": tier_name})
         providers.append({"id": pid, "name": name, "models": models})
 
     operations = []
@@ -74,12 +73,9 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
             continue
         if op_id == "embedding":
             effective_model = f"gemini/{settings.EMBEDDING_MODEL}"
-            effective_provider = "gemini"
         else:
-            effective_provider, effective_model_name = _resolve_model(
-                meta["tier"], operation=op_id, model_config=org_config
-            )
-            effective_model = f"{effective_provider}/{effective_model_name}"
+            effective_model = resolve_model(operation=op_id, model_config=org_config, tier=meta["tier"])
+        effective_provider = effective_model.split("/")[0] if "/" in effective_model else "unknown"
         operations.append({
             "id": op_id,
             "label": meta["label"],
