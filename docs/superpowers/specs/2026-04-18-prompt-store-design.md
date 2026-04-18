@@ -30,7 +30,7 @@ Two-layer architecture:
 | `block_type` | VARCHAR(64) | e.g., `"identity"`, `"rules"`, `"protocol"`, `"workflow"`, `"examples"` |
 | `org_id` | UUID FK nullable | `NULL` = system default, non-null = org override |
 | `content` | TEXT | The prompt text. May contain interpolation variables like `{agent_name}` |
-| `version` | INT | Incremented on each edit |
+| `version` | INT | Starts at 1. Incremented on each PUT. Previous version's status is set to `"archived"` before the new active row is created. |
 | `status` | VARCHAR(16) | `"active"`, `"draft"`, `"archived"` |
 | `forked_from_id` | UUID FK nullable | Points to the system default block this was forked from |
 | `created_by` | UUID FK nullable | User who created/edited |
@@ -132,7 +132,7 @@ Defines which blocks exist per operation and whether org admins can edit them.
 
 ### Embedding (`embedding`)
 
-No prompt blocks. Uses a dedicated embedding model with no user-authored prompt.
+No prompt blocks. Uses a dedicated embedding model with no user-authored prompt. Excluded from the operations list in the Settings UI — does not appear in the sidebar.
 
 ## Prompt Resolution
 
@@ -148,6 +148,12 @@ When any part of the app needs a prompt:
 **Caching:** Resolved blocks are cached per `(operation_id, org_id)` with a 60-second TTL. Cache invalidates on any write to `prompt_block` for that operation + org.
 
 **Available variables per block:** Each block type documents which interpolation variables are available (e.g., `{agent_name}` in identity, `{tools_block}` in the auto-injected section). The UI displays these below the editor.
+
+**Variable validation:** On PUT (save), the backend validates that all required variables for the block type are present in the content. If a required variable is missing (e.g., `{agent_name}` removed from identity), the save returns a 422 with a message listing the missing variables. Optional variables are not enforced. The block registry defines which variables are required vs. optional per block type.
+
+**Identical-to-default detection:** On PUT, if the submitted content is byte-identical to the current system default for that block, no fork is created. The response returns `is_customized: false` and a notice. This prevents accidental forks and keeps the override table clean.
+
+**Fallback-to-code safety net:** During the transition period, if `resolve_prompt_blocks()` finds zero active blocks for an operation (e.g., migration failed or DB is empty), it falls back to the original hardcoded prompt strings. This prevents total LLM failure if seeding goes wrong. The fallback logs a warning via Langfuse so the operator is alerted. Once the prompt store is stable, the fallback can be removed.
 
 ## API Endpoints
 
@@ -180,6 +186,23 @@ Each card contains:
 - **Restore defaults icon** — `RotateCcw` icon, only visible on customized blocks. Tooltip: "Restore to platform default." Click triggers inline confirmation ("Restore? Yes / No") matching the existing lightweight confirmation pattern.
 - **Available variables** — small muted text below the editor listing interpolation variables for that block (e.g., `Available: {agent_name}`)
 - **Save button** — per-block, right-aligned, only enabled when content differs from the stored version
+
+### Auto-Injected Context (Read-Only Section)
+
+Below the editable blocks, a collapsed "System Context" section shows what the platform automatically appends to the prompt at runtime. This is read-only — admins cannot edit it, but they can see it to understand the full picture. Contents vary by operation:
+- **Chat:** Available tools list, organization settings JSON, anchor context (when applicable), RAG results (when applicable)
+- **Discovery:** Organization context JSON, metadata summary, document summary
+- **Other operations:** Operation-specific data payloads
+
+Displayed as a muted, collapsible card with a `ChevronDown` toggle and an info tooltip: "These sections are added automatically by the platform and cannot be edited."
+
+### UI States
+
+- **Loading:** Skeleton cards while blocks are fetched. Operation list shows immediately from the registry (client-side); block content shows a shimmer placeholder until the API responds.
+- **Save in progress:** Save button shows a spinner and is disabled. On success, a brief green checkmark and "Saved" toast. On 422 (variable validation failure), the missing variables are highlighted in the error message below the textarea.
+- **Restore in progress:** After "Yes" confirmation, the card content transitions to the system default with a brief fade. "Customized" badge disappears.
+- **Empty state:** If an operation has no blocks (shouldn't happen after seeding, but defensive), show a single card: "No prompt blocks configured for this operation."
+- **Error state:** If the GET fails, show an inline error banner with a retry button — not a full-page error.
 
 ### Not in v1
 
