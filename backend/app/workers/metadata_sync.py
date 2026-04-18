@@ -86,10 +86,26 @@ def sync_metadata_task(connection_id: str) -> str:
                 logger.exception("failed_to_set_error_status connection=%s", connection_id)
             raise
 
-    from app.core.observability import flush_langfuse, langfuse_span
+    async def _resolve_org_id() -> str | None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.core.database import engine
+        from app.models.connection import PlatformConnection
+
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            conn = await session.get(PlatformConnection, UUID(connection_id))
+            if conn is None:
+                return None
+            return str(conn.org_id)
+
+    org_id_str = asyncio.run(_resolve_org_id())
+
+    from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
     try:
-        with langfuse_span("metadata_sync", metadata={"connection_id": connection_id}):
-            return asyncio.run(_pipeline())
+        with langfuse_context(org_id=org_id_str):
+            with langfuse_span("metadata_sync", metadata={"connection_id": connection_id}):
+                return asyncio.run(_pipeline())
     finally:
         flush_langfuse()

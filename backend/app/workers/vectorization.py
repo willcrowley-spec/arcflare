@@ -17,7 +17,7 @@ def vectorize_document_task(document_id: str) -> str:
     from app.services.extraction.chunker import chunk_document
     from app.services.documents.vectorizer import vectorize_chunks
 
-    from app.core.observability import flush_langfuse
+    from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
     async def _run() -> None:
         factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -44,7 +44,9 @@ def vectorize_document_task(document_id: str) -> str:
             await session.commit()
 
     try:
-        asyncio.run(_run())
+        with langfuse_context():
+            with langfuse_span("document_vectorization", metadata={"document_id": document_id}):
+                asyncio.run(_run())
         return document_id
     finally:
         flush_langfuse()

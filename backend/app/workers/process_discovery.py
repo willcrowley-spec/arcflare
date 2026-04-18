@@ -29,7 +29,6 @@ def _map_discovery_status(status: str) -> str:
 def process_discovery_task(org_id: str) -> str:
     import asyncio
 
-    from app.core.observability import flush_langfuse
     from app.services.sync_progress import get_redis_client
 
     r = get_redis_client()
@@ -217,10 +216,11 @@ def process_discovery_task(org_id: str) -> str:
         finally:
             await engine.dispose()
 
-    from app.core.observability import langfuse_span
+    from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
     try:
-        with langfuse_span("process_discovery", metadata={"org_id": org_id}):
-            return asyncio.run(_pipeline())
+        with langfuse_context(org_id=org_id):
+            with langfuse_span("process_discovery", metadata={"org_id": org_id}):
+                return asyncio.run(_pipeline())
     finally:
         flush_langfuse()
