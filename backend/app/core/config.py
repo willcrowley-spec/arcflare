@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     LLM_STRONG_MODEL: str = Field(default="")
     LLM_RATE_DELAY: float = Field(default=0.0, description="Seconds between LLM calls")
 
+    EMBEDDING_MODEL: str = Field(default="gemini-embedding-2-preview", description="Gemini embedding model name")
+    EMBEDDING_DIMS: int = Field(default=3072, description="Embedding vector dimensions")
+
     SALESFORCE_CLIENT_ID: str = Field(default="")
     SALESFORCE_CLIENT_SECRET: str = Field(default="")
     SALESFORCE_REDIRECT_URI: str = Field(

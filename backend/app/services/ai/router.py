@@ -139,7 +139,7 @@ def llm_call(
         start_time = time.time()
 
         if provider == "gemini":
-            result = _call_gemini(prompt, max_tokens, model)
+            result = _call_gemini(prompt, max_tokens, model, operation=operation)
         elif provider == "anthropic":
             result = _call_anthropic(prompt, max_tokens, model)
         elif provider == "openai":
@@ -232,37 +232,41 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
     )
 
 
-def _build_gemini_config(max_tokens: int, model: str):
-    """Build a GenerateContentConfig using SDK types with graceful fallback.
+def _build_gemini_config(max_tokens: int, model: str, operation: str | None = None):
+    """Build a GenerateContentConfig with per-operation thinking budget.
 
-    Gemini 2.5 models: max_output_tokens is the TOTAL budget for thinking +
-    response.  We add the thinking budget on top of the caller's requested
-    output tokens so the response isn't starved.
+    Gemini 2.5 models: ``max_output_tokens`` is the TOTAL budget for
+    thinking + response.  The thinking budget is pulled from the operations
+    registry so each pipeline stage gets an appropriate allocation.
     """
+    from app.services.ai.operations import get_thinking_budget
+
+    thinking = get_thinking_budget(operation)
+    supports_thinking = "2.5-pro" in model or "2.5-flash" in model
+
     try:
         from google.genai import types
 
-        kwargs: dict = {}
-        if "2.5-pro" in model:
-            thinking = min(max_tokens, 8000)
+        kwargs: dict = {"max_output_tokens": max_tokens}
+        if supports_thinking and thinking > 0:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
             kwargs["max_output_tokens"] = max_tokens + thinking
-        elif "2.5-flash" in model:
+        elif supports_thinking:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-            kwargs["max_output_tokens"] = max_tokens
         else:
             kwargs["temperature"] = 0
-            kwargs["max_output_tokens"] = max_tokens
         return types.GenerateContentConfig(**kwargs)
     except Exception as exc:
         logger.debug("gemini_typed_config_failed model=%s error=%s, falling back to plain dict", model, exc)
         config: dict = {"max_output_tokens": max_tokens}
-        if "2.5-pro" not in model and "2.5-flash" not in model:
+        if not supports_thinking:
             config["temperature"] = 0
         return config
 
 
-def _call_gemini(prompt: str, max_tokens: int, model: str) -> LLMResult:
+def _call_gemini(
+    prompt: str, max_tokens: int, model: str, operation: str | None = None,
+) -> LLMResult:
     global _gemini_client
     if _gemini_client is None:
         from google import genai
@@ -270,7 +274,7 @@ def _call_gemini(prompt: str, max_tokens: int, model: str) -> LLMResult:
         api_key = getattr(settings, "GEMINI_API_KEY", "")
         _gemini_client = genai.Client(api_key=api_key)
 
-    config = _build_gemini_config(max_tokens, model)
+    config = _build_gemini_config(max_tokens, model, operation=operation)
 
     response = _gemini_client.models.generate_content(
         model=model,

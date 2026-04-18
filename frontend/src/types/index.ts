@@ -76,6 +76,7 @@ export interface ModelOperation {
   group_label: string
   description: string
   default_tier: string
+  thinking_budget: number
   effective_model: string
   effective_provider: string
 }

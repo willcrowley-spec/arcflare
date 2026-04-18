@@ -6,29 +6,38 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.document import DocumentChunk
 from app.services.ai.router import get_embedding_provider
 
 logger = logging.getLogger(__name__)
 
-_EMBED_MODEL = "gemini-embedding-001"
-_EMBED_DIMS = 3072
+
+def _embed_model() -> str:
+    return get_settings().EMBEDDING_MODEL
+
+
+def _embed_dims() -> int:
+    return get_settings().EMBEDDING_DIMS
 
 
 async def _embed(client, content: str) -> list[float]:
     from app.core.observability import langfuse_generation
 
+    model = _embed_model()
+    dims = _embed_dims()
+
     with langfuse_generation(
         name="embedding",
-        model=_EMBED_MODEL,
+        model=model,
         input=content[:200],
-        metadata={"dimensions": _EMBED_DIMS, "input_length": len(content)},
+        metadata={"dimensions": dims, "input_length": len(content)},
     ) as gen:
         def _sync() -> list[float]:
             result = client.models.embed_content(
-                model=_EMBED_MODEL,
+                model=model,
                 contents=content,
-                config={"output_dimensionality": _EMBED_DIMS},
+                config={"output_dimensionality": dims},
             )
             return list(result.embeddings[0].values)
 
@@ -46,17 +55,20 @@ async def _embed(client, content: str) -> list[float]:
 async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
     from app.core.observability import langfuse_generation
 
+    model = _embed_model()
+    dims = _embed_dims()
+
     with langfuse_generation(
         name="embedding_batch",
-        model=_EMBED_MODEL,
+        model=model,
         input=f"[{len(texts)} texts]",
-        metadata={"dimensions": _EMBED_DIMS, "batch_size": len(texts)},
+        metadata={"dimensions": dims, "batch_size": len(texts)},
     ) as gen:
         def _sync() -> list[list[float]]:
             result = client.models.embed_content(
-                model=_EMBED_MODEL,
+                model=model,
                 contents=texts,
-                config={"output_dimensionality": _EMBED_DIMS},
+                config={"output_dimensionality": dims},
             )
             return [list(e.values) for e in result.embeddings]
 
@@ -102,11 +114,12 @@ async def vectorize_chunks(
                     embeddings_map[idx] = await _embed(provider, txt)
                 except Exception as e:
                     logger.warning("embed_failed chunk=%d error=%s", idx, e)
-                    embeddings_map[idx] = [0.0] * _EMBED_DIMS
+                    embeddings_map[idx] = [0.0] * _embed_dims()
 
+    dims = _embed_dims()
     for i, c in enumerate(chunks):
         content = c.get("content") or ""
-        embedding = embeddings_map.get(i, [0.0] * _EMBED_DIMS)
+        embedding = embeddings_map.get(i, [0.0] * dims)
         row = DocumentChunk(
             document_id=document_id,
             chunk_index=int(c["chunk_index"]),

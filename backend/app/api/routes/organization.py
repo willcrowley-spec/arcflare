@@ -69,9 +69,14 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
 
     operations = []
     for op_id, meta in MODEL_OPERATIONS.items():
-        provider, model = _resolve_model(
-            meta["tier"], operation=op_id, model_config=org_config
-        )
+        if op_id == "embedding":
+            effective_model = f"gemini/{settings.EMBEDDING_MODEL}"
+            effective_provider = "gemini"
+        else:
+            effective_provider, effective_model_name = _resolve_model(
+                meta["tier"], operation=op_id, model_config=org_config
+            )
+            effective_model = f"{effective_provider}/{effective_model_name}"
         operations.append({
             "id": op_id,
             "label": meta["label"],
@@ -79,8 +84,9 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
             "group_label": OPERATION_GROUPS.get(meta["group"], meta["group"]),
             "description": meta["description"],
             "default_tier": meta["tier"],
-            "effective_model": f"{provider}/{model}",
-            "effective_provider": provider,
+            "thinking_budget": meta.get("thinking_budget", 0),
+            "effective_model": effective_model,
+            "effective_provider": effective_provider,
         })
 
     return {"providers": providers, "operations": operations}

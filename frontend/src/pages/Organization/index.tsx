@@ -568,37 +568,49 @@ export default function OrganizationPage() {
                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{groupLabel}</h3>
                 <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                   {ops.map((op) => {
+                    const isEmbedding = op.id === 'embedding'
                     const currentOverride = analysis?.model_overrides?.[op.id] ?? ''
                     return (
                       <div key={op.id} className="flex flex-col gap-1.5">
                         <label htmlFor={`model-${op.id}`} className="text-sm font-medium text-slate-700">
                           {op.label}
+                          {op.thinking_budget > 0 && (
+                            <span className="ml-1.5 text-[10px] font-normal text-indigo-500" title={`${op.thinking_budget.toLocaleString()} thinking tokens allocated`}>
+                              reasoning
+                            </span>
+                          )}
                         </label>
                         <p className="text-xs leading-relaxed text-slate-400">{op.description}</p>
-                        <select
-                          id={`model-${op.id}`}
-                          value={currentOverride}
-                          disabled={updateSettings.isPending}
-                          onChange={(e) => onModelOverrideChange(op.id, e.target.value)}
-                          className={clsx(
-                            'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
-                            'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
-                            updateSettings.isPending && 'cursor-not-allowed opacity-60',
-                          )}
-                        >
-                          <option value="">
-                            Platform default ({op.effective_model.split('/').pop()})
-                          </option>
-                          {catalog.providers.map((provider) => (
-                            <optgroup key={provider.id} label={provider.name}>
-                              {provider.models.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.label}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
+                        {isEmbedding ? (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                            {op.effective_model.split('/').pop()}
+                          </div>
+                        ) : (
+                          <select
+                            id={`model-${op.id}`}
+                            value={currentOverride}
+                            disabled={updateSettings.isPending}
+                            onChange={(e) => onModelOverrideChange(op.id, e.target.value)}
+                            className={clsx(
+                              'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
+                              'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
+                              updateSettings.isPending && 'cursor-not-allowed opacity-60',
+                            )}
+                          >
+                            <option value="">
+                              Platform default ({op.effective_model.split('/').pop()})
+                            </option>
+                            {catalog.providers.map((provider) => (
+                              <optgroup key={provider.id} label={provider.name}>
+                                {provider.models.map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.label}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     )
                   })}
