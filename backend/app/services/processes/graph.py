@@ -56,7 +56,8 @@ def _serialize_graph(proc: BusinessProcess, nodes: list, edges: list) -> dict:
                 "id": str(e.id),
                 "source": str(e.source_node_id),
                 "target": str(e.target_node_id),
-                "label": e.relationship_label,
+                "label": (e.relationship_label or "handoff").split(":")[0].strip()[:30],
+                "description": e.relationship_label,
             }
             for e in edges
         ],
@@ -106,7 +107,9 @@ async def _build_hierarchy_graph(proc: BusinessProcess, db: AsyncSession) -> dic
             "id": str(ho.id),
             "source": str(ho.source_process_id),
             "target": str(ho.target_process_id),
-            "label": ho.description[:60] if ho.description else ho.handoff_type,
+            "label": ho.handoff_type or "handoff",
+            "description": ho.description,
+            "is_gap": ho.is_gap,
         })
 
     return {"process": {"id": str(proc.id), "name": proc.name}, "nodes": nodes, "edges": edges}
@@ -181,8 +184,12 @@ async def generate_graphs_for_run(
                     process_id=domain.id,
                     source_node_id=src_node.id,
                     target_node_id=tgt_node.id,
-                    relationship_label=ho.description[:60] if ho.description else ho.handoff_type,
-                    metadata_json={"handoff_id": str(ho.id)},
+                    relationship_label=ho.handoff_type or "handoff",
+                    metadata_json={
+                        "handoff_id": str(ho.id),
+                        "description": ho.description,
+                        "is_gap": ho.is_gap,
+                    },
                 ))
 
         await db.flush()

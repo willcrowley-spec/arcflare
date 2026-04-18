@@ -1,29 +1,49 @@
-import { memo, useEffect, useMemo } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   Handle,
   MarkerType,
   Panel,
   Position,
   ReactFlow,
+  getBezierPath,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
   useEdgesState,
   useNodesState,
 } from '@xyflow/react'
-import { ArrowLeft, FileSpreadsheet, FileText, FileType2, Network, Server, Workflow } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRightLeft,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Network,
+  Server,
+  Workflow,
+} from 'lucide-react'
 import clsx from 'clsx'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import { useProcess } from '@/hooks/useApi'
 
-type DemoData = {
+type NodeData = {
   title: string
   subtitle: string
   variant: 'doc' | 'process' | 'record'
+}
+
+type EdgeData = {
+  label: string
+  description?: string | null
+  isGap?: boolean
 }
 
 type ApiGraphNode = {
@@ -39,6 +59,8 @@ type ApiGraphEdge = {
   source: string
   target: string
   label?: string | null
+  description?: string | null
+  is_gap?: boolean
 }
 
 type ProcessGraphPayload = {
@@ -46,21 +68,22 @@ type ProcessGraphPayload = {
   edges?: ApiGraphEdge[]
 }
 
-function mapNodeVariant(nodeType: string | undefined): DemoData['variant'] {
+function mapNodeVariant(nodeType: string | undefined): NodeData['variant'] {
   const t = (nodeType ?? '').toUpperCase()
   if (t.includes('DOC') || t.includes('BUSINESS_DOC') || t.includes('FILE')) return 'doc'
   if (t.includes('RECORD') || t.includes('DATA') || t.includes('OBJECT')) return 'record'
   return 'process'
 }
 
-function toFlowNodes(nodes: ApiGraphNode[] | undefined): Node<DemoData>[] {
+function toFlowNodes(nodes: ApiGraphNode[] | undefined): Node<NodeData>[] {
   if (!nodes?.length) return []
   return nodes.map((n) => {
     const variant = mapNodeVariant(n.type)
-    const pos = n.position && typeof n.position.x === 'number' && typeof n.position.y === 'number' ? n.position : { x: 0, y: 0 }
+    const pos =
+      n.position && typeof n.position.x === 'number' && typeof n.position.y === 'number' ? n.position : { x: 0, y: 0 }
     return {
       id: n.id,
-      type: 'demo',
+      type: 'processNode',
       position: pos,
       data: {
         title: n.label?.trim() || 'Untitled step',
@@ -71,18 +94,80 @@ function toFlowNodes(nodes: ApiGraphNode[] | undefined): Node<DemoData>[] {
   })
 }
 
-function toFlowEdges(edges: ApiGraphEdge[] | undefined): Edge[] {
+function toFlowEdges(edges: ApiGraphEdge[] | undefined): Edge<EdgeData>[] {
   if (!edges?.length) return []
   return edges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,
-    label: e.label ?? '',
-    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+    type: 'handoff',
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: e.is_gap ? '#dc2626' : '#94a3b8' },
+    style: { stroke: e.is_gap ? '#fca5a5' : '#cbd5e1', strokeWidth: e.is_gap ? 2 : 1.5 },
+    data: {
+      label: e.label ?? 'handoff',
+      description: e.description,
+      isGap: e.is_gap ?? false,
+    },
   }))
 }
 
-function DemoNode({ data }: NodeProps<Node<DemoData>>) {
+function HandoffEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, style }: EdgeProps<Edge<EdgeData>>) {
+  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })
+  const [hovered, setHovered] = useState(false)
+  const isGap = data?.isGap ?? false
+  const label = data?.label ?? 'handoff'
+  const description = data?.description
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} style={style} />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            pointerEvents: 'all',
+          }}
+          className="nodrag nopan"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <div
+            className={clsx(
+              'flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold shadow-sm transition-all',
+              'cursor-default select-none',
+              isGap
+                ? 'border border-red-200 bg-red-50 text-red-700'
+                : 'border border-slate-200 bg-white text-slate-600',
+              hovered && !isGap && 'border-navy-300 bg-navy-50 text-navy-700 shadow-md',
+              hovered && isGap && 'border-red-300 bg-red-100 shadow-md',
+            )}
+          >
+            {isGap ? (
+              <AlertTriangle className="h-2.5 w-2.5" />
+            ) : (
+              <ArrowRightLeft className="h-2.5 w-2.5 opacity-50" />
+            )}
+            <span className="max-w-[100px] truncate">{label}</span>
+          </div>
+
+          {hovered && description ? (
+            <div className="absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2">
+              <div className="w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl ring-1 ring-slate-900/5">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  {isGap ? 'Gap identified' : 'Handoff'}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-700">{description}</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
+
+function ProcessNodeComponent({ data }: NodeProps<Node<NodeData>>) {
   const bar =
     data.variant === 'doc' ? 'bg-orange-500' : data.variant === 'process' ? 'bg-navy-800' : 'bg-emerald-500'
   const Icon =
@@ -107,7 +192,7 @@ function DemoNode({ data }: NodeProps<Node<DemoData>>) {
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-snug text-navy-900">{data.title}</p>
-            <p className="mt-1 text-[11px] text-slate-500">{data.subtitle}</p>
+            <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{data.subtitle}</p>
           </div>
         </div>
       </div>
@@ -116,15 +201,15 @@ function DemoNode({ data }: NodeProps<Node<DemoData>>) {
   )
 }
 
-const nodeTypes = { demo: memo(DemoNode) }
+const nodeTypes = { processNode: memo(ProcessNodeComponent) }
+const edgeTypes = { handoff: memo(HandoffEdge) }
 
 function extractGraph(payload: unknown): ProcessGraphPayload | null {
   if (!payload || typeof payload !== 'object') return null
   const root = payload as { graph?: unknown }
   const g = root.graph
   if (!g || typeof g !== 'object') return null
-  const graph = g as ProcessGraphPayload
-  return graph
+  return g as ProcessGraphPayload
 }
 
 export default function ProcessMapPage() {
@@ -149,10 +234,17 @@ export default function ProcessMapPage() {
       : undefined
 
   const hasGraphData = Boolean(graph?.nodes?.length)
+  const edgeCount = graph?.edges?.length ?? 0
+  const gapCount = graph?.edges?.filter((e) => e.is_gap)?.length ?? 0
+
   const status =
     isError && error && typeof error === 'object' && 'status' in error && typeof (error as { status: unknown }).status === 'number'
       ? (error as { status: number }).status
       : undefined
+
+  const onInit = useCallback((instance: { fitView: () => void }) => {
+    setTimeout(() => instance.fitView(), 50)
+  }, [])
 
   if (!id) {
     return (
@@ -217,36 +309,44 @@ export default function ProcessMapPage() {
             {processName ? `Process Map · ${processName}` : 'Process Map'}
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Drag nodes to rearrange. Positions are saved automatically.
+            Drag nodes to rearrange. Hover edge pills for handoff details.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-900/5">
-          <LegendSwatch label="Metadata" className="bg-navy-800" />
-          <LegendSwatch label="Data Records" className="bg-emerald-500" />
-          <LegendSwatch label="Documents" className="bg-orange-500" />
-          <span className="ml-2 inline-flex items-center gap-1 text-slate-500">
-            <Network className="h-4 w-4" />
-            Interactive graph
-          </span>
+        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-900/5">
+          <LegendSwatch label="Process" className="bg-navy-800" />
+          <LegendSwatch label="Data" className="bg-emerald-500" />
+          <LegendSwatch label="Document" className="bg-orange-500" />
+          {edgeCount > 0 ? (
+            <span className="ml-1 text-slate-400">
+              {edgeCount} handoff{edgeCount !== 1 ? 's' : ''}
+              {gapCount > 0 ? (
+                <span className="ml-1 text-red-500">{gapCount} gap{gapCount !== 1 ? 's' : ''}</span>
+              ) : null}
+            </span>
+          ) : null}
         </div>
       </div>
 
-      <div className="h-[620px] overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-900/5">
+      <div className="h-[680px] overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm ring-1 ring-slate-900/5">
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onInit={onInit}
           fitView
-          minZoom={0.4}
-          maxZoom={1.4}
+          minZoom={0.3}
+          maxZoom={1.6}
           proOptions={{ hideAttribution: true }}
         >
-          <Background gap={16} color="#e7e9ef" />
+          <Background gap={20} color="#e7e9ef" />
           <Controls showInteractive={false} />
-          <Panel position="top-left" className="m-3 rounded-lg bg-white/90 px-3 py-2 text-xs text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
-            Legend applies to node color bars · edges carry integration semantics
+          <Panel position="top-left" className="m-3 rounded-lg bg-white/90 px-3 py-2 text-xs text-slate-500 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+            <span className="inline-flex items-center gap-1.5">
+              <ArrowRightLeft className="h-3 w-3" /> Hover pills on edges for details
+            </span>
           </Panel>
         </ReactFlow>
       </div>
