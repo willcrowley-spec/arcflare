@@ -3,6 +3,7 @@ import io
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, DbSession
@@ -114,6 +115,38 @@ async def update_settings(
     await db.commit()
     await db.refresh(org)
     return AnalysisConfig(**org.analysis_config)
+
+
+class ProcessMapSettings(BaseModel):
+    process_map_direction: str = "TB"
+    process_map_default_state: str = "collapsed"
+
+
+@router.get("/process-map-settings")
+async def get_process_map_settings(org: CurrentOrg) -> ProcessMapSettings:
+    s = org.settings_json or {}
+    return ProcessMapSettings(
+        process_map_direction=s.get("process_map_direction", "TB"),
+        process_map_default_state=s.get("process_map_default_state", "collapsed"),
+    )
+
+
+@router.patch("/process-map-settings")
+async def update_process_map_settings(
+    body: ProcessMapSettings,
+    db: DbSession,
+    org: CurrentOrg,
+) -> ProcessMapSettings:
+    s = dict(org.settings_json or {})
+    s["process_map_direction"] = body.process_map_direction
+    s["process_map_default_state"] = body.process_map_default_state
+    org.settings_json = s
+    await db.commit()
+    await db.refresh(org)
+    return ProcessMapSettings(
+        process_map_direction=s.get("process_map_direction", "TB"),
+        process_map_default_state=s.get("process_map_default_state", "collapsed"),
+    )
 
 
 @router.post("/reanalyze")
