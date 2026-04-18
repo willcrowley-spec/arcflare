@@ -1,7 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
-function handleSseBlock(block: string, onDelta?: (chunk: string) => void) {
+export interface StreamAction {
+  action_id: string
+  action_type: string
+  target_id: string | null
+  payload: Record<string, unknown>
+  status: string
+  cascade_info?: Record<string, unknown> | null
+}
+
+export interface StreamToolResult {
+  tool: string
+  result?: unknown
+  error?: string
+}
+
+interface SseCallbacks {
+  onDelta?: (chunk: string) => void
+  onAction?: (action: StreamAction) => void
+  onToolResult?: (result: StreamToolResult) => void
+  onToolError?: (info: { tool: string; errors: string[] }) => void
+}
+
+function handleSseBlock(block: string, callbacks: SseCallbacks) {
   let eventName = 'message'
   const dataLines: string[] = []
   for (const line of block.split(/\r?\n/)) {
@@ -23,26 +45,43 @@ function handleSseBlock(block: string, onDelta?: (chunk: string) => void) {
       /* keep string */
     }
   }
+
   if (eventName === 'text' || eventName === 'message') {
-    if (typeof payload === 'object' && payload !== null && 'delta' in payload) {
+    if (typeof payload === 'object' && payload !== null && 'chunk' in payload) {
+      const c = (payload as { chunk?: unknown }).chunk
+      if (typeof c === 'string' && c) callbacks.onDelta?.(c)
+    } else if (typeof payload === 'object' && payload !== null && 'delta' in payload) {
       const d = (payload as { delta?: unknown }).delta
-      if (typeof d === 'string' && d) onDelta?.(d)
+      if (typeof d === 'string' && d) callbacks.onDelta?.(d)
     } else if (typeof payload === 'string' && payload) {
-      onDelta?.(payload)
+      callbacks.onDelta?.(payload)
     }
   }
+
   if (eventName === 'token' || eventName === 'chunk') {
     if (typeof payload === 'object' && payload !== null && 'text' in payload) {
       const t = (payload as { text?: unknown }).text
-      if (typeof t === 'string' && t) onDelta?.(t)
+      if (typeof t === 'string' && t) callbacks.onDelta?.(t)
     }
+  }
+
+  if (eventName === 'action' && typeof payload === 'object' && payload !== null) {
+    callbacks.onAction?.(payload as StreamAction)
+  }
+
+  if (eventName === 'tool_result' && typeof payload === 'object' && payload !== null) {
+    callbacks.onToolResult?.(payload as StreamToolResult)
+  }
+
+  if (eventName === 'tool_error' && typeof payload === 'object' && payload !== null) {
+    callbacks.onToolError?.(payload as { tool: string; errors: string[] })
   }
 }
 
-/** Reads an SSE (or SSE-like) response from POST /chat/threads/:id/messages */
+/** Reads an SSE response from POST /chat/threads/:id/messages */
 export async function consumeChatMessageStream(
   response: Response,
-  onDelta?: (chunk: string) => void,
+  callbacks: SseCallbacks,
 ): Promise<void> {
   const reader = response.body?.getReader()
   if (!reader) throw new Error('Response has no readable body')
@@ -58,12 +97,12 @@ export async function consumeChatMessageStream(
     while ((splitAt = buffer.indexOf('\n\n')) !== -1) {
       const block = buffer.slice(0, splitAt)
       buffer = buffer.slice(splitAt + 2)
-      if (block.trim()) handleSseBlock(block, onDelta)
+      if (block.trim()) handleSseBlock(block, callbacks)
     }
 
     if (done) {
       const tail = buffer.trim()
-      if (tail) handleSseBlock(tail, onDelta)
+      if (tail) handleSseBlock(tail, callbacks)
       break
     }
   }
@@ -116,11 +155,15 @@ export function useSendMessage(threadId: string | null) {
     mutationFn: async ({
       content,
       onDelta,
+      onAction,
+      onToolResult,
       signal,
       threadId: threadIdOverride,
     }: {
       content: string
       onDelta?: (chunk: string) => void
+      onAction?: (action: StreamAction) => void
+      onToolResult?: (result: StreamToolResult) => void
       signal?: AbortSignal
       /** Use immediately after creating a thread, before React state commits. */
       threadId?: string
@@ -132,7 +175,7 @@ export function useSendMessage(threadId: string | null) {
         const text = await res.text()
         throw new Error(text || res.statusText || `Request failed (${res.status})`)
       }
-      await consumeChatMessageStream(res, onDelta)
+      await consumeChatMessageStream(res, { onDelta, onAction, onToolResult })
       await qc.invalidateQueries({ queryKey: ['chat', 'thread', id] })
       await qc.invalidateQueries({ queryKey: ['chat', 'threads'] })
     },

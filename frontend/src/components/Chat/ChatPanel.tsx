@@ -22,6 +22,7 @@ import {
   useThreads,
 } from '@/hooks/useChat'
 import type { ChatAction, ChatMessage as ChatMessageRow } from '@/types'
+import type { StreamAction } from '@/hooks/useChat'
 import { ActionCard } from '@/components/Chat/ActionCard'
 import { ChatMessage } from '@/components/Chat/ChatMessage'
 
@@ -36,6 +37,7 @@ export function ChatPanel() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [input, setInput] = useState('')
   const [streamingText, setStreamingText] = useState('')
+  const [streamingActions, setStreamingActions] = useState<StreamAction[]>([])
   const [sendError, setSendError] = useState<string | null>(null)
 
   const { data: threads = [], isLoading: threadsLoading } = useThreads()
@@ -91,6 +93,7 @@ export function ChatPanel() {
     if (!text || sendMessage.isPending || createThread.isPending) return
     setSendError(null)
     setStreamingText('')
+    setStreamingActions([])
 
     let tid = activeThreadId
     try {
@@ -108,11 +111,14 @@ export function ChatPanel() {
         threadId: tid,
         content: text,
         onDelta: (chunk) => setStreamingText((s) => s + chunk),
+        onAction: (action) => setStreamingActions((prev) => [...prev, action]),
       })
       setStreamingText('')
+      setStreamingActions([])
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'Failed to send')
       setStreamingText('')
+      setStreamingActions([])
     }
   }, [
     activeThreadId,
@@ -305,6 +311,34 @@ export function ChatPanel() {
                   </div>
                 </div>
               ) : null}
+
+              {streamingActions.map((sa) => (
+                <div key={sa.action_id} className="px-2 py-1.5">
+                  <ActionCard
+                    action={{
+                      id: sa.action_id,
+                      thread_id: '',
+                      message_id: '',
+                      action_type: sa.action_type,
+                      target_id: sa.target_id,
+                      payload: sa.payload,
+                      status: 'proposed',
+                      result: null,
+                      idempotency_key: '',
+                      created_at: new Date().toISOString(),
+                      executed_at: null,
+                    }}
+                    onConfirm={async (payload) => {
+                      await confirmAction.mutateAsync({ actionId: sa.action_id, body: payload })
+                      setStreamingActions((prev) => prev.filter((a) => a.action_id !== sa.action_id))
+                    }}
+                    onReject={async () => {
+                      await rejectAction.mutateAsync(sa.action_id)
+                      setStreamingActions((prev) => prev.filter((a) => a.action_id !== sa.action_id))
+                    }}
+                  />
+                </div>
+              ))}
             </div>
 
             <div className="shrink-0 border-t border-slate-100 bg-white p-3">

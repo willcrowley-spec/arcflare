@@ -257,3 +257,24 @@ def get_tool_declarations() -> list[dict]:
         {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
         for t in TOOL_REGISTRY
     ]
+
+
+def build_gemini_tools():
+    """Build a ``google.genai.types.Tool`` with FunctionDeclarations for the chat tools.
+
+    Returns the Tool object ready to be passed to ``GenerateContentConfig(tools=[...])``.
+    Uses ``parameters_json_schema`` (dict) rather than ``parameters`` (Schema) to avoid
+    serialization issues noted in googleapis/python-genai#121.
+    """
+    from google.genai import types
+
+    declarations = []
+    for t in TOOL_REGISTRY:
+        declarations.append(
+            types.FunctionDeclaration(
+                name=t["name"],
+                description=t["description"],
+                parameters_json_schema=t["parameters"],
+            )
+        )
+    return types.Tool(function_declarations=declarations)

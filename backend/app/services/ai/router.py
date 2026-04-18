@@ -171,6 +171,164 @@ def llm_call(
     return result
 
 
+@dataclass
+class ChatStreamChunk:
+    """A single chunk from a streaming chat response."""
+    type: Literal["text", "function_call", "done", "error"]
+    text: str = ""
+    function_name: str = ""
+    function_args: dict | None = None
+    function_call_id: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = ""
+
+
+def stream_chat_with_tools(
+    messages: list[dict],
+    tools,
+    max_tokens: int = 4096,
+    operation: str = "chat",
+    model_config: dict | None = None,
+):
+    """Streaming Gemini call with function calling (manual mode).
+
+    Yields ``ChatStreamChunk`` objects: text deltas, function_call proposals, and a
+    final ``done`` chunk with token counts.  Only supports Gemini provider.
+
+    Args:
+        messages: List of {"role": ..., "content": ...} dicts.
+        tools: A ``google.genai.types.Tool`` from ``build_gemini_tools()``.
+        max_tokens: Max output tokens.
+        operation: Operation name for model resolution.
+        model_config: Org analysis_config for overrides.
+    """
+    from app.services.ai.operations import get_default_tier
+
+    tier = get_default_tier(operation)
+    provider, model = _resolve_model(tier, operation=operation, model_config=model_config)
+
+    if provider != "gemini":
+        result = llm_call(
+            _flatten_messages(messages),
+            max_tokens=max_tokens,
+            tier=tier,
+            operation=operation,
+            model_config=model_config,
+        )
+        yield ChatStreamChunk(type="text", text=result.text, model=model)
+        yield ChatStreamChunk(
+            type="done", model=model,
+            input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+        )
+        return
+
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai
+        settings = get_settings()
+        _gemini_client = genai.Client(api_key=getattr(settings, "GEMINI_API_KEY", ""))
+
+    from google.genai import types
+
+    supports_thinking = "2.5-pro" in model or "2.5-flash" in model
+    config_kwargs: dict = {
+        "max_output_tokens": max_tokens,
+        "tools": [tools],
+        "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+    }
+    if supports_thinking:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+
+    contents = _messages_to_gemini_contents(messages)
+
+    try:
+        stream = _gemini_client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+
+        total_in = 0
+        total_out = 0
+        call_counter = 0
+
+        for chunk in stream:
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                total_in = getattr(chunk.usage_metadata, "prompt_token_count", 0) or 0
+                total_out = getattr(chunk.usage_metadata, "candidates_token_count", 0) or 0
+
+            if not chunk.candidates:
+                continue
+
+            for part in chunk.candidates[0].content.parts:
+                if hasattr(part, "thought") and part.thought:
+                    continue
+
+                if hasattr(part, "function_call") and part.function_call:
+                    fc = part.function_call
+                    call_counter += 1
+                    args = dict(fc.args) if fc.args else {}
+                    call_id = getattr(fc, "id", "") or f"{fc.name}_{call_counter}"
+                    yield ChatStreamChunk(
+                        type="function_call",
+                        function_name=fc.name,
+                        function_args=args,
+                        function_call_id=str(call_id),
+                        model=model,
+                    )
+                elif part.text:
+                    yield ChatStreamChunk(type="text", text=part.text, model=model)
+
+        yield ChatStreamChunk(
+            type="done", model=model,
+            input_tokens=total_in, output_tokens=total_out,
+        )
+    except Exception as exc:
+        logger.exception("stream_chat_with_tools_failed model=%s", model)
+        yield ChatStreamChunk(type="error", text=str(exc), model=model)
+
+
+def _flatten_messages(messages: list[dict]) -> str:
+    """Flatten role/content dicts into a single prompt string for non-Gemini providers."""
+    blocks = []
+    for m in messages:
+        role = str(m.get("role", "user")).upper()
+        content = str(m.get("content", ""))
+        blocks.append(f"[{role}]\n{content}")
+    return "\n\n".join(blocks)
+
+
+def _messages_to_gemini_contents(messages: list[dict]) -> list:
+    """Convert chat message dicts to Gemini ``types.Content`` objects."""
+    from google.genai import types
+
+    contents = []
+    for m in messages:
+        role = m.get("role", "user")
+        text = m.get("content", "")
+        if role == "system":
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=f"[System Instructions]\n{text}")],
+            ))
+            contents.append(types.Content(
+                role="model",
+                parts=[types.Part.from_text(text="Understood.")],
+            ))
+        elif role == "assistant":
+            contents.append(types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=text)],
+            ))
+        else:
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=text)],
+            ))
+    return contents
+
+
 def parse_json_response(text: str | None) -> dict | list:
     """Parse a JSON response, stripping markdown code fences if present."""
     if not text:
