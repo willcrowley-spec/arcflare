@@ -42,7 +42,7 @@ function buildGapPrompt(g: GapItem): string {
   return (
     `I'm looking at a cross-domain gap between "${src}" (${srcDom}) and "${tgt}" (${tgtDom}). ` +
     `Confidence is ${Math.round(g.confidence_score * 100)}%.${desc}\n\n` +
-    `Can you help me understand this gap and suggest how to resolve it?`
+    `Can you help me document what currently happens at this handoff point?`
   )
 }
 
