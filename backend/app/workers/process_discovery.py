@@ -9,8 +9,12 @@ logger = logging.getLogger(__name__)
 PHASES = [
     "context_gathering",
     "domain_discovery",
-    "domain_decomposition",
+    "structural_decomposition",
+    "step_enrichment",
+    "flow_analysis",
+    "validation",
     "cross_domain_synthesis",
+    "quality_scoring",
     "graph_generation",
 ]
 
@@ -47,8 +51,11 @@ def process_discovery_task(org_id: str) -> str:
     def _discovery_progress_cb(phase: str, status: str, count: int, total: int) -> None:
         redis_phase = {
             "domain_discovery": "domain_discovery",
-            "domain_decomposition": "domain_decomposition",
-            "cross_domain": "cross_domain_synthesis",
+            "structural_decomposition": "structural_decomposition",
+            "step_enrichment": "step_enrichment",
+            "flow_analysis": "flow_analysis",
+            "validation": "validation",
+            "cross_domain_synthesis": "cross_domain_synthesis",
         }.get(phase)
         if redis_phase:
             _update(redis_phase, _map_discovery_status(status), count, total)
@@ -62,9 +69,13 @@ def process_discovery_task(org_id: str) -> str:
         from app.models.discovery import DiscoveryRun
         from app.services.processes.discovery import (
             cleanup_previous_run,
-            run_pass1,
-            run_pass2,
-            run_pass3,
+            run_stage1,
+            run_stage2,
+            run_stage3,
+            run_stage4,
+            run_stage5,
+            run_stage6,
+            run_stage7,
         )
 
         settings = get_settings()
@@ -91,28 +102,67 @@ def process_discovery_task(org_id: str) -> str:
                     _update("context_gathering", "done")
 
                     _update("domain_discovery", "pulling", 0, 1)
-                    domains = await run_pass1(
+                    domains = await run_stage1(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
                     )
                     await session.commit()
                     _update("domain_discovery", "done", len(domains), max(len(domains), 1))
 
-                    _update("domain_decomposition", "pulling", 0, max(len(domains), 1))
-                    process_count = await run_pass2(
+                    _update("structural_decomposition", "pulling", 0, max(len(domains), 1))
+                    process_count = await run_stage2(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
                     )
                     await session.commit()
-                    _update("domain_decomposition", "done", process_count, max(process_count, 1))
+                    _update(
+                        "structural_decomposition", "done",
+                        process_count, max(process_count, 1),
+                    )
+
+                    _update("step_enrichment", "pulling", 0, 1)
+                    enriched_count = await run_stage3(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    _update(
+                        "step_enrichment", "done",
+                        enriched_count, max(enriched_count, 1),
+                    )
+
+                    _update("flow_analysis", "pulling", 0, 1)
+                    handoff_count = await run_stage4(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    _update(
+                        "flow_analysis", "done",
+                        handoff_count, max(handoff_count, 1),
+                    )
+
+                    _update("validation", "pulling", 0, 1)
+                    validation = await run_stage5(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    critique_n = len(validation.get("critique", []))
+                    _update("validation", "done", critique_n, max(critique_n, 1))
 
                     _update("cross_domain_synthesis", "pulling", 0, 1)
-                    synthesis = await run_pass3(
+                    synthesis = await run_stage6(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
                     )
                     await session.commit()
                     _update("cross_domain_synthesis", "done", 1, 1)
+
+                    _update("quality_scoring", "pulling", 0, 1)
+                    quality = await run_stage7(UUID(org_id), run_id, session)
+                    await session.commit()
+                    _update("quality_scoring", "done", 1, 1)
 
                     _update("graph_generation", "pulling")
                     from app.services.processes.graph import generate_graphs_for_run
@@ -125,7 +175,16 @@ def process_discovery_task(org_id: str) -> str:
                     run.pass_results = {
                         "domains": len(domains),
                         "processes": process_count,
+                        "enriched_steps": enriched_count,
+                        "domain_handoffs": handoff_count,
+                        "validation_issues": critique_n,
                         "executive_summary": synthesis.get("executive_summary", ""),
+                    }
+                    run.stage_results = {
+                        "stage3_enriched": enriched_count,
+                        "stage4_handoffs": handoff_count,
+                        "stage5_critique_count": critique_n,
+                        "stage7_quality": quality,
                     }
                     await session.commit()
 
