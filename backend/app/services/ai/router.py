@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.core.config import get_settings
+from app.core.model_prices import compute_cost
 
 logger = logging.getLogger(__name__)
 
@@ -154,11 +155,11 @@ def llm_call(
             try:
                 gen.update(
                     output=result.text,
-                    usage={
+                    usage_details={
                         "input": result.input_tokens,
                         "output": result.output_tokens,
-                        "total": result.input_tokens + result.output_tokens,
                     },
+                    cost_details=compute_cost(model, result.input_tokens, result.output_tokens),
                 )
             except Exception:
                 logger.debug("langfuse_generation_update_failed model=%s", model)
