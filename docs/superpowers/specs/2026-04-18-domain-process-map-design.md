@@ -61,7 +61,8 @@ Returns the full recursive hierarchy and all connections for a domain:
 ```
 
 - `hierarchy`: recursive tree of all processes under the domain. `is_leaf` = true for processes with no children (these become step cards). `leaf_count` = total leaf descendants (used for collapsed container badges). `status`, `confidence_score`, `needs_review` included for future in-map review features.
-- `edges`: union of `ProcessEdge` rows and `ProcessHandoff` rows scoped to the domain's subtree. Gap metadata preserved.
+- `edges`: normalized union of two sources — `ProcessEdge` rows (intra-process connections stored during graph generation) and `ProcessHandoff` rows (cross-process handoffs including gaps). Both are normalized into the same edge schema shown above. `source_id` and `target_id` always reference `BusinessProcess` IDs (leaf steps). `is_gap` comes from `ProcessHandoff.is_gap`; `ProcessEdge` rows default to `is_gap: false`.
+- `leaf_count`: computed at query time via recursive CTE — not a denormalized column. Acceptable for domain-graph queries since they're infrequent (page load, not polling).
 - The existing `GET /processes/{id}` endpoint and its `graph` field are unchanged.
 
 ### Org settings additions
@@ -90,9 +91,13 @@ A new frontend module (`frontend/src/lib/elkLayout.ts`) takes the domain-graph A
 
 ### Manual position overrides
 
-- When a user drags a node, persist the position delta via the existing `PUT /processes/{id}/nodes` endpoint.
-- On next load: run ELK layout first, then apply saved overrides on top.
-- "Reset Layout" button clears saved positions and re-runs ELK.
+The existing `PUT /processes/{id}/nodes` endpoint stores positions for `ProcessNode` rows scoped to a single process. The domain map renders nodes from the entire subtree, so position storage needs a different scope.
+
+**Approach:** Store position overrides in a new `domain_map_positions` JSONB column on `BusinessProcess` (the domain row). Shape: `{ [processId: string]: { x: number, y: number } }`. This keeps all overrides for one domain map in a single row, updated via a new `PUT /processes/{domain_id}/domain-graph/positions` endpoint.
+
+- When a user drags a node, debounce and persist the position delta to this column.
+- On next load: run ELK layout first, then apply saved deltas on top.
+- "Reset Layout" button clears the JSONB column and re-runs ELK.
 
 ### Performance
 
@@ -114,7 +119,7 @@ A new frontend module (`frontend/src/lib/elkLayout.ts`) takes the domain-graph A
 
 ### Expanded behavior
 
-- Re-run ELK layout for the affected subtree (incremental, not full graph).
+- Re-run ELK layout for the **full visible graph** (all currently expanded containers and their children). Partial/incremental layout risks misaligning siblings. ELK is fast enough (<100ms for typical graphs) that full re-layout on toggle is acceptable.
 - Children animate in. Container grows to fit.
 - Edges re-attach to specific child nodes.
 
@@ -128,9 +133,9 @@ A new frontend module (`frontend/src/lib/elkLayout.ts`) takes the domain-graph A
 ### Container node (non-leaf process)
 
 - Rounded rectangle with subtle border and a colored header bar.
-- Color derived from depth level: level 1 = navy, level 2 = slate, level 3 = lighter shade. Makes nesting depth obvious at a glance.
+- Color derived from depth level using a defined scale: depth 1 = `navy-800` header / `navy-50` body, depth 2 = `slate-600` header / `slate-50` body, depth 3 = `slate-400` header / `white` body, depth 4+ = `slate-300` header / `white` body with dashed border. Makes nesting depth obvious at a glance.
 - Header: process name, chevron toggle icon, step count badge.
-- Expanded: body area is near-white fill holding children with breathing-room padding.
+- Expanded: body area filled per the depth color scale above, with 16px internal padding on all sides.
 - Collapsed: compact pill — just the header bar, similar visual weight to a step card.
 - At extreme depth (5+): innermost containers use dashed borders to reduce visual noise.
 
@@ -185,6 +190,14 @@ Child processes retain their existing Confirm/Reject buttons on the processes li
 | Orphan steps (broken parent chain) | Placed in an "Uncategorized" container at root level, visually flagged. |
 | No edges between steps | Valid state — containers and cards render from hierarchy alone. |
 | Large domains (100+ leaf steps) | Minimap enabled, fit-to-view on initial load. ELK Web Worker keeps UI responsive. |
+
+## Relationship to Existing Graph Data
+
+The current `ProcessMap` page reads `ProcessNode` and `ProcessEdge` rows stored per-process during discovery graph generation. The new domain map does **not** use these rows — it builds its graph from the `BusinessProcess` hierarchy and `ProcessHandoff` edges.
+
+**Migration:** The old `ProcessMap` page (`/processes/:id/map`) is replaced by the new domain map. The route is reused. Existing `ProcessNode` / `ProcessEdge` rows are **not deleted** — they remain in the database for potential future use (e.g., intra-step detail views). The old page component (`ProcessMap.tsx`) is removed.
+
+**No data migration required.** The new endpoint reads from `business_processes` (hierarchy) and `process_handoffs` (edges), both of which already exist and are populated by the discovery engine.
 
 ## Out of Scope (Flagged for Future Specs)
 
