@@ -77,6 +77,7 @@ export interface ModelOperation {
   description: string
   default_tier: string
   thinking_budget: number
+  output_format: 'json' | 'text' | 'none'
   effective_model: string
   effective_provider: string
 }

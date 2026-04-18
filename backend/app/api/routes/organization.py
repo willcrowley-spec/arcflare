@@ -85,6 +85,7 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
             "description": meta["description"],
             "default_tier": meta["tier"],
             "thinking_budget": meta.get("thinking_budget", 0),
+            "output_format": meta.get("output_format", "text"),
             "effective_model": effective_model,
             "effective_provider": effective_provider,
         })

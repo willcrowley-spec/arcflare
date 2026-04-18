@@ -579,6 +579,11 @@ export default function OrganizationPage() {
                               reasoning
                             </span>
                           )}
+                          {op.output_format === 'json' && (
+                            <span className="ml-1.5 text-[10px] font-normal text-emerald-600" title="Structured JSON output enforced at API level">
+                              structured
+                            </span>
+                          )}
                         </label>
                         <p className="text-xs leading-relaxed text-slate-400">{op.description}</p>
                         {isEmbedding ? (

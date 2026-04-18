@@ -13,6 +13,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "metadata_enrichment": {
         "tier": "lite",
         "thinking_budget": 0,
+        "output_format": "text",
         "label": "Metadata Enrichment",
         "group": "metadata",
         "description": "Generates business-context descriptions for platform objects with few fields/records. Uses the cheapest model for bulk throughput.",
@@ -20,6 +21,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "entity_extraction": {
         "tier": "fast",
         "thinking_budget": 0,
+        "output_format": "json",
         "label": "Entity Extraction",
         "group": "metadata",
         "description": "Extracts business entities (processes, metrics, teams) from document text when rule-based NER falls short.",
@@ -27,27 +29,31 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "process_matching": {
         "tier": "fast",
         "thinking_budget": 0,
+        "output_format": "json",
         "label": "Process Matching",
         "group": "analysis",
         "description": "Disambiguates fuzzy entity matches across documents and data sources.",
     },
     "discovery_domain": {
         "tier": "strong",
-        "thinking_budget": 8192,
+        "thinking_budget": 0,
+        "output_format": "json",
         "label": "Domain Identification",
         "group": "discovery",
         "description": "Pass 1 of process discovery: identifies top-level business domains from metadata, documents, and org context.",
     },
     "discovery_decomposition": {
         "tier": "strong",
-        "thinking_budget": 8192,
+        "thinking_budget": 0,
+        "output_format": "json",
         "label": "Process Decomposition",
         "group": "discovery",
         "description": "Pass 2: decomposes each domain into hierarchical sub-processes, steps, and handoffs.",
     },
     "discovery_synthesis": {
         "tier": "strong",
-        "thinking_budget": 8192,
+        "thinking_budget": 0,
+        "output_format": "json",
         "label": "Cross-Domain Synthesis",
         "group": "discovery",
         "description": "Pass 3: identifies cross-domain handoffs, gaps, and orphaned artifacts across the full process landscape.",
@@ -55,6 +61,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "recommendations": {
         "tier": "strong",
         "thinking_budget": 10000,
+        "output_format": "text",
         "label": "Recommendations",
         "group": "synthesis",
         "description": "Generates business process documents and improvement recommendations from clustered entities.",
@@ -62,6 +69,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "embedding": {
         "tier": "lite",
         "thinking_budget": 0,
+        "output_format": "none",
         "label": "Embeddings",
         "group": "metadata",
         "description": "Vector embeddings for RAG search across metadata, documents, and org context. Uses a dedicated embedding model.",
@@ -92,6 +100,16 @@ def get_thinking_budget(operation: str | None) -> int:
     if entry:
         return int(entry.get("thinking_budget", 0))
     return 0
+
+
+def get_output_format(operation: str | None) -> str:
+    """Return the output format for a named operation: 'json', 'text', or 'none'."""
+    if not operation:
+        return "text"
+    entry = MODEL_OPERATIONS.get(operation)
+    if entry:
+        return str(entry.get("output_format", "text"))
+    return "text"
 
 
 def resolve_model_for_operation(

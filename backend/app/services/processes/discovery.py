@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import logging
 import time
-from contextlib import contextmanager
-from typing import Callable, Iterator
+from typing import Callable
 from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.observability import get_langfuse
+from app.core.observability import langfuse_span as _lf_span
 from app.models.discovery import ProcessHandoff
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.services.ai.router import LLMResult, llm_call, parse_json_response
@@ -34,64 +33,8 @@ ProgressCallback = Callable[[str, str, int, int], None] | None
 NEEDS_REVIEW_CONFIDENCE = 0.6
 
 
-def _discovery_trace_context(run_id: UUID) -> dict | None:
-    """Stable trace_id per run so passes nest under one Langfuse trace when supported."""
-    lf = get_langfuse()
-    if lf is None:
-        return None
-    try:
-        from langfuse import Langfuse
-
-        trace_id = Langfuse.create_trace_id(seed=f"discovery-run-{run_id}")
-        return {"trace_id": trace_id}
-    except Exception as exc:
-        logger.debug("langfuse_trace_context_failed run_id=%s error=%s", run_id, exc)
-        return None
-
-
-@contextmanager
-def _langfuse_pass_span(
-    lf,
-    name: str,
-    metadata: dict,
-    trace_context: dict | None,
-) -> Iterator[object | None]:
-    """Open a Langfuse span for a pipeline pass; no-op if tracing is unavailable."""
-    if lf is None:
-        yield None
-        return
-    cm = None
-    try:
-        kwargs: dict = {"name": name, "as_type": "span", "metadata": metadata}
-        if trace_context:
-            kwargs["trace_context"] = trace_context
-        cm = lf.start_as_current_observation(**kwargs)
-    except TypeError:
-        try:
-            cm = lf.start_as_current_observation(name=name, as_type="span", metadata=metadata)
-        except Exception as exc:
-            logger.debug("langfuse_pass_span_start_failed name=%s error=%s", name, exc)
-            yield None
-            return
-    except Exception as exc:
-        logger.debug("langfuse_pass_span_start_failed name=%s error=%s", name, exc)
-        yield None
-        return
-    with cm as span:
-        yield span
-
-
 def _empty_llm_result() -> LLMResult:
     return LLMResult(text="{}", input_tokens=0, output_tokens=0, model="", provider="")
-
-
-def _finalize_span(span: object | None, extra: dict) -> None:
-    if span is None:
-        return
-    try:
-        span.update(metadata=extra)
-    except Exception as exc:
-        logger.debug("langfuse_span_update_failed error=%s", exc)
 
 
 def _safe_parse(text: str, label: str) -> dict:
@@ -112,6 +55,50 @@ def _safe_parse(text: str, label: str) -> dict:
         return {}
 
 
+def _call_with_retry(
+    prompt: str,
+    max_tokens: int,
+    tier: str,
+    operation: str,
+    label: str,
+    model_config: dict | None = None,
+    retries: int = 1,
+    budget_multiplier: float = 1.5,
+) -> tuple[LLMResult, dict]:
+    """LLM call with automatic retry on JSON parse failure.
+
+    Returns (result, parsed_dict).  On the retry attempt, ``max_tokens``
+    is multiplied by ``budget_multiplier`` to give the model more room.
+    """
+    for attempt in range(1 + retries):
+        tokens = int(max_tokens * (budget_multiplier ** attempt))
+        try:
+            result = llm_call(
+                prompt=prompt, max_tokens=tokens, tier=tier,
+                operation=operation, model_config=model_config,
+            )
+        except Exception as exc:
+            logger.error(
+                "llm_call_failed label=%s attempt=%d error=%s",
+                label, attempt + 1, exc,
+            )
+            if attempt < retries:
+                continue
+            return _empty_llm_result(), {}
+
+        parsed = _safe_parse(result.text, label)
+        if parsed:
+            return result, parsed
+
+        if attempt < retries:
+            logger.warning(
+                "retry_json_parse label=%s attempt=%d next_tokens=%d",
+                label, attempt + 1, int(tokens * budget_multiplier),
+            )
+
+    return result, parsed
+
+
 def _as_list(val: object) -> list:
     if isinstance(val, list):
         return val
@@ -128,12 +115,9 @@ async def run_pass1(
     model_config: dict | None = None,
 ) -> list[dict]:
     """Pass 1: Domain Discovery. Returns list of domain dicts."""
-    lf = get_langfuse()
-    trace_ctx = _discovery_trace_context(run_id)
     start = time.time()
-    base_meta = {"org_id": str(org_id), "run_id": str(run_id), "pass": "1"}
 
-    with _langfuse_pass_span(lf, "pass1_domain_discovery", base_meta, trace_ctx) as span:
+    with _lf_span("pass1_domain_discovery", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
         if progress_cb:
             progress_cb("domain_discovery", "gathering", 0, 1)
 
@@ -143,16 +127,12 @@ async def run_pass1(
 
         prompt = build_pass1_prompt(org_ctx, meta_summary, doc_summary)
 
-        try:
-            result = llm_call(
-                prompt=prompt, max_tokens=4000, tier="strong",
-                operation="discovery_domain", model_config=model_config,
-            )
-        except Exception as exc:
-            logger.error("pass1_llm_failed org_id=%s run_id=%s error=%s", org_id, run_id, exc)
-            result = _empty_llm_result()
+        result, parsed = _call_with_retry(
+            prompt=prompt, max_tokens=8000, tier="strong",
+            operation="discovery_domain", label="pass1",
+            model_config=model_config,
+        )
 
-        parsed = _safe_parse(result.text, "pass1")
         raw_domains = parsed.get("domains")
         if isinstance(raw_domains, list):
             domains = raw_domains
@@ -203,17 +183,6 @@ async def run_pass1(
 
         await db.flush()
 
-        _finalize_span(
-            span,
-            {
-                **base_meta,
-                "domains_found": len(domains),
-                "duration_ms": int((time.time() - start) * 1000),
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-            },
-        )
-
         if progress_cb:
             progress_cb("domain_discovery", "done", 1, 1)
 
@@ -228,14 +197,11 @@ async def run_pass2(
     model_config: dict | None = None,
 ) -> int:
     """Pass 2: Process decomposition per domain. Returns total process rows created."""
-    lf = get_langfuse()
-    trace_ctx = _discovery_trace_context(run_id)
     start = time.time()
-    base_meta = {"org_id": str(org_id), "run_id": str(run_id), "pass": "2"}
     total_input_tokens = 0
     total_output_tokens = 0
 
-    with _langfuse_pass_span(lf, "pass2_process_decomposition", base_meta, trace_ctx) as span:
+    with _lf_span("pass2_process_decomposition", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
         org_ctx = await gather_org_context(org_id, db)
 
         domains_q = await db.execute(
@@ -269,136 +235,103 @@ async def run_pass2(
             domain_dict = {"name": domain.name, "description": domain.description or ""}
             prompt = build_pass2_prompt(org_ctx, domain_dict, meta_detail, doc_chunks)
 
-            domain_meta = {
-                **base_meta,
-                "domain": domain.name,
-                "domain_index": i,
-                "domain_total": len(domains),
-            }
-            domain_start = time.time()
-            with _langfuse_pass_span(
-                lf, "pass2_domain_llm", domain_meta, trace_ctx
-            ) as domain_span:
-                try:
-                    result = llm_call(
-                        prompt=prompt, max_tokens=6000, tier="strong",
-                        operation="discovery_decomposition", model_config=model_config,
-                    )
-                    total_input_tokens += result.input_tokens
-                    total_output_tokens += result.output_tokens
-                    parsed = _safe_parse(result.text, f"pass2_domain_{domain.name}")
-                except Exception as exc:
-                    logger.error(
-                        "pass2_llm_failed org_id=%s run_id=%s domain=%s error=%s",
-                        org_id,
-                        run_id,
-                        domain.name,
-                        exc,
-                    )
-                    result = _empty_llm_result()
-                    parsed = {}
-
-                raw_procs = parsed.get("processes")
-                if isinstance(raw_procs, list):
-                    processes = raw_procs
-                else:
-                    if raw_procs is not None:
-                        logger.warning(
-                            "pass2_processes_wrong_type domain=%s type=%s",
-                            domain.name,
-                            type(raw_procs).__name__,
-                        )
-                    processes = []
-                handoffs = parsed.get("handoffs")
-                if isinstance(handoffs, list):
-                    pass
-                else:
-                    if handoffs is not None:
-                        logger.warning(
-                            "pass2_handoffs_wrong_type domain=%s type=%s",
-                            domain.name,
-                            type(handoffs).__name__,
-                        )
-                    handoffs = []
-                process_name_to_id: dict[str, UUID] = {}
-
-                async def persist_process(proc_data: dict, parent_id: UUID | None) -> None:
-                    nonlocal total_processes
-                    confidence = float(proc_data.get("confidence", 0.5))
-                    bp = BusinessProcess(
-                        org_id=org_id,
-                        name=str(proc_data.get("name", "Unnamed"))[:255],
-                        description=proc_data.get("description"),
-                        level=str(proc_data.get("level", "process"))[:50],
-                        parent_id=parent_id,
-                        confidence_score=confidence,
-                        needs_review=bool(proc_data.get("needs_review", False))
-                        or confidence < NEEDS_REVIEW_CONFIDENCE,
-                        narrative=proc_data.get("narrative"),
-                        status="discovered",
-                        source="discovery",
-                        discovery_run_id=run_id,
-                        actors=_as_list(proc_data.get("actors")),
-                        artifacts=_as_list(proc_data.get("artifacts")),
-                        metadata_json={},
-                    )
-                    db.add(bp)
-                    await db.flush()
-                    process_name_to_id[str(bp.name)] = bp.id
-                    total_processes += 1
-
-                    children = proc_data.get("children")
-                    if not isinstance(children, list):
-                        children = []
-                    for child in children:
-                        if isinstance(child, dict):
-                            await persist_process(child, bp.id)
-
-                for proc in processes:
-                    if isinstance(proc, dict):
-                        await persist_process(proc, domain.id)
-
-                for ho in handoffs:
-                    if not isinstance(ho, dict):
-                        continue
-                    src_id = process_name_to_id.get(str(ho.get("source", "")))
-                    tgt_id = process_name_to_id.get(str(ho.get("target", "")))
-                    if src_id and tgt_id:
-                        confidence = float(ho.get("confidence", 0.5))
-                        db.add(
-                            ProcessHandoff(
-                                org_id=org_id,
-                                source_process_id=src_id,
-                                target_process_id=tgt_id,
-                                handoff_type=str(ho.get("type", "unknown"))[:50],
-                                description=ho.get("description"),
-                                confidence_score=confidence,
-                                is_gap=False,
-                                needs_review=confidence < NEEDS_REVIEW_CONFIDENCE,
-                                discovery_run_id=run_id,
-                                metadata_json={
-                                    "source_name": ho.get("source"),
-                                    "target_name": ho.get("target"),
-                                },
-                            )
-                        )
-
-                domain.sub_process_count = len(processes)
-                await db.flush()
-
-                _finalize_span(
-                    domain_span,
-                    {
-                        **domain_meta,
-                        "duration_ms": int((time.time() - domain_start) * 1000),
-                        "input_tokens": result.input_tokens,
-                        "output_tokens": result.output_tokens,
-                        "processes_persisted": len(processes),
-                        "handoffs_persisted": len(
-                            [h for h in handoffs if isinstance(h, dict)]
-                        ),
-                    },
+            with _lf_span(f"pass2_domain_{domain.name}", metadata={"domain_index": i, "domain_total": len(domains)}):
+                result, parsed = _call_with_retry(
+                    prompt=prompt, max_tokens=8000, tier="strong",
+                    operation="discovery_decomposition",
+                    label=f"pass2_domain_{domain.name}",
+                    model_config=model_config,
                 )
+                total_input_tokens += result.input_tokens
+                total_output_tokens += result.output_tokens
+
+            raw_procs = parsed.get("processes")
+            if isinstance(raw_procs, list):
+                processes = raw_procs
+            else:
+                if raw_procs is not None:
+                    logger.warning(
+                        "pass2_processes_wrong_type domain=%s type=%s",
+                        domain.name,
+                        type(raw_procs).__name__,
+                    )
+                processes = []
+            handoffs = parsed.get("handoffs")
+            if isinstance(handoffs, list):
+                pass
+            else:
+                if handoffs is not None:
+                    logger.warning(
+                        "pass2_handoffs_wrong_type domain=%s type=%s",
+                        domain.name,
+                        type(handoffs).__name__,
+                    )
+                handoffs = []
+            process_name_to_id: dict[str, UUID] = {}
+
+            async def persist_process(proc_data: dict, parent_id: UUID | None) -> None:
+                nonlocal total_processes
+                confidence = float(proc_data.get("confidence", 0.5))
+                bp = BusinessProcess(
+                    org_id=org_id,
+                    name=str(proc_data.get("name", "Unnamed"))[:255],
+                    description=proc_data.get("description"),
+                    level=str(proc_data.get("level", "process"))[:50],
+                    parent_id=parent_id,
+                    confidence_score=confidence,
+                    needs_review=bool(proc_data.get("needs_review", False))
+                    or confidence < NEEDS_REVIEW_CONFIDENCE,
+                    narrative=proc_data.get("narrative"),
+                    status="discovered",
+                    source="discovery",
+                    discovery_run_id=run_id,
+                    actors=_as_list(proc_data.get("actors")),
+                    artifacts=_as_list(proc_data.get("artifacts")),
+                    metadata_json={},
+                )
+                db.add(bp)
+                await db.flush()
+                process_name_to_id[str(bp.name)] = bp.id
+                total_processes += 1
+
+                children = proc_data.get("children")
+                if not isinstance(children, list):
+                    children = []
+                for child in children:
+                    if isinstance(child, dict):
+                        await persist_process(child, bp.id)
+
+            for proc in processes:
+                if isinstance(proc, dict):
+                    await persist_process(proc, domain.id)
+
+            for ho in handoffs:
+                if not isinstance(ho, dict):
+                    continue
+                src_id = process_name_to_id.get(str(ho.get("source", "")))
+                tgt_id = process_name_to_id.get(str(ho.get("target", "")))
+                if src_id and tgt_id:
+                    confidence = float(ho.get("confidence", 0.5))
+                    db.add(
+                        ProcessHandoff(
+                            org_id=org_id,
+                            source_process_id=src_id,
+                            target_process_id=tgt_id,
+                            handoff_type=str(ho.get("type", "unknown"))[:50],
+                            description=ho.get("description"),
+                            confidence_score=confidence,
+                            is_gap=False,
+                            needs_review=confidence < NEEDS_REVIEW_CONFIDENCE,
+                            discovery_run_id=run_id,
+                            metadata_json={
+                                "source_name": ho.get("source"),
+                                "target_name": ho.get("target"),
+                            },
+                        )
+                    )
+
+            domain.sub_process_count = len(processes)
+            await db.flush()
 
         logger.info(
             "pass2_complete org_id=%s run_id=%s processes=%d domains=%d tokens_in=%d tokens_out=%d dur_ms=%d",
@@ -409,18 +342,6 @@ async def run_pass2(
             total_input_tokens,
             total_output_tokens,
             int((time.time() - start) * 1000),
-        )
-
-        _finalize_span(
-            span,
-            {
-                **base_meta,
-                "processes_found": total_processes,
-                "domains_decomposed": len(domains),
-                "duration_ms": int((time.time() - start) * 1000),
-                "input_tokens": total_input_tokens,
-                "output_tokens": total_output_tokens,
-            },
         )
 
         if progress_cb:
@@ -437,12 +358,9 @@ async def run_pass3(
     model_config: dict | None = None,
 ) -> dict:
     """Pass 3: Cross-domain synthesis. Returns parsed synthesis dict."""
-    lf = get_langfuse()
-    trace_ctx = _discovery_trace_context(run_id)
     start = time.time()
-    base_meta = {"org_id": str(org_id), "run_id": str(run_id), "pass": "3"}
 
-    with _langfuse_pass_span(lf, "pass3_cross_domain_synthesis", base_meta, trace_ctx) as span:
+    with _lf_span("pass3_cross_domain_synthesis", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
         if progress_cb:
             progress_cb("cross_domain", "gathering", 0, 1)
 
@@ -496,16 +414,11 @@ async def run_pass3(
 
         prompt = build_pass3_prompt(org_ctx, all_domains_data, orphaned)
 
-        try:
-            result = llm_call(
-                prompt=prompt, max_tokens=4000, tier="strong",
-                operation="discovery_synthesis", model_config=model_config,
-            )
-        except Exception as exc:
-            logger.error("pass3_llm_failed org_id=%s run_id=%s error=%s", org_id, run_id, exc)
-            result = _empty_llm_result()
-
-        parsed = _safe_parse(result.text, "pass3")
+        result, parsed = _call_with_retry(
+            prompt=prompt, max_tokens=8000, tier="strong",
+            operation="discovery_synthesis", label="pass3",
+            model_config=model_config,
+        )
 
         process_name_q = await db.execute(
             select(BusinessProcess.id, BusinessProcess.name).where(
@@ -557,18 +470,6 @@ async def run_pass3(
             result.input_tokens,
             result.output_tokens,
             int((time.time() - start) * 1000),
-        )
-
-        _finalize_span(
-            span,
-            {
-                **base_meta,
-                "cross_domain_handoffs": handoff_count,
-                "orphaned_artifacts": len(orphaned),
-                "duration_ms": int((time.time() - start) * 1000),
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-            },
         )
 
         if progress_cb:

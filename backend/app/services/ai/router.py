@@ -235,14 +235,24 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
 
 
 def _build_gemini_config(max_tokens: int, model: str, operation: str | None = None):
-    """Build a GenerateContentConfig with per-operation thinking budget.
+    """Build a GenerateContentConfig with JSON mode and per-operation thinking budget.
 
-    Gemini 2.5 models: ``max_output_tokens`` is the TOTAL budget for
-    thinking + response.  The thinking budget is pulled from the operations
-    registry so each pipeline stage gets an appropriate allocation.
+    Strategy driven by research into Gemini 2.5 thinking-budget bugs
+    (googleapis/python-genai #782, #1405, #2062):
+    - ``max_output_tokens`` is a COMBINED cap for thinking + output tokens.
+    - The ``thinking_budget`` parameter is sometimes ignored by the model.
+    - This causes truncated/empty responses when the model overspends on thinking.
+
+    Enterprise fix:
+    - JSON-output operations → ``response_mime_type="application/json"`` with
+      thinking disabled.  Gemini enforces valid JSON at the API level, eliminating
+      parse failures.  The model is still 2.5 Pro — quality stays high.
+    - Text-output operations → thinking enabled with generous ``max_output_tokens``
+      headroom so the model can reason deeply without truncating the response.
     """
-    from app.services.ai.operations import get_thinking_budget
+    from app.services.ai.operations import get_output_format, get_thinking_budget
 
+    output_fmt = get_output_format(operation)
     thinking = get_thinking_budget(operation)
     supports_thinking = "2.5-pro" in model or "2.5-flash" in model
 
@@ -250,17 +260,25 @@ def _build_gemini_config(max_tokens: int, model: str, operation: str | None = No
         from google.genai import types
 
         kwargs: dict = {"max_output_tokens": max_tokens}
-        if supports_thinking and thinking > 0:
+
+        if output_fmt == "json":
+            kwargs["response_mime_type"] = "application/json"
+            if supports_thinking:
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        elif supports_thinking and thinking > 0:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
             kwargs["max_output_tokens"] = max_tokens + thinking
         elif supports_thinking:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         else:
             kwargs["temperature"] = 0
+
         return types.GenerateContentConfig(**kwargs)
     except Exception as exc:
         logger.debug("gemini_typed_config_failed model=%s error=%s, falling back to plain dict", model, exc)
         config: dict = {"max_output_tokens": max_tokens}
+        if output_fmt == "json":
+            config["response_mime_type"] = "application/json"
         if not supports_thinking:
             config["temperature"] = 0
         return config
