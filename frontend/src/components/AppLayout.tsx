@@ -4,6 +4,8 @@ import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, ClerkLoaded, Cl
 import { Bot, Bell, Settings, User, Zap, Shield, BarChart3, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
 import { clerkEnabled } from '@/main'
+import { ChatLauncher } from '@/components/Chat/ChatLauncher'
+import { ChatPanel } from '@/components/Chat/ChatPanel'
 
 function useClerkAuthSafe() {
   if (!clerkEnabled) return { isSignedIn: false, isLoaded: true }
@@ -273,6 +275,9 @@ export function AppLayout() {
           </div>
         </div>
       </footer>
+
+      <ChatLauncher />
+      <ChatPanel />
     </div>
   )
 }

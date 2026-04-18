@@ -30,6 +30,8 @@ class ProcessHandoffResponse(BaseModel):
     confidence_score: float
     is_gap: bool
     needs_review: bool
+    gap_status: str = "open"
+    resolution_note: str | None = None
     discovery_run_id: UUID | None
     metadata_json: dict
 

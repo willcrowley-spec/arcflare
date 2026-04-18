@@ -89,23 +89,47 @@ def langfuse_span(
     name: str,
     metadata: dict[str, Any] | None = None,
     input: Any | None = None,
+    session_id: str | None = None,
 ) -> Generator[Any, None, None]:
     """Open a Langfuse span (pipeline-level observation).
 
     Yields the observation object (or ``None`` when Langfuse is disabled).
     Child observations created inside the ``with`` block are auto-nested
     via OTEL context propagation.
+
+    When ``session_id`` is set, attempts to attach it via Langfuse
+    ``propagate_attributes`` so nested generations share the same session.
     """
     lf = get_langfuse()
     if lf is None:
         yield None
         return
 
-    mgr, obs = _open_observation(lf, as_type="span", name=name, metadata=metadata, input=input)
+    prop_mgr = None
+    if session_id:
+        try:
+            from langfuse import propagate_attributes
+
+            prop_mgr = propagate_attributes(session_id=session_id)
+            prop_mgr.__enter__()
+        except Exception as e:
+            logger.debug("langfuse_propagate_session_failed error=%s", e)
+            prop_mgr = None
+
+    meta = dict(metadata or {})
+    if session_id and prop_mgr is None:
+        meta.setdefault("session_id", session_id)
+
+    mgr, obs = _open_observation(lf, as_type="span", name=name, metadata=meta, input=input)
     try:
         yield obs
     finally:
         _close_observation(mgr)
+        if prop_mgr is not None:
+            try:
+                prop_mgr.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 @contextmanager

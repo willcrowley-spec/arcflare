@@ -20,6 +20,7 @@ import { SearchBar } from '@/components/SearchBar'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import { DiscoveryPipeline } from '@/components/DiscoveryPipeline'
+import { GapsPanel } from './GapsPanel'
 import {
   useConfirmProcess,
   useDiscoveryStatus,
@@ -447,6 +448,8 @@ export default function ProcessesPage() {
               sublabel="Cross-domain gaps detected"
             />
           </div>
+
+          <GapsPanel />
 
           <div className="max-w-xl">
             <SearchBar value={q} onChange={setQ} placeholder="Search processes, narratives, or systems…" />

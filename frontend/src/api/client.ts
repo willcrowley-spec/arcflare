@@ -2,10 +2,14 @@ import type {
   Agent,
   AnalysisConfig,
   BusinessEntity,
+  ChatAction,
+  ChatThread,
+  ChatThreadDetail,
   DiscoveryStatus,
   Document,
   DocumentSearchResult,
   FleetAnalytics,
+  GapItem,
   MetadataAutomation,
   MetadataComponent,
   MetadataField,
@@ -76,6 +80,33 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return (await res.text()) as T
+}
+
+/** Raw fetch with the same auth + base URL as `request`, for streaming responses. */
+export async function fetchWithAuth(path: string, options: RequestInit = {}): Promise<Response> {
+  const raw = `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`
+  const headers = new Headers(options.headers)
+
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  if (getToken) {
+    const token = await getToken()
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+  }
+
+  return fetch(raw, { ...options, headers })
+}
+
+function normalizeChatThreads(raw: unknown): ChatThread[] {
+  if (Array.isArray(raw)) return raw as ChatThread[]
+  if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: unknown }).items)) {
+    return (raw as { items: ChatThread[] }).items
+  }
+  return []
 }
 
 function withQuery(path: string, params?: Record<string, string | number | boolean | undefined>) {
@@ -175,6 +206,44 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ format }),
       }),
+    gaps: () => request<GapItem[] | { items: GapItem[] }>('/processes/gaps').then((raw) => {
+      if (Array.isArray(raw)) return raw
+      if (raw && typeof raw === 'object' && Array.isArray((raw as { items?: GapItem[] }).items)) {
+        return (raw as { items: GapItem[] }).items
+      }
+      return []
+    }),
+    updateGap: (id: string, data: Record<string, unknown>) =>
+      request<GapItem>(`/processes/gaps/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+  },
+  chat: {
+    listThreads: () => request<unknown>('/chat/threads').then(normalizeChatThreads),
+    getThread: (id: string) => request<ChatThreadDetail>(`/chat/threads/${id}`),
+    createThread: (body?: {
+      title?: string
+      anchor_type?: string | null
+      anchor_id?: string | null
+      model_override?: string | null
+    }) => request<ChatThread>('/chat/threads', { method: 'POST', body: JSON.stringify(body ?? {}) }),
+    deleteThread: (id: string) => request<void>(`/chat/threads/${id}`, { method: 'DELETE' }),
+    /** POST assistant turn; response body is SSE (`text/event-stream`). */
+    sendMessageStream: (threadId: string, content: string, signal?: AbortSignal) =>
+      fetchWithAuth(`/chat/threads/${threadId}/messages`, {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream' },
+        body: JSON.stringify({ content }),
+        signal,
+      }),
+    confirmAction: (actionId: string, body?: Record<string, unknown>) =>
+      request<ChatAction>(`/chat/actions/${actionId}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify(body ?? {}),
+      }),
+    rejectAction: (actionId: string) =>
+      request<ChatAction>(`/chat/actions/${actionId}/reject`, { method: 'POST' }),
   },
   discovery: {
     start: () => request<void>('/discovery/start', { method: 'POST' }),

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, DbSession
@@ -16,10 +16,16 @@ from app.schemas.process import (
     ProcessResponse,
     ProcessUpdate,
 )
+from app.services.chat.actions import format_gap_handoff_item
 from app.services.processes.export import export_json, export_lucidchart, export_svg
 from app.services.processes.graph import build_process_graph
 
 router = APIRouter()
+
+
+class GapUpdateRequest(BaseModel):
+    gap_status: str | None = Field(default=None, max_length=30)
+    resolution_note: str | None = None
 
 
 class ProcessListResponse(BaseModel):
@@ -30,6 +36,38 @@ class ProcessListResponse(BaseModel):
 
 class NodeBulkUpdate(BaseModel):
     nodes: list[ProcessNodeUpdate]
+
+
+@router.get("/gaps")
+async def list_gaps(db: DbSession, org: CurrentOrg) -> dict:
+    q = await db.execute(
+        select(ProcessHandoff).where(
+            ProcessHandoff.org_id == org.id,
+            ProcessHandoff.is_gap == True,
+        )
+    )
+    rows = q.scalars().all()
+    items = [await format_gap_handoff_item(h, db) for h in rows]
+    return {"items": items, "total": len(items)}
+
+
+@router.patch("/gaps/{handoff_id}")
+async def update_gap(
+    handoff_id: UUID,
+    body: GapUpdateRequest,
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    row = await db.get(ProcessHandoff, handoff_id)
+    if row is None or row.org_id != org.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gap handoff not found")
+    if body.gap_status is not None:
+        row.gap_status = body.gap_status
+    if body.resolution_note is not None:
+        row.resolution_note = body.resolution_note
+    await db.commit()
+    await db.refresh(row)
+    return await format_gap_handoff_item(row, db)
 
 
 @router.get("/", response_model=ProcessListResponse)

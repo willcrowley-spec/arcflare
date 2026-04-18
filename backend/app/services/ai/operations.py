@@ -74,6 +74,14 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "group": "metadata",
         "description": "Vector embeddings for RAG search across metadata, documents, and org context. Uses a dedicated embedding model.",
     },
+    "chat": {
+        "tier": "fast",
+        "thinking_budget": 0,
+        "output_format": "text",
+        "label": "Chat Assistant",
+        "group": "chat",
+        "description": "Interactive process analyst assistant with function calling for actions. Fast model for responsive UX.",
+    },
 }
 
 OPERATION_GROUPS: dict[str, str] = {
@@ -81,6 +89,7 @@ OPERATION_GROUPS: dict[str, str] = {
     "analysis": "Analysis",
     "discovery": "Discovery Pipeline",
     "synthesis": "Synthesis",
+    "chat": "Chat Assistant",
 }
 
 

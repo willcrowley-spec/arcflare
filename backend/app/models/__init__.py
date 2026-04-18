@@ -1,4 +1,5 @@
 from app.models.agent import Agent, AgentUsageLog
+from app.models.chat import ChatAction, ChatMessage, ChatThread
 from app.models.connection import PlatformConnection
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.document import Document, DocumentChunk
@@ -14,6 +15,9 @@ __all__ = [
     "AgentUsageLog",
     "BusinessEntity",
     "BusinessProcess",
+    "ChatAction",
+    "ChatMessage",
+    "ChatThread",
     "Document",
     "DocumentChunk",
     "DiscoveryRun",

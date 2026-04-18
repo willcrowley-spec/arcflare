@@ -7,7 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.api.routes import agents, connections, discovery, documents, metadata, organization, processes, recommendations
+from app.api.routes import (
+    agents,
+    chat,
+    connections,
+    discovery,
+    documents,
+    metadata,
+    organization,
+    processes,
+    recommendations,
+)
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -73,6 +83,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(agents.router, prefix=f"{api_prefix}/agents", tags=["agents"])
     app.include_router(discovery.router, prefix=f"{api_prefix}/discovery", tags=["discovery"])
+    app.include_router(chat.router, prefix=f"{api_prefix}/chat", tags=["chat"])
 
     return app
 

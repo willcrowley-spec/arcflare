@@ -402,4 +402,70 @@ export interface ProcessHandoffItem {
   confidence_score: number
   is_gap: boolean
   needs_review: boolean
+  gap_status: string
+  resolution_note: string | null
+}
+
+export interface ChatThread {
+  id: string
+  org_id: string
+  user_id: string
+  title: string
+  anchor_type: string | null
+  anchor_id: string | null
+  model_override: string | null
+  summary: string | null
+  message_count: number
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatMessage {
+  id: string
+  thread_id: string
+  role: 'user' | 'assistant' | 'system' | 'tool_result'
+  content: string
+  tool_calls: unknown[]
+  tool_results: unknown[]
+  token_count: number | null
+  langfuse_trace_id: string | null
+  created_at: string
+}
+
+export interface ChatAction {
+  id: string
+  thread_id: string
+  message_id: string
+  action_type: string
+  target_id: string | null
+  payload: Record<string, unknown>
+  status: 'proposed' | 'confirmed' | 'executed' | 'rejected' | 'failed'
+  result: Record<string, unknown> | null
+  idempotency_key: string
+  created_at: string
+  executed_at: string | null
+}
+
+export interface ChatThreadDetail {
+  thread: ChatThread
+  messages: ChatMessage[]
+  pending_actions: ChatAction[]
+}
+
+export interface GapItem {
+  id: string
+  source_process_id: string
+  target_process_id: string
+  source_process_name: string
+  target_process_name: string
+  source_domain_name: string | null
+  target_domain_name: string | null
+  handoff_type: string
+  description: string | null
+  confidence_score: number
+  gap_status: 'open' | 'investigating' | 'resolved'
+  resolution_note: string | null
+  is_gap: boolean
+  needs_review: boolean
 }

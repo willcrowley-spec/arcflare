@@ -76,6 +76,8 @@ class ProcessHandoff(Base):
         ForeignKey("discovery_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    gap_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="open")
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
