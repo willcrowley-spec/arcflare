@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.observability import langfuse_span as _lf_span
+from app.core.observability import langfuse_score, langfuse_span as _lf_span
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.metadata import MetadataAutomation, MetadataObject
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
@@ -1106,6 +1106,10 @@ async def run_stage7(
     await db.flush()
 
     logger.info("stage7_complete org_id=%s run_id=%s scores=%s", org_id, run_id, quality_scores)
+
+    for metric, value in quality_scores.items():
+        langfuse_score(name=f"discovery_{metric}", value=value)
+
     return quality_scores
 
 
