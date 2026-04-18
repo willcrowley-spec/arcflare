@@ -3,7 +3,7 @@ import { AppLayout } from '@/components/AppLayout'
 import AnalysisPage from '@/pages/Analysis'
 import OrganizationPage from '@/pages/Organization'
 import ProcessesPage from '@/pages/Processes'
-import ProcessMapPage from '@/pages/Processes/ProcessMap'
+import DomainMapPage from '@/pages/Processes/DomainMap'
 import RecommendationsPage from '@/pages/Recommendations'
 import AgentsPage from '@/pages/Agents'
 import PlatformDetailPage from '@/pages/Platforms'
@@ -18,7 +18,7 @@ export default function App() {
         <Route path="/organization" element={<OrganizationPage />} />
         <Route path="/processes" element={<ProcessesPage />} />
         <Route path="/processes/map" element={<Navigate to="/processes" replace />} />
-        <Route path="/processes/:id/map" element={<ProcessMapPage />} />
+        <Route path="/processes/:id/map" element={<DomainMapPage />} />
         <Route path="/recommendations" element={<RecommendationsPage />} />
         <Route path="/agents" element={<AgentsPage />} />
       </Route>
