@@ -5,7 +5,8 @@ wrap LLM calls and pipeline spans.  All helpers degrade to no-ops when
 Langfuse is not configured.
 """
 import logging
-from contextlib import contextmanager, nullcontext
+import sys
+from contextlib import contextmanager
 from typing import Any, Generator
 
 from app.core.config import get_settings
@@ -55,7 +56,33 @@ def flush_langfuse():
 
 # ---------------------------------------------------------------------------
 # v3 context-manager helpers
+#
+# Design: Langfuse setup errors are swallowed (yield None so caller runs
+# normally).  Exceptions from *user code* inside the block always propagate
+# — a @contextmanager can only yield once, so we must never yield in an
+# except handler.
 # ---------------------------------------------------------------------------
+
+def _open_observation(lf, **kwargs):
+    """Try to open a Langfuse observation, return (ctx_manager, obs) or (None, None)."""
+    try:
+        mgr = lf.start_as_current_observation(**kwargs)
+        obs = mgr.__enter__()
+        return mgr, obs
+    except Exception as e:
+        logger.warning("langfuse_observation_open_failed name=%s error=%s", kwargs.get("name"), e)
+        return None, None
+
+
+def _close_observation(mgr):
+    """Close a Langfuse observation context, passing current exception info."""
+    if mgr is None:
+        return
+    try:
+        mgr.__exit__(*sys.exc_info())
+    except Exception:
+        pass
+
 
 @contextmanager
 def langfuse_span(
@@ -73,17 +100,12 @@ def langfuse_span(
     if lf is None:
         yield None
         return
+
+    mgr, obs = _open_observation(lf, as_type="span", name=name, metadata=metadata, input=input)
     try:
-        with lf.start_as_current_observation(
-            as_type="span",
-            name=name,
-            metadata=metadata,
-            input=input,
-        ) as obs:
-            yield obs
-    except Exception as e:
-        logger.warning("langfuse_span_failed name=%s error=%s", name, e)
-        yield None
+        yield obs
+    finally:
+        _close_observation(mgr)
 
 
 @contextmanager
@@ -102,15 +124,11 @@ def langfuse_generation(
     if lf is None:
         yield None
         return
+
+    mgr, obs = _open_observation(
+        lf, as_type="generation", name=name, model=model, input=input, metadata=metadata,
+    )
     try:
-        with lf.start_as_current_observation(
-            as_type="generation",
-            name=name,
-            model=model,
-            input=input,
-            metadata=metadata,
-        ) as obs:
-            yield obs
-    except Exception as e:
-        logger.warning("langfuse_generation_failed name=%s error=%s", name, e)
-        yield None
+        yield obs
+    finally:
+        _close_observation(mgr)
