@@ -211,7 +211,7 @@ async def build_pass2_prompt(
     metadata_detail: dict,
     document_chunks: list[dict],
 ) -> str:
-    blocks = await resolve_prompt_blocks("discovery_decomposition", org_id, db)
+    blocks = await resolve_prompt_blocks("discovery_structure", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
     protocol = (blocks.get("protocol") or "").strip()
     if not instructions:

@@ -56,21 +56,21 @@ BLOCK_REGISTRY: dict[str, list[dict]] = {
             "order": 2,
         },
     ],
-    "discovery_decomposition": [
-        {
-            "type": "instructions",
-            "label": "Instructions",
-            "editable": True,
-            "required_vars": [],
-            "order": 1,
-        },
-        {
-            "type": "protocol",
-            "label": "Protocol",
-            "editable": False,
-            "required_vars": [],
-            "order": 2,
-        },
+    "discovery_structure": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
+    "discovery_enrichment": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
+    "discovery_flow": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
+    "discovery_validation": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
     ],
     "discovery_synthesis": [
         {

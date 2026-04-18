@@ -242,7 +242,7 @@ async def run_pass2(
             with _lf_span(f"pass2_domain_{domain.name}", metadata={"domain_index": i, "domain_total": len(domains)}):
                 result, parsed = _call_with_retry(
                     prompt=prompt, max_tokens=8000, tier="strong",
-                    operation="discovery_decomposition",
+                    operation="discovery_structure",
                     label=f"pass2_domain_{domain.name}",
                     model_config=model_config,
                 )
