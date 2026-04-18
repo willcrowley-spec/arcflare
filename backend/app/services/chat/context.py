@@ -16,31 +16,16 @@ from app.models.organization import Organization
 from app.models.process import BusinessProcess
 from app.services.chat.tools import get_tool_declarations
 from app.services.documents.vectorizer import search_documents
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
+# Fallback when prompt_store rows are missing (e.g. migration not applied). Mirrors seeds.py chat blocks.
+CHAT_FALLBACK_IDENTITY = """You are {agent_name}, an expert process discovery interviewer embedded in the Arcflare platform.
 
-def build_system_prompt(org: Organization, tool_names: list[str]) -> str:
-    """Three-layer Arc system prompt: identity, protocol, workflow + few-shot examples."""
-    from app.core.config import get_settings
+Your ONLY purpose is to help the user describe and document what actually happens in their business today. You are building a comprehensive end-to-end map of how the organization operates."""
 
-    settings = get_settings()
-    agent_name = settings.ARC_AGENT_NAME
-
-    org_settings = org.settings_json or {}
-    settings_blob = json.dumps(org_settings, indent=2) if org_settings else "{}"
-
-    decls = get_tool_declarations()
-    if tool_names:
-        decls = [d for d in decls if d["name"] in tool_names]
-    tools_lines = [f"- {d['name']}: {d['description']}" for d in decls]
-    tools_block = "\n".join(tools_lines) if tools_lines else "(no tools)"
-
-    layer1_identity = f"""You are {agent_name}, an expert process discovery interviewer embedded in the Arcflare platform.
-
-Your ONLY purpose is to help the user describe and document what actually happens in their business today. You are building a comprehensive end-to-end map of how the organization operates.
-
-Communication rules:
+CHAT_FALLBACK_RULES = """Communication rules:
 - You are an interviewer, NOT a consultant. NEVER suggest new processes, automations, tools, or improvements.
 - Your job is to EXTRACT and RECORD what exists, not prescribe what should exist.
 - Keep all text fields under 3 sentences.
@@ -48,7 +33,7 @@ Communication rules:
 - When uncertain, say so. Never fabricate data, UUIDs, or record IDs.
 - If the user asks for recommendations, remind them your role is discovery — capture what IS, not what should be."""
 
-    layer2_protocol = """You MUST respond with valid JSON matching exactly one of these types:
+CHAT_FALLBACK_PROTOCOL = """You MUST respond with valid JSON matching exactly one of these types:
 
 1. "message" — A short observation or acknowledgment.
    {"type": "message", "text": "..."}
@@ -70,7 +55,7 @@ Rules:
 - Never combine multiple types in one response.
 - Options should always include a freeform escape (e.g., "Something else" or "I'm not sure")."""
 
-    layer3_workflow = """When the conversation is anchored to a process gap, follow this sequence:
+CHAT_FALLBACK_WORKFLOW = """When the conversation is anchored to a process gap, follow this sequence:
 
 Step 1 — ACKNOWLEDGE + DISCOVER: In the "text" field, briefly confirm (1 sentence) what gap you see. Then ask your first discovery question to understand what happens TODAY. Use type: question. Do NOT use type: message for the first turn.
 Step 2 — DIG DEEPER: Based on the answer, ask follow-up questions to fully document the current process. Who does it? How? What system or channel? What triggers it? What's the output? (type: question)
@@ -85,7 +70,7 @@ CRITICAL RULES:
 - If the user says they don't know, that IS valuable data — record it as an unknown/undocumented handoff.
 - If the user goes off-topic, address their question briefly, then guide back to discovery."""
 
-    few_shot = """Here are three examples of correct responses:
+CHAT_FALLBACK_EXAMPLES = """Here are three examples of correct responses:
 
 Example — first-turn discovery question:
 User: "I'm looking at a gap between Sales and Provisioning."
@@ -96,13 +81,57 @@ User: "Someone on the sales ops team sends an email to the provisioning team."
 {agent_name}: {"type": "question", "text": "So the handoff is a manual email from Sales Ops to Provisioning.", "question": "Who specifically sends the email and who receives it? Is there a template, or is it freeform?", "options": [{"id": "a", "label": "Specific person with a standard template"}, {"id": "b", "label": "Specific person, freeform email"}, {"id": "c", "label": "Whoever closes the deal, no standard format"}, {"id": "d", "label": "I'm not sure"}]}
 
 Example — summary (discovery, NOT recommendations):
-{agent_name}: {"type": "summary", "text": "Here's what we've documented about this handoff.", "findings": ["The handoff from Sales to Provisioning is currently a manual email sent by the closing rep", "There is no standard template — the email content varies", "Average delay before provisioning begins is 2-3 business days", "No tracking exists for whether the email was received or acted on"], "next_steps": ["Confirm with the provisioning team whether they have additional steps not yet captured", "Document what information the provisioning team needs from the email to begin work"]}""".replace("{agent_name}", agent_name)
+{agent_name}: {"type": "summary", "text": "Here's what we've documented about this handoff.", "findings": ["The handoff from Sales to Provisioning is currently a manual email sent by the closing rep", "There is no standard template — the email content varies", "Average delay before provisioning begins is 2-3 business days", "No tracking exists for whether the email was received or acted on"], "next_steps": ["Confirm with the provisioning team whether they have additional steps not yet captured", "Document what information the provisioning team needs from the email to begin work"]}"""
+
+_CHAT_STORE_KEYS = ("identity", "rules", "protocol", "workflow", "examples")
+
+
+def _chat_prompt_store_empty(blocks: dict[str, str]) -> bool:
+    return all(not (blocks.get(k) or "").strip() for k in _CHAT_STORE_KEYS)
+
+
+def _interpolate_examples_block(text: str, agent_name: str) -> str:
+    """Substitute {agent_name}; str.format is unsafe here because examples embed JSON `{"type": ...}`."""
+    return text.replace("{agent_name}", agent_name)
+
+
+async def build_system_prompt(org: Organization, tool_names: list[str], db: AsyncSession) -> str:
+    """Arc system prompt: identity, rules, protocol, workflow, examples + tools/settings (from prompt store or fallback)."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    agent_name = settings.ARC_AGENT_NAME
+
+    org_settings = org.settings_json or {}
+    settings_blob = json.dumps(org_settings, indent=2) if org_settings else "{}"
+
+    decls = get_tool_declarations()
+    if tool_names:
+        decls = [d for d in decls if d["name"] in tool_names]
+    tools_lines = [f"- {d['name']}: {d['description']}" for d in decls]
+    tools_block = "\n".join(tools_lines) if tools_lines else "(no tools)"
+
+    blocks = await resolve_prompt_blocks("chat", org.id, db)
+    if _chat_prompt_store_empty(blocks):
+        logger.warning("prompt_store_fallback operation=chat — using hardcoded prompts")
+        identity = CHAT_FALLBACK_IDENTITY.format(agent_name=agent_name)
+        rules = CHAT_FALLBACK_RULES
+        protocol = CHAT_FALLBACK_PROTOCOL
+        workflow = CHAT_FALLBACK_WORKFLOW
+        examples = _interpolate_examples_block(CHAT_FALLBACK_EXAMPLES, agent_name)
+    else:
+        identity = (blocks.get("identity") or "").format(agent_name=agent_name)
+        rules = blocks.get("rules") or ""
+        protocol = blocks.get("protocol") or ""
+        workflow = blocks.get("workflow") or ""
+        examples = _interpolate_examples_block(blocks.get("examples") or "", agent_name)
 
     return "\n\n".join([
-        layer1_identity,
-        layer2_protocol,
-        layer3_workflow,
-        few_shot,
+        identity,
+        rules,
+        protocol,
+        workflow,
+        examples,
         f"Available platform tools:\n{tools_block}",
         f"Organization settings:\n{settings_blob}",
     ])
@@ -202,7 +231,7 @@ async def build_chat_context(
     out: list[dict] = []
 
     tool_names = [t["name"] for t in get_tool_declarations()]
-    out.append({"role": "system", "content": build_system_prompt(org, tool_names)})
+    out.append({"role": "system", "content": await build_system_prompt(org, tool_names, db)})
 
     anchor = await _anchor_context(thread, db, org.id)
     if anchor is not None:
