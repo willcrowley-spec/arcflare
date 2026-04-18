@@ -9,13 +9,14 @@ import {
   Landmark,
   Layers,
   Loader2,
+  Map as MapIcon,
   Plug,
   Sparkles,
   Users,
   Wrench,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useReanalyze, useUpdateOrgSettings } from '@/hooks/useApi'
+import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useProcessMapSettings, useReanalyze, useUpdateOrgSettings, useUpdateProcessMapSettings } from '@/hooks/useApi'
 import { PromptsSection } from '@/components/PromptEditor/PromptsSection'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
@@ -207,6 +208,8 @@ export default function OrganizationPage() {
   const updateSettings = useUpdateOrgSettings()
   const reanalyze = useReanalyze()
   const modelCatalogQuery = useModelCatalog()
+  const mapSettingsQuery = useProcessMapSettings()
+  const updateMapSettings = useUpdateProcessMapSettings()
 
   const [reanalyzeBanner, setReanalyzeBanner] = useState<string | null>(null)
 
@@ -540,6 +543,87 @@ export default function OrganizationPage() {
               ) : null}
               {reanalyze.isError ? <span className="text-sm text-red-600">Re-analyze failed. Try again.</span> : null}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* Section: Process Map settings */}
+      <section className="space-y-3">
+        <div className="flex items-start gap-2">
+          <MapIcon className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" aria-hidden />
+          <div>
+            <h2 className="text-lg font-semibold text-navy-900">Process Map</h2>
+            <p className="text-sm text-slate-600">Default layout options for the domain process map.</p>
+          </div>
+        </div>
+        {mapSettingsQuery.isError ? (
+          <ErrorState message="Could not load process map settings." />
+        ) : mapSettingsQuery.isPending ? (
+          <div className={cardClass}>
+            <LoadingState message="Loading settings…" />
+          </div>
+        ) : (
+          <div className={clsx(cardClass, 'space-y-6')}>
+            <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="map-direction" className="text-sm font-medium text-slate-700">
+                  Flow direction
+                </label>
+                <p className="text-xs leading-relaxed text-slate-400">
+                  Layout orientation for the process map. Left-to-right or top-to-bottom.
+                </p>
+                <select
+                  id="map-direction"
+                  value={mapSettingsQuery.data?.process_map_direction ?? 'TB'}
+                  disabled={updateMapSettings.isPending}
+                  onChange={(e) =>
+                    updateMapSettings.mutate({
+                      process_map_direction: e.target.value as 'LR' | 'TB',
+                      process_map_default_state: mapSettingsQuery.data?.process_map_default_state ?? 'collapsed',
+                    })
+                  }
+                  className={clsx(
+                    'w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
+                    'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
+                    updateMapSettings.isPending && 'cursor-not-allowed opacity-60',
+                  )}
+                >
+                  <option value="TB">Top to bottom</option>
+                  <option value="LR">Left to right</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="map-default-state" className="text-sm font-medium text-slate-700">
+                  Default state
+                </label>
+                <p className="text-xs leading-relaxed text-slate-400">
+                  Whether process containers start expanded or collapsed when opening a domain map.
+                </p>
+                <select
+                  id="map-default-state"
+                  value={mapSettingsQuery.data?.process_map_default_state ?? 'collapsed'}
+                  disabled={updateMapSettings.isPending}
+                  onChange={(e) =>
+                    updateMapSettings.mutate({
+                      process_map_direction: mapSettingsQuery.data?.process_map_direction ?? 'TB',
+                      process_map_default_state: e.target.value as 'expanded' | 'collapsed',
+                    })
+                  }
+                  className={clsx(
+                    'w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
+                    'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
+                    updateMapSettings.isPending && 'cursor-not-allowed opacity-60',
+                  )}
+                >
+                  <option value="collapsed">Collapsed</option>
+                  <option value="expanded">Expanded</option>
+                </select>
+              </div>
+            </div>
+            {updateMapSettings.isError ? (
+              <p className="text-sm text-red-600">Could not save process map settings.</p>
+            ) : null}
           </div>
         )}
       </section>
