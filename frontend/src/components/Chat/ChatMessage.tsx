@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage as ChatMessageRow, ArcResponse } from '@/types'
 import { QuickReplyBar } from '@/components/Chat/QuickReplyBar'
 import { OptionCardGroup } from '@/components/Chat/OptionCard'
@@ -57,9 +57,9 @@ function ArcBubble({
 interface Props {
   message: ChatMessageRow
   onQuickReply?: (text: string) => void
-  /** When true, text reveals word-by-word and interactive controls fade in after. */
+  /** When true, text reveals word-by-word and options reveal sequentially. */
   animate?: boolean
-  /** Fires on each typewriter tick — used by the parent to auto-scroll. */
+  /** Fires on each typewriter tick and option reveal — used by parent to auto-scroll. */
   onTick?: () => void
 }
 
@@ -85,15 +85,34 @@ export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
 
   const optionCount = (arcResponse as { options?: unknown[] } | null)?.options?.length ?? 0
 
+  // --- Sequential option reveal ---
+  // -1 = waiting for text to finish, 0..n = which option is currently typewriting
+  const [revealIndex, setRevealIndex] = useState(-1)
+
   useEffect(() => {
-    if (!textDone || !onTickRef.current) return
-    // Scroll once immediately after options mount…
+    if (!textDone || !animate || optionCount === 0) return
+    if (revealIndex !== -1) return
+    const timer = window.setTimeout(() => setRevealIndex(0), 280)
+    return () => window.clearTimeout(timer)
+  }, [textDone, animate, optionCount, revealIndex])
+
+  // Scroll whenever a new option mounts
+  useEffect(() => {
+    if (revealIndex < 0) return
     const raf = requestAnimationFrame(() => onTickRef.current?.())
-    // …and again after the last staggered option finishes fading in.
-    const staggerMs = optionCount * 80 + 300
-    const timer = window.setTimeout(() => onTickRef.current?.(), staggerMs)
-    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer) }
-  }, [textDone, optionCount])
+    return () => cancelAnimationFrame(raf)
+  }, [revealIndex])
+
+  const handleOptionRevealed = useCallback(() => {
+    onTickRef.current?.()
+    // Pause between options so the reader can absorb each one
+    window.setTimeout(() => {
+      setRevealIndex((i) => i + 1)
+      onTickRef.current?.()
+    }, 220)
+  }, [])
+
+  // --- Rendering ---
 
   if (message.role === 'system' || message.role === 'tool_result') {
     return (
@@ -138,7 +157,8 @@ export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
           <QuickReplyBar
             options={r.options}
             onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-            stagger={!!animate}
+            revealUpTo={animate ? revealIndex : undefined}
+            onOptionRevealed={handleOptionRevealed}
           />
         ) : null}
       </div>
@@ -153,7 +173,8 @@ export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
           <OptionCardGroup
             options={r.options}
             onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-            stagger={!!animate}
+            revealUpTo={animate ? revealIndex : undefined}
+            onOptionRevealed={handleOptionRevealed}
           />
         ) : null}
       </div>
