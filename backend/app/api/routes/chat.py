@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -30,7 +31,11 @@ from app.services.chat.actions import execute_action, execute_auto_tool
 from app.services.chat.context import build_chat_context
 from app.services.chat.tools import build_gemini_tools, get_tool
 from app.services.chat.validation import validate_tool_call
-from app.services.ai.router import ChatStreamChunk, stream_chat_with_tools
+from app.services.ai.router import (
+    ChatStreamChunk,
+    llm_call,
+    stream_chat_with_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,51 @@ def _trace_id_from_span(span: object | None) -> str | None:
         if tid:
             return str(tid)
     return None
+
+
+def _flatten_ctx(ctx: list[dict]) -> str:
+    """Flatten message dicts into a single prompt string for non-streaming fallback."""
+    blocks = []
+    for m in ctx:
+        role = str(m.get("role", "user")).upper()
+        content = str(m.get("content", ""))
+        blocks.append(f"[{role}]\n{content}")
+    return "\n\n".join(blocks)
+
+
+def _collect_stream_chunks(
+    ctx: list[dict],
+    gemini_tools: object | None,
+    analysis_config: dict | None,
+) -> list[ChatStreamChunk]:
+    """Run sync streaming/LLM work (call from ``asyncio.to_thread``)."""
+    if gemini_tools is not None:
+        return list(
+            stream_chat_with_tools(
+                messages=ctx,
+                tools=gemini_tools,
+                max_tokens=4096,
+                operation="chat",
+                model_config=analysis_config,
+            )
+        )
+
+    result = llm_call(
+        _flatten_ctx(ctx),
+        max_tokens=4096,
+        tier="fast",
+        operation="chat",
+        model_config=analysis_config,
+    )
+    return [
+        ChatStreamChunk(type="text", text=result.text, model=result.model),
+        ChatStreamChunk(
+            type="done",
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+        ),
+    ]
 
 
 async def _get_or_create_user(
@@ -201,8 +251,6 @@ async def send_message(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> StreamingResponse:
-    from app.core.observability import langfuse_span
-
     u = await _get_or_create_user(db, org, user)
     q = await db.execute(
         select(ChatThread).where(
@@ -223,20 +271,6 @@ async def send_message(
     await db.refresh(user_msg)
     await db.refresh(thread)
 
-    ctx = await build_chat_context(
-        thread, db, org, body.content, exclude_message_id=user_msg.id,
-    )
-
-    gemini_tools = build_gemini_tools()
-    trace_id: str | None = None
-
-    with langfuse_span(
-        name="chat_request",
-        session_id=str(thread.id),
-        metadata={"user_id": str(u.id), "thread_id": str(thread.id)},
-    ) as span:
-        trace_id = _trace_id_from_span(span)
-
     thread_id_str = str(thread.id)
     org_id = org.id
     analysis_config = org.analysis_config
@@ -247,15 +281,78 @@ async def send_message(
         tool_calls_collected: list[dict] = []
         actions_created: list[dict] = []
         total_tokens = 0
+        trace_id: str | None = None
 
         try:
-            for chunk in stream_chat_with_tools(
-                messages=ctx,
-                tools=gemini_tools,
-                max_tokens=4096,
-                operation="chat",
-                model_config=analysis_config,
-            ):
+            ctx = await build_chat_context(
+                thread, db, org, body.content, exclude_message_id=user_msg.id,
+            )
+        except Exception as prep_exc:
+            logger.exception("chat_context_build_failed thread=%s", thread_id_str)
+            yield (
+                "event: error\ndata: "
+                + json.dumps({"error": str(prep_exc), "code": "context_build_failed"})
+                + "\n\n"
+            )
+            err_text = f"I could not prepare this reply: {prep_exc!s}"
+            yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
+            assistant_msg = ChatMessage(
+                thread_id=UUID(thread_id_str),
+                role="assistant",
+                content=err_text,
+                tool_calls=[],
+                token_count=None,
+                langfuse_trace_id=None,
+            )
+            db.add(assistant_msg)
+            thread_obj = await db.get(ChatThread, UUID(thread_id_str))
+            if thread_obj:
+                thread_obj.message_count = int(thread_obj.message_count or 0) + 1
+            await db.commit()
+            await db.refresh(assistant_msg)
+            yield f"event: done\ndata: {json.dumps({'message_id': str(assistant_msg.id)})}\n\n"
+            return
+
+        gemini_tools: object | None = None
+        try:
+            gemini_tools = build_gemini_tools()
+        except Exception as tools_exc:
+            logger.warning(
+                "build_gemini_tools_failed thread=%s err=%s", thread_id_str, tools_exc,
+            )
+            gemini_tools = None
+
+        try:
+            from app.core.observability import langfuse_span
+
+            with langfuse_span(
+                name="chat_request",
+                session_id=str(thread.id),
+                metadata={"user_id": str(u.id), "thread_id": str(thread.id)},
+            ) as span:
+                trace_id = _trace_id_from_span(span)
+        except Exception as lf_exc:
+            logger.warning("langfuse_span_failed thread=%s err=%s", thread_id_str, lf_exc)
+            trace_id = None
+
+        chunks: list[ChatStreamChunk] = []
+        try:
+            chunks = await asyncio.to_thread(
+                _collect_stream_chunks, ctx, gemini_tools, analysis_config,
+            )
+        except Exception as collect_exc:
+            logger.exception("chat_stream_collect_failed thread=%s", thread_id_str)
+            yield (
+                "event: error\ndata: "
+                + json.dumps({"error": str(collect_exc), "code": "stream_collect_failed"})
+                + "\n\n"
+            )
+            err_text = f"Stream error: {collect_exc!s}"
+            text_parts.append(err_text)
+            yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
+
+        try:
+            for chunk in chunks:
                 if chunk.type == "text" and chunk.text:
                     text_parts.append(chunk.text)
                     yield f"event: text\ndata: {json.dumps({'chunk': chunk.text})}\n\n"
@@ -330,6 +427,11 @@ async def send_message(
 
         except Exception as exc:
             logger.exception("chat_stream_failed thread=%s", thread_id_str)
+            yield (
+                "event: error\ndata: "
+                + json.dumps({"error": str(exc), "code": "stream_failed"})
+                + "\n\n"
+            )
             err_text = f"Stream error: {exc!s}"
             text_parts.append(err_text)
             yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
