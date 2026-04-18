@@ -261,8 +261,6 @@ _DISCOVERY_VALIDATION_PROTOCOL = """Return a JSON object matching the enforced s
   ],
   "patches": {
     "updated_steps": [],
-    "added_flows": [],
-    "added_handoffs": [],
     "removed_steps": ["step name"],
     "confidence_adjustments": [{"step_name": "string", "old": 0.0, "new": 0.0, "reason": "string"}]
   }

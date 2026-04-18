@@ -36,7 +36,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_domain": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 4096,
         "output_format": "json",
         "label": "Domain Discovery",
         "group": "discovery",
@@ -44,7 +44,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_structure": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 8192,
         "output_format": "json",
         "label": "Structural Decomposition",
         "group": "discovery",
@@ -52,7 +52,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_enrichment": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 8192,
         "output_format": "json",
         "label": "Step Enrichment",
         "group": "discovery",
@@ -60,7 +60,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_flow": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 4096,
         "output_format": "json",
         "label": "Flow & Handoff Analysis",
         "group": "discovery",
@@ -68,7 +68,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_validation": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 8192,
         "output_format": "json",
         "label": "Validation & Refinement",
         "group": "discovery",
@@ -76,7 +76,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
     },
     "discovery_synthesis": {
         "tier": "strong",
-        "thinking_budget": 0,
+        "thinking_budget": 4096,
         "output_format": "json",
         "label": "Cross-Domain Synthesis",
         "group": "discovery",

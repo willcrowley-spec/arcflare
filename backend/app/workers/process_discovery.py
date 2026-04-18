@@ -101,7 +101,7 @@ def process_discovery_task(org_id: str) -> str:
                     _update("context_gathering", "done")
 
                     _update("domain_discovery", "pulling", 0, 1)
-                    domains = await run_stage1(
+                    domains, org_ctx, meta_summary = await run_stage1(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
                     )
@@ -145,6 +145,7 @@ def process_discovery_task(org_id: str) -> str:
                     validation = await run_stage5(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
+                        meta_summary=meta_summary,
                     )
                     await session.commit()
                     critique_n = len(validation.get("critique", []))
@@ -154,6 +155,7 @@ def process_discovery_task(org_id: str) -> str:
                     synthesis = await run_stage6(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
+                        meta_summary=meta_summary,
                     )
                     await session.commit()
                     _update("cross_domain_synthesis", "done", 1, 1)

@@ -1,6 +1,7 @@
 """Seven-stage process discovery intelligence pipeline."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import statistics
 import time
@@ -16,6 +17,7 @@ from app.models.metadata import MetadataAutomation, MetadataObject
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.services.ai.router import LLMResult, llm_call, parse_json_response
 from app.services.processes.context import (
+    gather_document_summary,
     gather_metadata_for_domain,
     gather_metadata_relationships,
     gather_metadata_summary,
@@ -36,6 +38,8 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str, int, int], None] | None
 
 NEEDS_REVIEW_CONFIDENCE = 0.6
+MAX_CONCURRENT_LLM = 4
+_llm_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
 
 
 def _empty_llm_result() -> LLMResult:
@@ -60,6 +64,9 @@ def _safe_parse(text: str, label: str) -> dict:
         return {}
 
 
+TOKEN_BUDGET_LIMIT = 100_000
+
+
 def _call_with_retry(
     prompt: str,
     max_tokens: int,
@@ -74,7 +81,21 @@ def _call_with_retry(
 
     Returns (result, parsed_dict).  On the retry attempt, ``max_tokens``
     is multiplied by ``budget_multiplier`` to give the model more room.
+    Prompts exceeding TOKEN_BUDGET_LIMIT are truncated.
     """
+    est = _estimate_tokens(prompt)
+    if est > TOKEN_BUDGET_LIMIT:
+        logger.warning(
+            "prompt_truncated label=%s est_tokens=%d limit=%d",
+            label, est, TOKEN_BUDGET_LIMIT,
+        )
+        char_limit = TOKEN_BUDGET_LIMIT * 4
+        truncated = prompt[:char_limit]
+        last_section = truncated.rfind("\n## ")
+        if last_section > char_limit // 2:
+            truncated = truncated[:last_section]
+        prompt = truncated
+
     for attempt in range(1 + retries):
         tokens = int(max_tokens * (budget_multiplier ** attempt))
         try:
@@ -112,14 +133,43 @@ def _as_list(val: object) -> list:
     return []
 
 
+async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
+    """Run _call_with_retry in a thread so multiple domains can call in parallel."""
+    async with _llm_semaphore:
+        return await asyncio.to_thread(_call_with_retry, **kwargs)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token count (chars / 4). Good enough for budget checks."""
+    return len(text) // 4
+
+
+def _get_procs_under_domain(
+    domain_id: UUID,
+    all_procs: list[BusinessProcess],
+    id_to_proc: dict[UUID, BusinessProcess],
+) -> list[BusinessProcess]:
+    """Filter all_procs to those that are descendants of domain_id."""
+    result = []
+    for p in all_procs:
+        current = p
+        while current:
+            if current.id == domain_id:
+                result.append(p)
+                break
+            current = id_to_proc.get(current.parent_id)
+    return result
+
+
 async def run_stage1(
     org_id: UUID,
     run_id: UUID,
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
     model_config: dict | None = None,
-) -> list[dict]:
-    """Stage 1: Domain Discovery. Returns list of domain dicts."""
+    meta_summary: dict | None = None,
+) -> tuple[list[dict], dict, dict]:
+    """Stage 1: Domain Discovery. Returns (domain_dicts, org_ctx, meta_summary)."""
     start = time.time()
 
     with _lf_span("stage1_domain_discovery", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
@@ -127,12 +177,14 @@ async def run_stage1(
             progress_cb("domain_discovery", "gathering", 0, 1)
 
         org_ctx = await gather_org_context(org_id, db)
-        meta_summary = await gather_metadata_summary(org_id, db)
+        if meta_summary is None:
+            meta_summary = await gather_metadata_summary(org_id, db)
         org_desc = org_ctx.get("description") or org_ctx.get("name", "")
         doc_chunks = await semantic_document_search(org_id, db, org_desc, limit=20)
+        doc_index = await gather_document_summary(org_id, db)
 
         prompt = await build_pass1_prompt(
-            org_id, db, org_ctx, meta_summary, doc_chunks,
+            org_id, db, org_ctx, meta_summary, doc_chunks, document_index=doc_index,
         )
 
         result, parsed = _call_with_retry(
@@ -194,7 +246,7 @@ async def run_stage1(
         if progress_cb:
             progress_cb("domain_discovery", "done", 1, 1)
 
-        return domains
+        return domains, org_ctx, meta_summary
 
 
 async def run_stage2(
@@ -210,6 +262,8 @@ async def run_stage2(
     total_output_tokens = 0
 
     with _lf_span("stage2_structural_decomposition", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
+        import uuid as _uuid_mod
+
         org_ctx = await gather_org_context(org_id, db)
 
         domains_q = await db.execute(
@@ -223,10 +277,8 @@ async def run_stage2(
         domains = domains_q.scalars().all()
         total_processes = 0
 
-        for i, domain in enumerate(domains):
-            if progress_cb:
-                progress_cb("structural_decomposition", "running", i, len(domains))
-
+        domain_contexts: list[tuple[BusinessProcess, dict, list[dict]]] = []
+        for domain in domains:
             meta_json = domain.metadata_json or {}
             object_names = _as_list(meta_json.get("associated_objects"))
             automation_names = _as_list(meta_json.get("associated_automations"))
@@ -239,24 +291,34 @@ async def run_stage2(
             doc_chunks = await semantic_document_search(
                 org_id, db, f"{domain.name}: {domain.description or ''}", limit=20
             )
+            domain_contexts.append((domain, meta_detail, doc_chunks))
 
+        domain_prompts: list[tuple[BusinessProcess, str]] = []
+        for domain, meta_detail, doc_chunks in domain_contexts:
             domain_dict = {"name": domain.name, "description": domain.description or ""}
             prompt = await build_stage2_prompt(
                 org_id, db, org_ctx, domain_dict, meta_detail, doc_chunks,
             )
+            domain_prompts.append((domain, prompt))
 
-            with _lf_span(
-                f"stage2_domain_{domain.name}",
-                metadata={"domain_index": i, "domain_total": len(domains)},
-            ):
-                result, parsed = _call_with_retry(
-                    prompt=prompt, max_tokens=8000, tier="strong",
-                    operation="discovery_structure",
-                    label=f"stage2_domain_{domain.name}",
-                    model_config=model_config,
-                )
-                total_input_tokens += result.input_tokens
-                total_output_tokens += result.output_tokens
+        if progress_cb:
+            progress_cb("structural_decomposition", "running", 0, len(domains))
+
+        async def _decompose_domain(domain: BusinessProcess, prompt: str) -> tuple[LLMResult, dict]:
+            return await _async_llm_call(
+                prompt=prompt, max_tokens=8000, tier="strong",
+                operation="discovery_structure",
+                label=f"stage2_domain_{domain.name}",
+                model_config=model_config,
+            )
+
+        llm_results = await asyncio.gather(
+            *[_decompose_domain(d, p) for d, p in domain_prompts]
+        )
+
+        for i, ((domain, _prompt), (result, parsed)) in enumerate(zip(domain_prompts, llm_results)):
+            total_input_tokens += result.input_tokens
+            total_output_tokens += result.output_tokens
 
             raw_procs = parsed.get("processes")
             if isinstance(raw_procs, list):
@@ -282,8 +344,10 @@ async def run_stage2(
                 else:
                     parent_id = domain.id
 
+                pre_id = _uuid_mod.uuid4()
                 confidence = float(proc_data.get("confidence", 0.5))
                 bp = BusinessProcess(
+                    id=pre_id,
                     org_id=org_id,
                     name=name,
                     description=proc_data.get("description"),
@@ -301,12 +365,15 @@ async def run_stage2(
                     metadata_json={},
                 )
                 db.add(bp)
-                await db.flush()
-                name_to_id[name] = bp.id
+                name_to_id[name] = pre_id
                 total_processes += 1
 
             domain.sub_process_count = len(name_to_id)
-            await db.flush()
+
+            if progress_cb:
+                progress_cb("structural_decomposition", "running", i + 1, len(domains))
+
+        await db.flush()
 
         logger.info(
             "stage2_complete org_id=%s run_id=%s processes=%d domains=%d tokens_in=%d tokens_out=%d dur_ms=%d",
@@ -350,33 +417,41 @@ async def run_stage3(
         )
         domains = domains_q.scalars().all()
 
-        for domain in domains:
-            all_procs_q = await db.execute(
-                select(BusinessProcess).where(
-                    BusinessProcess.org_id == org_id,
-                    BusinessProcess.discovery_run_id == run_id,
-                    BusinessProcess.status != "rejected",
-                )
+        all_procs_q = await db.execute(
+            select(BusinessProcess).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.status != "rejected",
             )
-            all_procs = all_procs_q.scalars().all()
+        )
+        all_procs = all_procs_q.scalars().all()
+        id_to_proc = {p.id: p for p in all_procs}
 
-            id_to_proc = {p.id: p for p in all_procs}
-            domain_steps = []
-            for p in all_procs:
-                if p.level != "step":
-                    continue
-                current = p
-                under_domain = False
-                while current:
-                    if current.id == domain.id:
-                        under_domain = True
-                        break
-                    current = id_to_proc.get(current.parent_id)
-                if under_domain:
-                    domain_steps.append(p)
+        domain_payloads: list[tuple[BusinessProcess, list[BusinessProcess], str]] = []
+
+        for domain in domains:
+            domain_steps = [
+                p for p in _get_procs_under_domain(domain.id, all_procs, id_to_proc)
+                if p.level == "step"
+            ]
 
             if not domain_steps:
                 continue
+
+            all_obj_names: set[str] = set()
+            all_auto_names: set[str] = set()
+            for step in domain_steps:
+                for a in (step.artifacts or []):
+                    if a.get("type") == "object":
+                        all_obj_names.add(a.get("api_name", ""))
+                    elif a.get("type") in ("flow", "validation_rule"):
+                        all_auto_names.add(a.get("api_name", ""))
+
+            domain_meta = await gather_metadata_for_domain(
+                org_id, db, list(all_obj_names), list(all_auto_names)
+            )
+            obj_meta_by_name = {o["api_name"]: o for o in domain_meta.get("objects", [])}
+            auto_meta_by_name = {a["api_name"]: a for a in domain_meta.get("automations", [])}
 
             steps_data = []
             metadata_per_step: dict[str, dict] = {}
@@ -384,15 +459,12 @@ async def run_stage3(
 
             for step in domain_steps:
                 step_artifacts = step.artifacts or []
-                obj_names = [a.get("api_name", "") for a in step_artifacts if a.get("type") == "object"]
-                auto_names = [
-                    a.get("api_name", "")
-                    for a in step_artifacts
-                    if a.get("type") in ("flow", "validation_rule")
-                ]
-
-                meta = await gather_metadata_for_domain(org_id, db, obj_names, auto_names)
-                metadata_per_step[step.name] = meta
+                step_objs = [a.get("api_name", "") for a in step_artifacts if a.get("type") == "object"]
+                step_autos = [a.get("api_name", "") for a in step_artifacts if a.get("type") in ("flow", "validation_rule")]
+                metadata_per_step[step.name] = {
+                    "objects": [obj_meta_by_name[n] for n in step_objs if n in obj_meta_by_name],
+                    "automations": [auto_meta_by_name[n] for n in step_autos if n in auto_meta_by_name],
+                }
 
                 docs = await semantic_document_search(
                     org_id, db, f"{step.name}: {step.description or ''}", limit=5
@@ -408,14 +480,21 @@ async def run_stage3(
             prompt = await build_stage3_prompt(
                 org_id, db, steps_data, metadata_per_step, docs_per_step,
             )
+            domain_payloads.append((domain, domain_steps, prompt))
 
-            with _lf_span(f"stage3_domain_{domain.name}"):
-                _result, parsed = _call_with_retry(
-                    prompt=prompt, max_tokens=12000, tier="strong",
-                    operation="discovery_enrichment",
-                    label=f"stage3_{domain.name}",
-                    model_config=model_config,
-                )
+        async def _enrich_domain(domain: BusinessProcess, prompt: str) -> tuple[LLMResult, dict]:
+            return await _async_llm_call(
+                prompt=prompt, max_tokens=12000, tier="strong",
+                operation="discovery_enrichment",
+                label=f"stage3_{domain.name}",
+                model_config=model_config,
+            )
+
+        llm_results = await asyncio.gather(
+            *[_enrich_domain(d, p) for d, _steps, p in domain_payloads]
+        )
+
+        for (domain, domain_steps, _prompt), (_result, parsed) in zip(domain_payloads, llm_results):
 
             enriched_steps = _as_list(parsed.get("enriched_steps"))
             name_to_step = {s.name: s for s in domain_steps}
@@ -484,33 +563,25 @@ async def run_stage4(
         )
         domains = domains_q.scalars().all()
 
-        for domain in domains:
-            all_procs_q = await db.execute(
-                select(BusinessProcess).where(
-                    BusinessProcess.org_id == org_id,
-                    BusinessProcess.discovery_run_id == run_id,
-                    BusinessProcess.status != "rejected",
-                )
+        all_procs_q = await db.execute(
+            select(BusinessProcess).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.status != "rejected",
             )
-            all_procs = all_procs_q.scalars().all()
-            id_to_proc = {p.id: p for p in all_procs}
+        )
+        all_procs = all_procs_q.scalars().all()
+        id_to_proc = {p.id: p for p in all_procs}
 
-            domain_procs = []
-            for p in all_procs:
-                current = p
-                under_domain = False
-                while current:
-                    if current.id == domain.id:
-                        under_domain = True
-                        break
-                    current = id_to_proc.get(current.parent_id)
-                if under_domain:
-                    domain_procs.append(p)
+        s4_payloads: list[tuple[BusinessProcess, list[BusinessProcess], str]] = []
+
+        for domain in domains:
+            domain_procs = _get_procs_under_domain(domain.id, all_procs, id_to_proc)
 
             if not domain_procs:
                 continue
 
-            def build_tree_dict(proc: BusinessProcess) -> dict:
+            def build_tree_dict(proc: BusinessProcess, _dp: list = domain_procs) -> dict:
                 return {
                     "name": proc.name,
                     "level": proc.level,
@@ -519,12 +590,12 @@ async def run_stage4(
                     "trigger_conditions": proc.trigger_conditions or [],
                     "actors": proc.actors or [],
                     "children": [
-                        build_tree_dict(c) for c in domain_procs if c.parent_id == proc.id
+                        build_tree_dict(c, _dp) for c in _dp if c.parent_id == proc.id
                     ],
                 }
 
             enriched_tree = [
-                build_tree_dict(p) for p in domain_procs if p.parent_id == domain.id
+                build_tree_dict(p, domain_procs) for p in domain_procs if p.parent_id == domain.id
             ]
 
             all_objects: set[str] = set()
@@ -537,17 +608,22 @@ async def run_stage4(
                         all_objects.add(art.get("api_name", ""))
 
             relationships = await gather_metadata_relationships(org_id, db, list(all_objects))
-
             prompt = await build_stage4_prompt(org_id, db, enriched_tree, relationships)
+            s4_payloads.append((domain, domain_procs, prompt))
 
-            with _lf_span(f"stage4_domain_{domain.name}"):
-                _result, parsed = _call_with_retry(
-                    prompt=prompt, max_tokens=10000, tier="strong",
-                    operation="discovery_flow",
-                    label=f"stage4_{domain.name}",
-                    model_config=model_config,
-                )
+        async def _flow_domain(domain: BusinessProcess, prompt: str) -> tuple[LLMResult, dict]:
+            return await _async_llm_call(
+                prompt=prompt, max_tokens=10000, tier="strong",
+                operation="discovery_flow",
+                label=f"stage4_{domain.name}",
+                model_config=model_config,
+            )
 
+        s4_results = await asyncio.gather(
+            *[_flow_domain(d, p) for d, _dp, p in s4_payloads]
+        )
+
+        for (domain, domain_procs, _prompt), (_result, parsed) in zip(s4_payloads, s4_results):
             name_to_id: dict[str, UUID] = {p.name: p.id for p in domain_procs}
             name_to_proc: dict[str, BusinessProcess] = {p.name: p for p in domain_procs}
 
@@ -646,6 +722,7 @@ async def run_stage5(
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
     model_config: dict | None = None,
+    meta_summary: dict | None = None,
 ) -> dict:
     """Stage 5: Validation & Refinement. Returns combined critique."""
     start = time.time()
@@ -665,33 +742,43 @@ async def run_stage5(
         )
         domains = domains_q.scalars().all()
 
-        for domain in domains:
-            all_procs_q = await db.execute(
-                select(BusinessProcess).where(
-                    BusinessProcess.org_id == org_id,
-                    BusinessProcess.discovery_run_id == run_id,
-                    BusinessProcess.status != "rejected",
-                )
+        all_procs_q = await db.execute(
+            select(BusinessProcess).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.status != "rejected",
             )
-            all_procs = all_procs_q.scalars().all()
-            id_to_proc = {p.id: p for p in all_procs}
+        )
+        all_procs = all_procs_q.scalars().all()
+        id_to_proc = {p.id: p for p in all_procs}
 
-            domain_procs = []
-            for p in all_procs:
-                current = p
-                under_domain = False
-                while current:
-                    if current.id == domain.id:
-                        under_domain = True
-                        break
-                    current = id_to_proc.get(current.parent_id)
-                if under_domain:
-                    domain_procs.append(p)
+        handoffs_q = await db.execute(
+            select(ProcessHandoff).where(
+                ProcessHandoff.org_id == org_id,
+                ProcessHandoff.discovery_run_id == run_id,
+            )
+        )
+        all_handoffs = handoffs_q.scalars().all()
+
+        if meta_summary is None:
+            meta_summary = await gather_metadata_summary(org_id, db)
+        capped_metadata = {
+            "objects": meta_summary.get("objects", [])[:80],
+            "automations": meta_summary.get("automations", [])[:80],
+            "components": meta_summary.get("components", [])[:40],
+            "totals": meta_summary.get("totals", {}),
+        }
+
+        all_id_to_name = {p.id: p.name for p in all_procs}
+        s5_payloads: list[tuple[BusinessProcess, list[BusinessProcess], str]] = []
+
+        for domain in domains:
+            domain_procs = _get_procs_under_domain(domain.id, all_procs, id_to_proc)
 
             if not domain_procs:
                 continue
 
-            def build_complete_tree(proc: BusinessProcess) -> dict:
+            def build_complete_tree(proc: BusinessProcess, _dp: list = domain_procs) -> dict:
                 return {
                     "name": proc.name,
                     "level": proc.level,
@@ -704,35 +791,28 @@ async def run_stage5(
                     "sequencing": proc.sequencing or {},
                     "value_classification": proc.value_classification,
                     "children": [
-                        build_complete_tree(c)
-                        for c in domain_procs if c.parent_id == proc.id
+                        build_complete_tree(c, _dp)
+                        for c in _dp if c.parent_id == proc.id
                     ],
                 }
 
             complete_tree = [
-                build_complete_tree(p) for p in domain_procs if p.parent_id == domain.id
+                build_complete_tree(p, domain_procs) for p in domain_procs if p.parent_id == domain.id
             ]
 
-            handoffs_q = await db.execute(
-                select(ProcessHandoff).where(
-                    ProcessHandoff.org_id == org_id,
-                    ProcessHandoff.discovery_run_id == run_id,
-                )
-            )
-            handoffs = handoffs_q.scalars().all()
             domain_proc_ids = {p.id for p in domain_procs}
             domain_handoffs = [
                 {
-                    "source": str(h.source_process_id),
-                    "target": str(h.target_process_id),
+                    "source": all_id_to_name.get(h.source_process_id, str(h.source_process_id)),
+                    "target": all_id_to_name.get(h.target_process_id, str(h.target_process_id)),
                     "type": h.handoff_type,
                     "confidence": h.confidence_score,
                 }
-                for h in handoffs
+                for h in all_handoffs
                 if h.source_process_id in domain_proc_ids or h.target_process_id in domain_proc_ids
             ]
 
-            raw_metadata = await gather_metadata_summary(org_id, db)
+            raw_metadata = capped_metadata
             doc_chunks = await semantic_document_search(
                 org_id, db, f"{domain.name}: {domain.description or ''}", limit=15
             )
@@ -740,15 +820,21 @@ async def run_stage5(
             prompt = await build_stage5_prompt(
                 org_id, db, complete_tree, {"handoffs": domain_handoffs}, raw_metadata, doc_chunks,
             )
+            s5_payloads.append((domain, domain_procs, prompt))
 
-            with _lf_span(f"stage5_domain_{domain.name}"):
-                _result, parsed = _call_with_retry(
-                    prompt=prompt, max_tokens=12000, tier="strong",
-                    operation="discovery_validation",
-                    label=f"stage5_{domain.name}",
-                    model_config=model_config,
-                )
+        async def _validate_domain(domain: BusinessProcess, prompt: str) -> tuple[LLMResult, dict]:
+            return await _async_llm_call(
+                prompt=prompt, max_tokens=12000, tier="strong",
+                operation="discovery_validation",
+                label=f"stage5_{domain.name}",
+                model_config=model_config,
+            )
 
+        s5_results = await asyncio.gather(
+            *[_validate_domain(d, p) for d, _dp, p in s5_payloads]
+        )
+
+        for (domain, domain_procs, _prompt), (_result, parsed) in zip(s5_payloads, s5_results):
             critique = _as_list(parsed.get("critique"))
             all_critiques.extend(critique)
 
@@ -807,6 +893,7 @@ async def run_stage6(
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
     model_config: dict | None = None,
+    meta_summary: dict | None = None,
 ) -> dict:
     """Stage 6: Cross-domain synthesis. Returns parsed synthesis dict."""
     start = time.time()
@@ -879,19 +966,32 @@ async def run_stage6(
                 "processes": hierarchy_roots,
             })
 
-        meta_summary = await gather_metadata_summary(org_id, db)
+        if meta_summary is None:
+            meta_summary = await gather_metadata_summary(org_id, db)
         claimed_objects: set[str] = set()
+        claimed_automations: set[str] = set()
         for d in domains:
+            dmeta = d.metadata_json or {}
             claimed_objects.update(
-                str(x) for x in _as_list((d.metadata_json or {}).get("associated_objects")) if x
+                str(x) for x in _as_list(dmeta.get("associated_objects")) if x
+            )
+            claimed_automations.update(
+                str(x) for x in _as_list(dmeta.get("associated_automations")) if x
             )
         objects = meta_summary.get("objects") or []
         if not isinstance(objects, list):
             objects = []
+        automations = meta_summary.get("automations") or []
+        if not isinstance(automations, list):
+            automations = []
         orphaned = [
             {"type": "object", "api_name": o["api_name"]}
             for o in objects
             if isinstance(o, dict) and str(o.get("api_name", "")) not in claimed_objects
+        ] + [
+            {"type": "automation", "api_name": a["api_name"]}
+            for a in automations
+            if isinstance(a, dict) and str(a.get("api_name", "")) not in claimed_automations
         ]
 
         prompt = await build_pass3_prompt(
@@ -1083,12 +1183,24 @@ async def run_stage7(
     steps_with_value = sum(1 for s in steps if s.value_classification)
     value_coverage = steps_with_value / len(steps) if steps else 0.0
 
+    steps_with_flow = sum(
+        1 for s in steps
+        if (s.sequencing or {}).get("predecessors") or (s.sequencing or {}).get("is_entry_point")
+    )
+    flow_completeness = steps_with_flow / len(steps) if steps else 0.0
+
+    min_desc_len = 20
+    steps_with_desc = sum(1 for s in steps if s.description and len(s.description) >= min_desc_len)
+    description_quality = steps_with_desc / len(steps) if steps else 0.0
+
     overall = (
-        metadata_coverage * 0.25 +
-        step_specificity * 0.25 +
-        handoff_grounding * 0.20 +
-        hierarchy_consistency * 0.15 +
-        value_coverage * 0.15
+        metadata_coverage * 0.20 +
+        step_specificity * 0.20 +
+        handoff_grounding * 0.15 +
+        hierarchy_consistency * 0.10 +
+        value_coverage * 0.10 +
+        flow_completeness * 0.15 +
+        description_quality * 0.10
     )
 
     quality_scores = {
@@ -1097,6 +1209,8 @@ async def run_stage7(
         "handoff_grounding": round(handoff_grounding, 3),
         "hierarchy_consistency": round(hierarchy_consistency, 3),
         "value_coverage": round(value_coverage, 3),
+        "flow_completeness": round(flow_completeness, 3),
+        "description_quality": round(description_quality, 3),
         "overall": round(overall, 3),
     }
 

@@ -92,61 +92,74 @@ async def gather_metadata_for_domain(
     object_names: list[str],
     automation_names: list[str],
 ) -> dict:
-    """Full metadata detail for Pass 2 — includes fields, relationships, record types."""
-    objects_q = await db.execute(
-        select(MetadataObject).where(
-            MetadataObject.org_id == org_id,
-            MetadataObject.api_name.in_(object_names) if object_names else MetadataObject.org_id == org_id,
-        )
-    )
-    objects = objects_q.scalars().all()
+    """Full metadata detail — includes fields, relationships, record types.
+
+    Returns empty collections when both name lists are empty rather than
+    loading the entire org (which explodes prompt size and DB load).
+    """
+    if not object_names and not automation_names:
+        return {"objects": [], "automations": []}
 
     obj_details = []
-    for o in objects:
-        fields_result = await db.execute(
-            select(MetadataField).where(MetadataField.object_id == o.id).limit(50)
+    if object_names:
+        objects_q = await db.execute(
+            select(MetadataObject).where(
+                MetadataObject.org_id == org_id,
+                MetadataObject.api_name.in_(object_names),
+            )
         )
-        fields = fields_result.scalars().all()
+        objects = objects_q.scalars().all()
 
-        obj_details.append(
-            {
-                "api_name": o.api_name,
-                "label": o.label,
-                "record_count": o.record_count,
-                "classification": o.classification,
-                "record_types": (o.metadata_json or {}).get("record_types", []),
-                "relationships": [
-                    {"api_name": f.api_name, "target": f.relationship_to, "type": f.relationship_type}
-                    for f in fields
-                    if f.relationship_to
-                ],
-                "fields": [
-                    {
-                        "api_name": f.api_name,
-                        "label": f.label,
-                        "type": f.field_type,
-                        "is_custom": f.is_custom,
-                        "is_required": f.is_required,
-                        "description": (f.metadata_json or {}).get("description", ""),
-                    }
-                    for f in fields
-                ],
-            }
+        obj_ids = [o.id for o in objects]
+        fields_by_obj: dict[UUID, list] = {oid: [] for oid in obj_ids}
+        if obj_ids:
+            fields_q = await db.execute(
+                select(MetadataField).where(
+                    MetadataField.object_id.in_(obj_ids),
+                ).limit(50 * len(obj_ids))
+            )
+            for f in fields_q.scalars().all():
+                bucket = fields_by_obj.get(f.object_id)
+                if bucket is not None and len(bucket) < 50:
+                    bucket.append(f)
+
+        for o in objects:
+            fields = fields_by_obj.get(o.id, [])
+            obj_details.append(
+                {
+                    "api_name": o.api_name,
+                    "label": o.label,
+                    "record_count": o.record_count,
+                    "classification": o.classification,
+                    "record_types": (o.metadata_json or {}).get("record_types", []),
+                    "relationships": [
+                        {"api_name": f.api_name, "target": f.relationship_to, "type": f.relationship_type}
+                        for f in fields
+                        if f.relationship_to
+                    ],
+                    "fields": [
+                        {
+                            "api_name": f.api_name,
+                            "label": f.label,
+                            "type": f.field_type,
+                            "is_custom": f.is_custom,
+                            "is_required": f.is_required,
+                            "description": (f.metadata_json or {}).get("description", ""),
+                        }
+                        for f in fields
+                    ],
+                }
+            )
+
+    auto_list = []
+    if automation_names:
+        auto_q = await db.execute(
+            select(MetadataAutomation).where(
+                MetadataAutomation.org_id == org_id,
+                MetadataAutomation.api_name.in_(automation_names),
+            )
         )
-
-    auto_q = await db.execute(
-        select(MetadataAutomation).where(
-            MetadataAutomation.org_id == org_id,
-            MetadataAutomation.api_name.in_(automation_names)
-            if automation_names
-            else MetadataAutomation.org_id == org_id,
-        )
-    )
-    autos = auto_q.scalars().all()
-
-    return {
-        "objects": obj_details,
-        "automations": [
+        auto_list = [
             {
                 "api_name": a.api_name,
                 "label": a.label,
@@ -154,9 +167,10 @@ async def gather_metadata_for_domain(
                 "description": (a.metadata_json or {}).get("description", ""),
                 "is_active": (a.metadata_json or {}).get("is_active", True),
             }
-            for a in autos
-        ],
-    }
+            for a in auto_q.scalars().all()
+        ]
+
+    return {"objects": obj_details, "automations": auto_list}
 
 
 async def gather_document_summary(org_id: UUID, db: AsyncSession) -> list[dict]:

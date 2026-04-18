@@ -253,9 +253,19 @@ _FALLBACK_PASS3_PROTOCOL = """Return a JSON object matching the enforced schema:
 
 
 def _pass1_dynamic_sections(
-    org_context: dict, metadata_summary: dict, document_summary: list[dict],
+    org_context: dict,
+    metadata_summary: dict,
+    document_summary: list[dict],
+    document_index: list[dict] | None = None,
 ) -> str:
     totals = metadata_summary["totals"]
+    doc_index_section = ""
+    if document_index:
+        doc_index_section = f"\n\n## Uploaded Document Index\n{json.dumps(document_index, indent=2)}"
+    excerpts = json.dumps(
+        [{"content": c.get("content", "")[:500], "section": c.get("section_title", "")} for c in document_summary[:20]],
+        indent=2,
+    ) if document_summary else "No documents uploaded."
     return f"""## Organization Context
 {json.dumps(org_context, indent=2)}
 
@@ -271,10 +281,10 @@ Components: {totals['components']}
 {json.dumps(metadata_summary['automations'][:80], indent=2)}
 
 ### Components
-{json.dumps(metadata_summary['components'][:40], indent=2)}
+{json.dumps(metadata_summary['components'][:40], indent=2)}{doc_index_section}
 
-## Uploaded Documents
-{json.dumps(document_summary, indent=2) if document_summary else "No documents uploaded."}"""
+## Relevant Document Excerpts
+{excerpts}"""
 
 
 def _stage2_dynamic_sections(
@@ -383,6 +393,7 @@ async def build_pass1_prompt(
     org_context: dict,
     metadata_summary: dict,
     document_summary: list[dict],
+    document_index: list[dict] | None = None,
 ) -> str:
     blocks = await resolve_prompt_blocks("discovery_domain", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -399,7 +410,7 @@ async def build_pass1_prompt(
             org_id,
         )
         protocol = _FALLBACK_PASS1_PROTOCOL
-    middle = _pass1_dynamic_sections(org_context, metadata_summary, document_summary)
+    middle = _pass1_dynamic_sections(org_context, metadata_summary, document_summary, document_index)
     return f"{instructions}\n\n{middle}\n\n{protocol}"
 
 

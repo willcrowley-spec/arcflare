@@ -12,6 +12,7 @@ Tiers:
     - strong: most capable, for synthesis and complex analysis
 """
 import json
+import threading
 import time
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from app.core.model_prices import compute_cost
 logger = logging.getLogger(__name__)
 
 _last_call_time: float = 0.0
+_rate_lock = threading.Lock()
 _openai_client = None
 _anthropic_client = None
 _gemini_client = None
@@ -123,11 +125,13 @@ def llm_call(
     settings = get_settings()
     rate_delay = float(getattr(settings, "LLM_RATE_DELAY", 0))
     if rate_delay > 0:
-        elapsed = time.time() - _last_call_time
-        if elapsed < rate_delay:
-            time.sleep(rate_delay - elapsed)
-
-    _last_call_time = time.time()
+        with _rate_lock:
+            elapsed = time.time() - _last_call_time
+            if elapsed < rate_delay:
+                time.sleep(rate_delay - elapsed)
+            _last_call_time = time.time()
+    else:
+        _last_call_time = time.time()
 
     from app.core.observability import langfuse_generation
 
@@ -407,17 +411,9 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
 def _build_gemini_config(max_tokens: int, model: str, operation: str | None = None):
     """Build a GenerateContentConfig with JSON mode, schema enforcement, and thinking budget.
 
-    JSON operations use Gemini's constrained decoding via ``response_schema``
-    so the model is structurally unable to return a shape that violates the
-    contract (e.g. a raw array when the schema requires an object root).
-    This replaces fragile prompt-level "please return this JSON" instructions
-    with API-level enforcement.
-
-    Thinking budget strategy driven by research into Gemini 2.5 bugs
-    (googleapis/python-genai #782, #1405, #2062):
-    - ``max_output_tokens`` is a COMBINED cap for thinking + output tokens.
-    - JSON operations → thinking disabled (constrained decoding is sufficient).
-    - Text operations → thinking enabled with generous headroom.
+    JSON operations use Gemini's constrained decoding via ``response_schema``.
+    Thinking is now enabled alongside JSON — ``max_output_tokens`` is a COMBINED
+    cap for thinking + output tokens so we add headroom for the thinking budget.
     """
     from app.services.ai.operations import get_output_format, get_thinking_budget
     from app.services.ai.response_schemas import get_response_schema
@@ -436,7 +432,10 @@ def _build_gemini_config(max_tokens: int, model: str, operation: str | None = No
             kwargs["response_mime_type"] = "application/json"
             if schema:
                 kwargs["response_schema"] = schema
-            if supports_thinking:
+            if supports_thinking and thinking > 0:
+                kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
+                kwargs["max_output_tokens"] = max_tokens + thinking
+            elif supports_thinking:
                 kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         elif supports_thinking and thinking > 0:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
@@ -459,6 +458,9 @@ def _build_gemini_config(max_tokens: int, model: str, operation: str | None = No
         return config
 
 
+_GEMINI_RETRY_DELAYS = [2, 4, 8]
+
+
 def _call_gemini(
     prompt: str, max_tokens: int, model: str, operation: str | None = None,
 ) -> LLMResult:
@@ -471,11 +473,29 @@ def _call_gemini(
 
     config = _build_gemini_config(max_tokens, model, operation=operation)
 
-    response = _gemini_client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=config,
-    )
+    last_exc: Exception | None = None
+    for attempt in range(1 + len(_GEMINI_RETRY_DELAYS)):
+        try:
+            response = _gemini_client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc).lower()
+            is_retryable = "429" in err_str or "500" in err_str or "502" in err_str or "503" in err_str or "resource" in err_str
+            if not is_retryable or attempt >= len(_GEMINI_RETRY_DELAYS):
+                raise
+            delay = _GEMINI_RETRY_DELAYS[attempt]
+            logger.warning(
+                "gemini_retry model=%s attempt=%d delay=%ds error=%s",
+                model, attempt + 1, delay, str(exc)[:200],
+            )
+            time.sleep(delay)
+    else:
+        raise last_exc  # type: ignore[misc]
 
     text = response.text
     if text is None:

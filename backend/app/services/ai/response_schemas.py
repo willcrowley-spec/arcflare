@@ -24,6 +24,7 @@ DISCOVERY_DOMAIN_SCHEMA: dict = {
                     "associated_objects": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "associated_automations": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "associated_documents": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "actors": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "reasoning": {"type": "STRING"},
                 },
                 "required": ["name", "description", "confidence", "reasoning"],
@@ -64,6 +65,7 @@ DISCOVERY_STRUCTURE_SCHEMA: dict = {
                             "required": ["type", "api_name"],
                         },
                     },
+                    "actors": {"type": "ARRAY", "items": {"type": "STRING"}},
                 },
                 "required": ["name", "level", "description", "confidence"],
             },
@@ -252,8 +254,6 @@ DISCOVERY_VALIDATION_SCHEMA: dict = {
             "type": "OBJECT",
             "properties": {
                 "updated_steps": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                "added_flows": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                "added_handoffs": {"type": "ARRAY", "items": {"type": "OBJECT"}},
                 "removed_steps": {"type": "ARRAY", "items": {"type": "STRING"}},
                 "confidence_adjustments": {
                     "type": "ARRAY",
