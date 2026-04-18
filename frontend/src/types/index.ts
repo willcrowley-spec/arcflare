@@ -288,7 +288,6 @@ export interface BusinessProcess {
   health: ProcessHealthStatus
   sub_process_count: number
   asset_count: number
-  automation_coverage?: number
   nodes: ProcessNode[]
   edges: ProcessEdge[]
   created_at: string

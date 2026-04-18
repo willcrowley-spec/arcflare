@@ -16,6 +16,8 @@ class DiscoveryRunResponse(BaseModel):
     config: dict
     created_by: str
     error: str | None
+    quality_scores: dict = {}
+    stage_results: dict = {}
 
 
 class ProcessHandoffResponse(BaseModel):

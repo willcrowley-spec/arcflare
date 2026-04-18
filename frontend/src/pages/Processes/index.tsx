@@ -32,8 +32,6 @@ import type { DiscoveryStatus } from '@/types'
 
 type ProcessKpis = {
   total_processes?: number
-  avg_efficiency?: number | null
-  automation_coverage?: number | null
   active_count?: number | null
   draft_count?: number
   published_count?: number
@@ -47,8 +45,8 @@ type ProcessItem = {
   name: string
   category?: string | null
   description?: string | null
-  efficiency_score?: number | null
-  automation_level?: string | null
+  automation_potential?: string | null
+  value_classification?: string | null
   source?: string | null
   status: string
   sub_process_count: number
@@ -158,7 +156,8 @@ export default function ProcessesPage() {
         (p.category ?? '').toLowerCase().includes(qq) ||
         (p.description ?? '').toLowerCase().includes(qq) ||
         (p.narrative ?? '').toLowerCase().includes(qq) ||
-        (p.automation_level ?? '').toLowerCase().includes(qq)
+        (p.automation_potential ?? '').toLowerCase().includes(qq) ||
+        (p.value_classification ?? '').toLowerCase().includes(qq)
       )
     }
 

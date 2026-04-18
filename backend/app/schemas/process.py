@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ProcessKpis(BaseModel):
     total_processes: int = 0
-    avg_efficiency: float | None = None
     draft_count: int = 0
     published_count: int = 0
     domain_count: int = 0
@@ -23,8 +22,6 @@ class ProcessResponse(BaseModel):
     name: str
     category: str | None
     description: str | None
-    efficiency_score: float | None
-    automation_level: str | None
     status: str
     source: str | None
     sub_process_count: int
@@ -39,13 +36,23 @@ class ProcessResponse(BaseModel):
     discovery_run_id: UUID | None = None
     actors: list = []
     artifacts: list = []
+    trigger_conditions: list = []
+    decision_logic: list = []
+    system_touchpoints: list = []
+    success_criteria: list = []
+    failure_modes: list = []
+    value_classification: str | None = None
+    complexity_score: str | None = None
+    automation_potential: str | None = None
+    estimated_duration: str | None = None
+    estimated_frequency: str | None = None
+    sequencing: dict = {}
 
 
 class ProcessCreate(BaseModel):
     name: str = Field(..., max_length=255)
     category: str | None = Field(default=None, max_length=255)
     description: str | None = None
-    automation_level: str | None = Field(default=None, max_length=50)
     status: str = Field(default="draft", max_length=50)
     source: str | None = Field(default=None, max_length=50)
 
@@ -54,8 +61,6 @@ class ProcessUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     category: str | None = Field(default=None, max_length=255)
     description: str | None = None
-    efficiency_score: float | None = None
-    automation_level: str | None = Field(default=None, max_length=50)
     status: str | None = Field(default=None, max_length=50)
     metadata_json: dict | None = None
 

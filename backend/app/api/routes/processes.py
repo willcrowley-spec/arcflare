@@ -99,9 +99,6 @@ async def list_processes(
     items_flat = [ProcessResponse.model_validate(r) for r in all_rows]
 
     total = len(all_rows)
-    avg_eff = await db.scalar(
-        select(func.avg(BusinessProcess.efficiency_score)).where(BusinessProcess.org_id == org.id)
-    )
     draft_c = sum(1 for r in all_rows if r.status == "draft")
     pub_c = sum(1 for r in all_rows if r.status == "published")
     domain_c = sum(1 for r in all_rows if r.level == "domain")
@@ -119,7 +116,6 @@ async def list_processes(
     )
     kpis = ProcessKpis(
         total_processes=total,
-        avg_efficiency=float(avg_eff) if avg_eff is not None else None,
         draft_count=draft_c,
         published_count=pub_c,
         domain_count=domain_c,
@@ -154,8 +150,6 @@ async def create_process(
         name=body.name,
         category=body.category,
         description=body.description,
-        efficiency_score=None,
-        automation_level=body.automation_level,
         status=body.status,
         source=body.source,
         sub_process_count=0,
