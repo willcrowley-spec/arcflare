@@ -62,6 +62,41 @@ def _flatten_ctx(ctx: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+_VALID_ARC_TYPES = frozenset({"message", "question", "card_question", "action_proposal", "summary"})
+
+_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "message": ["text"],
+    "question": ["text", "question", "options"],
+    "card_question": ["text", "question", "options"],
+    "action_proposal": ["text", "action_type", "payload"],
+    "summary": ["text", "findings", "next_steps"],
+}
+
+
+def parse_arc_response(raw: str) -> dict:
+    """Validate LLM JSON against Arc response schema. Falls back to plain message on any failure."""
+    if not raw or not raw.strip():
+        return {"type": "message", "text": "I wasn't able to generate a response. Could you rephrase?"}
+    try:
+        data = json.loads(raw.strip())
+    except (json.JSONDecodeError, ValueError):
+        return {"type": "message", "text": raw.strip()}
+
+    if not isinstance(data, dict):
+        return {"type": "message", "text": raw.strip()}
+
+    resp_type = data.get("type")
+    if resp_type not in _VALID_ARC_TYPES:
+        return {"type": "message", "text": data.get("text", raw.strip())}
+
+    required = _REQUIRED_FIELDS.get(resp_type, [])
+    for field in required:
+        if field not in data:
+            return {"type": "message", "text": data.get("text", raw.strip())}
+
+    return data
+
+
 def _collect_stream_chunks(
     ctx: list[dict],
     gemini_tools: object | None,
@@ -284,6 +319,7 @@ async def send_message(
         trace_id: str | None = None
 
         try:
+            yield f"event: status\ndata: {json.dumps({'phase': 'building_context'})}\n\n"
             ctx = await build_chat_context(
                 thread, db, org, body.content, exclude_message_id=user_msg.id,
             )
@@ -336,6 +372,7 @@ async def send_message(
             trace_id = None
 
         chunks: list[ChatStreamChunk] = []
+        yield f"event: status\ndata: {json.dumps({'phase': 'thinking'})}\n\n"
         try:
             chunks = await asyncio.to_thread(
                 _collect_stream_chunks, ctx, gemini_tools, analysis_config,
@@ -355,7 +392,35 @@ async def send_message(
             for chunk in chunks:
                 if chunk.type == "text" and chunk.text:
                     text_parts.append(chunk.text)
-                    yield f"event: text\ndata: {json.dumps({'chunk': chunk.text})}\n\n"
+                    parsed = parse_arc_response(chunk.text)
+                    yield f"event: text\ndata: {json.dumps({'chunk': json.dumps(parsed)})}\n\n"
+
+                    if parsed.get("type") == "action_proposal":
+                        ap_action_type = str(parsed.get("action_type", ""))
+                        ap_payload = parsed.get("payload") or {}
+                        if ap_action_type:
+                            idem_key = f"{thread_id_str}:{user_msg_id}:arc_proposal:{ap_action_type}"
+                            action = ChatAction(
+                                thread_id=UUID(thread_id_str),
+                                message_id=user_msg_id,
+                                action_type=ap_action_type,
+                                target_id=_extract_target_id(ap_payload),
+                                payload=ap_payload,
+                                status="proposed",
+                                idempotency_key=idem_key[:100],
+                            )
+                            db.add(action)
+                            await db.commit()
+                            await db.refresh(action)
+                            action_data = {
+                                "action_id": str(action.id),
+                                "action_type": action.action_type,
+                                "target_id": str(action.target_id) if action.target_id else None,
+                                "payload": action.payload,
+                                "status": "proposed",
+                            }
+                            actions_created.append(action_data)
+                            yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
 
                 elif chunk.type == "function_call":
                     tool_def = get_tool(chunk.function_name)
