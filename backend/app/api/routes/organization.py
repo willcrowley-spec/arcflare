@@ -69,6 +69,8 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
 
     operations = []
     for op_id, meta in MODEL_OPERATIONS.items():
+        if meta.get("tier") not in ("lite", "fast", "strong"):
+            continue
         if op_id == "embedding":
             effective_model = f"gemini/{settings.EMBEDDING_MODEL}"
             effective_provider = "gemini"
