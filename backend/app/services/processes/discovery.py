@@ -38,9 +38,6 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str, int, int], None] | None
 
 NEEDS_REVIEW_CONFIDENCE = 0.6
-MAX_CONCURRENT_LLM = 2
-_llm_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
-_INTER_CALL_DELAY = 5.0
 
 
 def _empty_llm_result() -> LLMResult:
@@ -135,11 +132,23 @@ def _as_list(val: object) -> list:
 
 
 async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
-    """Run _call_with_retry in a thread with concurrency + rate-limit guard."""
-    async with _llm_semaphore:
-        result = await asyncio.to_thread(_call_with_retry, **kwargs)
-        await asyncio.sleep(_INTER_CALL_DELAY)
-        return result
+    """Run _call_with_retry in a thread with adaptive rate limiting.
+
+    Estimates the prompt's token count and waits for the provider's
+    rate-limit window to have room before dispatching the call.
+    """
+    from app.services.ai.rate_limiter import get_limiter
+    from app.services.ai.operations import resolve_model
+
+    operation = kwargs.get("operation", "")
+    tier = kwargs.get("tier", "fast")
+    model = resolve_model(operation=operation, tier=tier)
+    limiter = get_limiter(model)
+
+    est_tokens = _estimate_tokens(kwargs.get("prompt", ""))
+    await limiter.acquire(est_tokens)
+
+    return await asyncio.to_thread(_call_with_retry, **kwargs)
 
 
 def _estimate_tokens(text: str) -> int:

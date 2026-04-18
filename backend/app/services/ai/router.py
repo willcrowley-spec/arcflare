@@ -24,6 +24,7 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 litellm.drop_params = True
+litellm.return_response_headers = True
 
 
 @dataclass
@@ -106,10 +107,15 @@ def llm_call(
         thinking_budget = get_thinking_budget(operation)
         if thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
-            if kwargs["max_tokens"] <= thinking_budget:
-                kwargs["max_tokens"] = thinking_budget + max_tokens
+            kwargs["max_tokens"] = max(kwargs["max_tokens"], thinking_budget + 1024)
 
         response = litellm.completion(**kwargs)
+
+        from app.services.ai.rate_limiter import get_limiter
+        try:
+            get_limiter(model).update_from_response(response)
+        except Exception:
+            pass
 
         text = response.choices[0].message.content or ""
         usage = response.usage
