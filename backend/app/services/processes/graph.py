@@ -137,6 +137,9 @@ async def generate_graphs_for_run(
 
     for domain in domains:
         await db.execute(
+            delete(ProcessEdge).where(ProcessEdge.process_id == domain.id)
+        )
+        await db.execute(
             delete(ProcessNode).where(ProcessNode.process_id == domain.id)
         )
 
@@ -176,10 +179,15 @@ async def generate_graphs_for_run(
                 ProcessHandoff.target_process_id.in_(child_ids),
             )
         )
+        seen_edges: set[tuple[UUID, UUID]] = set()
         for ho in handoffs_q.scalars().all():
             src_node = child_to_node.get(ho.source_process_id)
             tgt_node = child_to_node.get(ho.target_process_id)
             if src_node and tgt_node:
+                edge_key = (src_node.id, tgt_node.id)
+                if edge_key in seen_edges:
+                    continue
+                seen_edges.add(edge_key)
                 db.add(ProcessEdge(
                     process_id=domain.id,
                     source_node_id=src_node.id,
