@@ -20,6 +20,7 @@ export function useTypewriter(
   const [wordIndex, setWordIndex] = useState(0)
   const wordsRef = useRef<string[]>([])
   const prevTextRef = useRef('')
+  const prevEnabledRef = useRef(enabled)
   const onTickRef = useRef(onTick)
   onTickRef.current = onTick
 
@@ -30,6 +31,14 @@ export function useTypewriter(
       setWordIndex(0)
     }
   }
+
+  // When enabled flips false→true without text change the user already
+  // saw the full text (e.g. streaming bubble → persisted message race).
+  // Jump to end to avoid a flash-blank-typewriter cycle.
+  if (enabled && !prevEnabledRef.current && text === prevTextRef.current) {
+    setWordIndex(wordsRef.current.length)
+  }
+  prevEnabledRef.current = enabled
 
   const words = wordsRef.current
   const total = words.length

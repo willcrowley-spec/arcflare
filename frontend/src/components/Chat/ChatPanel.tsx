@@ -56,7 +56,7 @@ export function ChatPanel() {
     const el = inputRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 128)}px`
+    el.style.height = `${Math.min(el.scrollHeight, 144)}px`
   }, [])
 
   const { data: threads = [], isLoading: threadsLoading } = useThreads()
@@ -84,6 +84,8 @@ export function ChatPanel() {
   }, [isOpen, setThinkingPhase])
 
   useEffect(() => { scrollToBottom() }, [streamingText, detail?.messages, scrollToBottom])
+
+  useEffect(() => { autoGrow() }, [input, autoGrow])
 
   const handleSend = useCallback(
     async (overrideText?: string) => {
@@ -157,8 +159,14 @@ export function ChatPanel() {
 
   const sortedMessages = useMemo(() => {
     const m = detail?.messages ?? []
-    return [...m].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-  }, [detail?.messages])
+    const sorted = [...m].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    // While the streaming bubble is visible, hide the last assistant message
+    // that the refetch already added — prevents a flash-duplicate frame.
+    if (streamingText && sorted.length > 0 && sorted[sorted.length - 1].role === 'assistant') {
+      return sorted.slice(0, -1)
+    }
+    return sorted
+  }, [detail?.messages, streamingText])
 
   const proposedByMessageId = useMemo(() => {
     const map = new Map<string, ChatAction[]>()
@@ -450,26 +458,26 @@ export function ChatPanel() {
       </div>
 
       {/* Input */}
-      <div className="shrink-0 border-t border-slate-100 bg-white px-3 py-2.5">
+      <div className="shrink-0 border-t border-slate-100 bg-white px-3.5 py-3">
         {sendError ? (
-          <p className="mb-1.5 rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-600">{sendError}</p>
+          <p className="mb-2 rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-600">{sendError}</p>
         ) : null}
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
             value={input}
             disabled={!!streamingText || sendMessage.isPending}
-            onChange={(e) => { setInput(e.target.value); autoGrow() }}
+            onChange={(e) => { setInput(e.target.value) }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void handleSend()
               }
             }}
-            rows={1}
+            rows={2}
             placeholder={streamingText ? `${agentName} is responding…` : `Message ${agentName}…`}
             className={clsx(
-              'min-h-[44px] max-h-32 flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-[15px] leading-snug text-slate-800 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20',
+              'min-h-[56px] max-h-36 flex-1 resize-none rounded-xl border px-3.5 py-3 text-[15px] leading-relaxed text-slate-800 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20',
               streamingText || sendMessage.isPending
                 ? 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
                 : 'border-slate-200 bg-slate-50/80',
@@ -479,7 +487,7 @@ export function ChatPanel() {
             type="button"
             onClick={() => void handleSend()}
             disabled={sendMessage.isPending || createThread.isPending || !input.trim() || !!streamingText}
-            className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-[56px] w-[48px] shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send"
           >
             {sendMessage.isPending || createThread.isPending ? (
