@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = Field(default="")
     LANGFUSE_BASE_URL: str = Field(default="https://cloud.langfuse.com")
 
+    ARC_AGENT_NAME: str = Field(default="Arc", description="Display name for the chat agent")
+
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",

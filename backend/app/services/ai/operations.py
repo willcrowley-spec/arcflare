@@ -77,10 +77,10 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "chat": {
         "tier": "fast",
         "thinking_budget": 0,
-        "output_format": "text",
+        "output_format": "json",
         "label": "Chat Assistant",
         "group": "chat",
-        "description": "Interactive process analyst assistant with function calling for actions. Fast model for responsive UX.",
+        "description": "Guided discovery agent (Arc). Returns structured JSON responses for interactive UI rendering.",
     },
 }
 
