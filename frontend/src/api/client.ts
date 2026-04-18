@@ -19,6 +19,8 @@ import type {
   PaginatedResponse,
   PlatformConnection,
   ProcessHandoffItem,
+  PromptBlock,
+  PromptOperation,
   Recommendation,
   RecordTelemetry,
   SalesforceInitiateResponse,
@@ -302,5 +304,18 @@ export const api = {
     usage: (id: string) => request<unknown>(`/agents/${id}/usage`),
     fleetAnalytics: () => request<FleetAnalytics>('/agents/fleet-analytics'),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+  },
+  prompts: {
+    operations: () => request<{ operations: PromptOperation[] }>('/prompts/operations'),
+    blocks: (operationId: string) => request<PromptBlock[]>(`/prompts/${operationId}`),
+    updateBlock: (operationId: string, blockType: string, content: string) =>
+      request<PromptBlock>(`/prompts/${operationId}/blocks/${blockType}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content }),
+      }),
+    restoreBlock: (operationId: string, blockType: string) =>
+      request<PromptBlock>(`/prompts/${operationId}/blocks/${blockType}`, {
+        method: 'DELETE',
+      }),
   },
 }

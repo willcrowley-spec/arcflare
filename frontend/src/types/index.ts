@@ -479,3 +479,27 @@ export type ArcResponse =
   | { type: 'card_question'; text: string; question: string; options: CardOption[] }
   | { type: 'action_proposal'; text: string; action_type: string; payload: Record<string, unknown> }
   | { type: 'summary'; text: string; findings: string[]; next_steps: string[] }
+
+export interface PromptBlockInfo {
+  type: string
+  label: string
+  editable: boolean
+}
+
+export interface PromptOperation {
+  operation_id: string
+  label: string
+  group: string
+  blocks: PromptBlockInfo[]
+}
+
+export interface PromptBlock {
+  block_type: string
+  label: string
+  editable: boolean
+  content: string
+  is_customized: boolean
+  is_locked: boolean
+  available_vars: string[]
+  version: number
+}

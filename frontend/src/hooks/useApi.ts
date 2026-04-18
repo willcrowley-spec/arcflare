@@ -338,3 +338,40 @@ export function useRejectProcess() {
     },
   })
 }
+
+export function usePromptOperations() {
+  return useQuery({
+    queryKey: ['prompts', 'operations'],
+    queryFn: () => api.prompts.operations(),
+  })
+}
+
+export function usePromptBlocks(operationId: string | null) {
+  return useQuery({
+    queryKey: ['prompts', 'blocks', operationId],
+    queryFn: () => api.prompts.blocks(operationId!),
+    enabled: !!operationId,
+  })
+}
+
+export function useUpdatePromptBlock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ operationId, blockType, content }: { operationId: string; blockType: string; content: string }) =>
+      api.prompts.updateBlock(operationId, blockType, content),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['prompts', 'blocks', vars.operationId] })
+    },
+  })
+}
+
+export function useRestorePromptBlock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ operationId, blockType }: { operationId: string; blockType: string }) =>
+      api.prompts.restoreBlock(operationId, blockType),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['prompts', 'blocks', vars.operationId] })
+    },
+  })
+}
