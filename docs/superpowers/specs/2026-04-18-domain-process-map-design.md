@@ -1,7 +1,7 @@
 # Domain Process Map — Hierarchical Compound Graph View
 
 **Date:** 2026-04-18
-**Status:** Draft (pending industry research validation)
+**Status:** Draft (industry research completed 2026-04-18)
 **Approach:** ELK layout engine + React Flow rendering
 
 ## Problem
@@ -103,6 +103,7 @@ The existing `PUT /processes/{id}/nodes` endpoint stores positions for `ProcessN
 
 - `elkjs` runs in a Web Worker (ships with one). Layout for ~100 nodes is <100ms, ~500 nodes <500ms.
 - Layout computed on initial load and on expand/collapse — not on every frame.
+- **React Flow performance ceiling:** React Flow renders nodes as DOM elements, not canvas. For typical domain maps (<200 leaf steps), this is fine. If a domain exceeds ~500 nodes, consider lazy rendering (only render nodes in viewport). Canvas-based libraries (GoJS) handle larger graphs but would require a full rewrite — not justified at current scale.
 
 ## Collapse / Expand
 
@@ -122,6 +123,7 @@ The existing `PUT /processes/{id}/nodes` endpoint stores positions for `ProcessN
 - Re-run ELK layout for the **full visible graph** (all currently expanded containers and their children). Partial/incremental layout risks misaligning siblings. ELK is fast enough (<100ms for typical graphs) that full re-layout on toggle is acceptable.
 - Children animate in. Container grows to fit.
 - Edges re-attach to specific child nodes.
+- **Known React Flow issue:** After collapse/expand, edges may not update their handle positions correctly. Call `useUpdateNodeInternals()` after the state change, wrapped in a `requestAnimationFrame` or ~300ms timeout to ensure the DOM has reflowed before React Flow recalculates handle positions.
 
 ### Interaction
 
@@ -136,7 +138,7 @@ The existing `PUT /processes/{id}/nodes` endpoint stores positions for `ProcessN
 - Color derived from depth level using a defined scale: depth 1 = `navy-800` header / `navy-50` body, depth 2 = `slate-600` header / `slate-50` body, depth 3 = `slate-400` header / `white` body, depth 4+ = `slate-300` header / `white` body with dashed border. Makes nesting depth obvious at a glance.
 - Header: process name, chevron toggle icon, step count badge.
 - Expanded: body area filled per the depth color scale above, with 16px internal padding on all sides.
-- Collapsed: compact pill — just the header bar, similar visual weight to a step card.
+- Collapsed: compact pill — just the header bar, similar visual weight to a step card. A **"+" indicator icon** at the bottom-center of the collapsed container signals expandability (follows BPMN convention for collapsed subprocesses).
 - At extreme depth (5+): innermost containers use dashed borders to reduce visual noise.
 
 ### Step card (leaf node)
@@ -204,6 +206,7 @@ The current `ProcessMap` page reads `ProcessNode` and `ProcessEdge` rows stored 
 - **Bulk review actions:** "Accept All" / "Reject All" at the domain level to confirm/reject all discovered children.
 - **In-map review:** Confirm/reject steps directly from the domain map canvas (e.g., right-click context menu).
 - **Click-to-navigate from list:** Clicking a child process name in the accordion tree navigates to the domain map with that process highlighted. (Possible fast-follow.)
+- **Drill-down navigation:** BPMN tools (Camunda, bpmn.io) offer a second paradigm where clicking a collapsed subprocess opens it on a separate canvas with breadcrumb navigation back to the parent. This is cleaner for very complex subprocesses. Could complement expand-in-place as a future enhancement — e.g., a "Focus" button on a container that isolates it.
 
 ## Dependencies
 
@@ -213,6 +216,26 @@ The current `ProcessMap` page reads `ProcessNode` and `ProcessEdge` rows stored 
 
 React Flow (`@xyflow/react`) is already installed.
 
-## Open Question
+## Industry Research (Completed 2026-04-18)
 
-The choice of ELK + React Flow and the visual design conventions described above are **pending validation** against 2026 enterprise BPM tool standards, industry research, and modern process mapping best practices. An industry research pass will be conducted before implementation begins. If research reveals a better approach or conflicting conventions, this spec will be updated accordingly.
+Validated the ELK + React Flow approach against enterprise BPM tools and current best practices:
+
+**Layout engine:** ELK is the recommended library for compound graph layout (actively maintained, last commit Mar 2026). Dagre is stale (2015). d3-hierarchy lacks compound support. ELK is purpose-built for nested containers with ports.
+
+**React Flow:** Native support for group nodes via `parentId` + `extent: 'parent'`. Active development (subflow z-ordering fix Oct 2025). Known edge-update bug on collapse addressed above. React Flow Pro offers a `useExpandCollapse` hook pattern (uses dagre) — we'll build our own with ELK.
+
+**BPMN conventions adopted:**
+- Collapsed subprocess "+" indicator icon (bottom-center) — added to visual design.
+- Expand-in-place as primary interaction. Drill-down navigation flagged as future enhancement.
+
+**Enterprise tool patterns (Celonis, Signavio, Camunda):**
+- Hierarchical navigation trees with block layout (aligns with our accordion tree + domain map).
+- Clean white/light backgrounds for container bodies (aligns with our depth color scale).
+- 2025 trend: minimal borders, refined spacing, all-white palettes. Our `navy → slate → white` depth scale is consistent with this direction.
+
+**Performance:** React Flow (DOM-based) is appropriate for <500 nodes. GoJS (canvas-based) handles 1000+ but requires full rewrite. Not justified at current scale. Performance ceiling noted in spec.
+
+**Alternatives rejected:**
+- GoJS: Better perf at extreme scale, but rip-and-replace of existing React Flow infrastructure. Commercial license.
+- JointJS: Mature, BPMN 2.0 export capability, but same rip-and-replace concern. Commercial for advanced features.
+- Neither justified given our scale and existing investment in React Flow.
