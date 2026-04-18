@@ -106,6 +106,8 @@ def llm_call(
         thinking_budget = get_thinking_budget(operation)
         if thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            if kwargs["max_tokens"] <= thinking_budget:
+                kwargs["max_tokens"] = thinking_budget + max_tokens
 
         response = litellm.completion(**kwargs)
 

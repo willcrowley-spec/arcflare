@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str, int, int], None] | None
 
 NEEDS_REVIEW_CONFIDENCE = 0.6
-MAX_CONCURRENT_LLM = 4
+MAX_CONCURRENT_LLM = 2
 _llm_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
+_INTER_CALL_DELAY = 5.0
 
 
 def _empty_llm_result() -> LLMResult:
@@ -134,9 +135,11 @@ def _as_list(val: object) -> list:
 
 
 async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
-    """Run _call_with_retry in a thread so multiple domains can call in parallel."""
+    """Run _call_with_retry in a thread with concurrency + rate-limit guard."""
     async with _llm_semaphore:
-        return await asyncio.to_thread(_call_with_retry, **kwargs)
+        result = await asyncio.to_thread(_call_with_retry, **kwargs)
+        await asyncio.sleep(_INTER_CALL_DELAY)
+        return result
 
 
 def _estimate_tokens(text: str) -> int:
