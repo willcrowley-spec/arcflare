@@ -144,8 +144,9 @@ def _as_list(val: object) -> list:
 async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     """Run _call_with_retry in a thread with adaptive rate limiting.
 
-    Estimates both input and output token counts and waits for
-    BOTH windows to have room before dispatching the call.
+    Gates on input tokens only.  Output token limits are handled reactively
+    via 429 backoff in ``_call_with_retry`` -- pre-booking output tokens
+    causes deadlock when many domains queue against a tiny output window.
     """
     from app.services.ai.rate_limiter import get_limiter
     from app.services.ai.operations import resolve_model
@@ -156,8 +157,7 @@ async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     limiter = get_limiter(model)
 
     est_input = _estimate_tokens(kwargs.get("prompt", ""))
-    est_output = min(kwargs.get("max_tokens", 4000), 6000)
-    await limiter.acquire(est_input, est_output)
+    await limiter.acquire(est_input)
 
     return await asyncio.to_thread(_call_with_retry, **kwargs)
 

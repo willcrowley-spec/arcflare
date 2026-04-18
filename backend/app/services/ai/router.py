@@ -118,9 +118,7 @@ def llm_call(
 
         from app.services.ai.rate_limiter import get_limiter
         try:
-            limiter = get_limiter(model)
-            limiter.update_from_response(response)
-            limiter.record_output(output_tokens)
+            get_limiter(model).update_from_response(response)
         except Exception:
             pass
 
