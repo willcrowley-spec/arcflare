@@ -7,12 +7,14 @@ export function ChatLauncher() {
   const openChat = useChatStore((s) => s.openChat)
   const closeChat = useChatStore((s) => s.closeChat)
   const pending = useChatStore((s) => s.pendingActionsCount)
+  const name = useChatStore((s) => s.agentName)
 
   return (
     <button
       type="button"
       onClick={() => (isOpen ? closeChat() : openChat())}
-      aria-label={isOpen ? 'Close assistant' : 'Open assistant'}
+      title={isOpen ? `Close ${name}` : `Ask ${name}`}
+      aria-label={isOpen ? `Close ${name}` : `Ask ${name}`}
       className={clsx(
         'fixed bottom-5 right-5 z-[60] flex h-13 w-13 items-center justify-center rounded-full shadow-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2',
         isOpen

@@ -24,6 +24,7 @@ import type { ChatAction, ChatMessage as ChatMessageRow } from '@/types'
 import type { StreamAction } from '@/hooks/useChat'
 import { ActionCard } from '@/components/Chat/ActionCard'
 import { ChatMessage } from '@/components/Chat/ChatMessage'
+import { ThinkingIndicator } from '@/components/Chat/ThinkingIndicator'
 
 export function ChatPanel() {
   const isOpen = useChatStore((s) => s.isOpen)
@@ -33,6 +34,8 @@ export function ChatPanel() {
   const anchorContext = useChatStore((s) => s.anchorContext)
   const consumeInitialPrompt = useChatStore((s) => s.consumeInitialPrompt)
   const setPendingActionsCount = useChatStore((s) => s.setPendingActionsCount)
+  const setThinkingPhase = useChatStore((s) => s.setThinkingPhase)
+  const agentName = useChatStore((s) => s.agentName)
 
   const [threadMenu, setThreadMenu] = useState(false)
   const [input, setInput] = useState('')
@@ -63,9 +66,10 @@ export function ChatPanel() {
       setStreamingText('')
       setSendError(null)
       setThreadMenu(false)
+      setThinkingPhase(null)
       didSendInitialRef.current = false
     }
-  }, [isOpen])
+  }, [isOpen, setThinkingPhase])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -80,6 +84,7 @@ export function ChatPanel() {
       setSendError(null)
       setStreamingText('')
       setStreamingActions([])
+      setThinkingPhase('thinking')
 
       let tid = activeThreadId
       try {
@@ -96,18 +101,24 @@ export function ChatPanel() {
         await sendMessage.mutateAsync({
           threadId: tid,
           content: text,
-          onDelta: (chunk) => setStreamingText((s) => s + chunk),
+          onDelta: (chunk) => {
+            setThinkingPhase(null)
+            setStreamingText((s) => s + chunk)
+          },
           onAction: (action) => setStreamingActions((prev) => [...prev, action]),
+          onStatus: (phase) => setThinkingPhase(phase),
         })
         setStreamingText('')
         setStreamingActions([])
+        setThinkingPhase(null)
       } catch (e) {
         setSendError(e instanceof Error ? e.message : 'Failed to send')
         setStreamingText('')
         setStreamingActions([])
+        setThinkingPhase(null)
       }
     },
-    [activeThreadId, anchorContext?.id, anchorContext?.type, createThread, input, sendMessage, setActiveThread],
+    [activeThreadId, anchorContext?.id, anchorContext?.type, createThread, input, sendMessage, setActiveThread, setThinkingPhase],
   )
 
   useEffect(() => {
@@ -126,6 +137,14 @@ export function ChatPanel() {
       if (activeThreadId === id) setActiveThread(null)
     },
     [activeThreadId, deleteThread, setActiveThread],
+  )
+
+  const handleQuickReply = useCallback(
+    (text: string) => {
+      setInput(text)
+      setTimeout(() => void handleSend(text), 50)
+    },
+    [handleSend],
   )
 
   const sortedMessages = useMemo(() => {
@@ -168,8 +187,10 @@ export function ChatPanel() {
           <Sparkles className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-800">{threadTitle}</p>
-          {anchorContext ? (
+          <p className="truncate text-sm font-semibold text-slate-800">{agentName}</p>
+          {activeThreadId && detail?.thread ? (
+            <p className="truncate text-[11px] text-slate-500">{detail.thread.title}</p>
+          ) : anchorContext ? (
             <p className="truncate text-[11px] text-orange-600">
               {anchorContext.type} context
             </p>
@@ -258,7 +279,7 @@ export function ChatPanel() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-orange-500">
               <MessageSquareText className="h-6 w-6" strokeWidth={1.5} />
             </div>
-            <p className="mt-3 text-sm font-semibold text-slate-800">Arcflare Assistant</p>
+            <p className="mt-3 text-sm font-semibold text-slate-800">{agentName}</p>
             <p className="mt-1.5 max-w-[260px] text-xs leading-relaxed text-slate-500">
               Ask about processes, gaps, and handoffs. I can also create and modify process records for you.
             </p>
@@ -297,7 +318,7 @@ export function ChatPanel() {
             ) : (
               sortedMessages.map((m: ChatMessageRow) => (
                 <div key={m.id}>
-                  <ChatMessage message={m} />
+                  <ChatMessage message={m} onQuickReply={handleQuickReply} />
                   {(proposedByMessageId.get(m.id) ?? []).map((a) => (
                     <ActionCard
                       key={a.id}
@@ -324,6 +345,8 @@ export function ChatPanel() {
                 </div>
               </div>
             ) : null}
+
+            <ThinkingIndicator />
 
             {streamingActions.map((sa) => (
               <div key={sa.action_id} className="px-2 py-1.5">
@@ -373,7 +396,7 @@ export function ChatPanel() {
               }
             }}
             rows={1}
-            placeholder="Message Arcflare…"
+            placeholder={`Message ${agentName}…`}
             className="min-h-[38px] max-h-24 flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20"
           />
           <button
