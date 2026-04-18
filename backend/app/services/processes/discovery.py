@@ -141,7 +141,7 @@ async def run_stage1(
             model_config=model_config,
         )
 
-        raw_domains = parsed.get("domains")
+        raw_domains = parsed.get("domains") or parsed.get("items")
         if isinstance(raw_domains, list):
             domains = raw_domains
         else:
@@ -258,7 +258,7 @@ async def run_stage2(
                 total_input_tokens += result.input_tokens
                 total_output_tokens += result.output_tokens
 
-            raw_procs = parsed.get("processes")
+            raw_procs = parsed.get("processes") or parsed.get("items")
             if isinstance(raw_procs, list):
                 processes = raw_procs
             else:
@@ -417,7 +417,7 @@ async def run_stage3(
                     model_config=model_config,
                 )
 
-            enriched_steps = _as_list(parsed.get("enriched_steps"))
+            enriched_steps = _as_list(parsed.get("enriched_steps") or parsed.get("items"))
             name_to_step = {s.name: s for s in domain_steps}
 
             for es in enriched_steps:
@@ -551,7 +551,7 @@ async def run_stage4(
             name_to_id: dict[str, UUID] = {p.name: p.id for p in domain_procs}
             name_to_proc: dict[str, BusinessProcess] = {p.name: p for p in domain_procs}
 
-            step_flows = _as_list(parsed.get("step_flows"))
+            step_flows = _as_list(parsed.get("step_flows") or parsed.get("items"))
             ep_raw = parsed.get("entry_points")
             entry_points = set(ep_raw) if isinstance(ep_raw, list) else set()
             tp_raw = parsed.get("terminal_points")
@@ -749,7 +749,7 @@ async def run_stage5(
                     model_config=model_config,
                 )
 
-            critique = _as_list(parsed.get("critique"))
+            critique = _as_list(parsed.get("critique") or parsed.get("items"))
             all_critiques.extend(critique)
 
             patches = parsed.get("patches", {})
@@ -913,7 +913,7 @@ async def run_stage6(
         name_to_id = {str(row.name): row.id for row in process_name_q}
 
         handoff_count = 0
-        for ho in _as_list(parsed.get("cross_domain_handoffs")):
+        for ho in _as_list(parsed.get("cross_domain_handoffs") or parsed.get("items")):
             if not isinstance(ho, dict):
                 continue
             src_name = str(ho.get("source_process", ""))

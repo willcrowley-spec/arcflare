@@ -89,7 +89,7 @@ For each domain:
 Do NOT use generic templates. Derive domains from what you actually see in the data.
 Objects with zero records or classified as "deprecated" have been excluded."""
 
-_DISCOVERY_DOMAIN_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_DOMAIN_PROTOCOL = """Respond with ONLY a valid JSON object (not an array). The root MUST be an object with a "domains" key:
 {
   "domains": [
     {
