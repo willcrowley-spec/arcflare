@@ -111,16 +111,18 @@ def llm_call(
 
         response = litellm.completion(**kwargs)
 
-        from app.services.ai.rate_limiter import get_limiter
-        try:
-            get_limiter(model).update_from_response(response)
-        except Exception:
-            pass
-
         text = response.choices[0].message.content or ""
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
+
+        from app.services.ai.rate_limiter import get_limiter
+        try:
+            limiter = get_limiter(model)
+            limiter.update_from_response(response)
+            limiter.record_output(output_tokens)
+        except Exception:
+            pass
 
         end_time = time.time()
         duration_ms = (end_time - start_time) * 1000

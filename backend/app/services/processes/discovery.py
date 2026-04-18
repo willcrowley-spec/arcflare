@@ -72,15 +72,20 @@ def _call_with_retry(
     operation: str,
     label: str,
     model_config: dict | None = None,
-    retries: int = 1,
+    retries: int = 2,
     budget_multiplier: float = 1.5,
 ) -> tuple[LLMResult, dict]:
-    """LLM call with automatic retry on JSON parse failure.
+    """LLM call with automatic retry on JSON parse failure and rate-limit backoff.
 
     Returns (result, parsed_dict).  On the retry attempt, ``max_tokens``
     is multiplied by ``budget_multiplier`` to give the model more room.
     Prompts exceeding TOKEN_BUDGET_LIMIT are truncated.
+
+    Rate-limit errors (429) get exponential backoff (30s, 60s, 90s) to
+    let the per-minute window drain before retrying.
     """
+    import time as _time
+
     est = _estimate_tokens(prompt)
     if est > TOKEN_BUDGET_LIMIT:
         logger.warning(
@@ -102,11 +107,16 @@ def _call_with_retry(
                 operation=operation, model_config=model_config,
             )
         except Exception as exc:
+            is_rate_limit = "RateLimitError" in type(exc).__name__ or "rate_limit" in str(exc).lower()
             logger.error(
                 "llm_call_failed label=%s attempt=%d error=%s",
                 label, attempt + 1, exc,
             )
             if attempt < retries:
+                if is_rate_limit:
+                    backoff = 30 * (attempt + 1)
+                    logger.info("rate_limit_backoff label=%s sleep=%ds", label, backoff)
+                    _time.sleep(backoff)
                 continue
             return _empty_llm_result(), {}
 
@@ -134,8 +144,8 @@ def _as_list(val: object) -> list:
 async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     """Run _call_with_retry in a thread with adaptive rate limiting.
 
-    Estimates the prompt's token count and waits for the provider's
-    rate-limit window to have room before dispatching the call.
+    Estimates both input and output token counts and waits for
+    BOTH windows to have room before dispatching the call.
     """
     from app.services.ai.rate_limiter import get_limiter
     from app.services.ai.operations import resolve_model
@@ -145,8 +155,9 @@ async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     model = resolve_model(operation=operation, tier=tier)
     limiter = get_limiter(model)
 
-    est_tokens = _estimate_tokens(kwargs.get("prompt", ""))
-    await limiter.acquire(est_tokens)
+    est_input = _estimate_tokens(kwargs.get("prompt", ""))
+    est_output = min(kwargs.get("max_tokens", 4000), 6000)
+    await limiter.acquire(est_input, est_output)
 
     return await asyncio.to_thread(_call_with_retry, **kwargs)
 
