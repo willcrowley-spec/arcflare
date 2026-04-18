@@ -233,6 +233,27 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
     )
 
 
+def _build_gemini_config(max_tokens: int, model: str):
+    """Build a GenerateContentConfig using SDK types with graceful fallback."""
+    try:
+        from google.genai import types
+
+        kwargs: dict = {"max_output_tokens": max_tokens}
+        if "2.5-pro" in model:
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
+        elif "2.5-flash" in model:
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        else:
+            kwargs["temperature"] = 0
+        return types.GenerateContentConfig(**kwargs)
+    except Exception as exc:
+        logger.debug("gemini_typed_config_failed model=%s error=%s, falling back to plain dict", model, exc)
+        config: dict = {"max_output_tokens": max_tokens}
+        if "2.5-pro" not in model and "2.5-flash" not in model:
+            config["temperature"] = 0
+        return config
+
+
 def _call_gemini(prompt: str, max_tokens: int, model: str) -> LLMResult:
     global _gemini_client
     if _gemini_client is None:
@@ -241,13 +262,7 @@ def _call_gemini(prompt: str, max_tokens: int, model: str) -> LLMResult:
         api_key = getattr(settings, "GEMINI_API_KEY", "")
         _gemini_client = genai.Client(api_key=api_key)
 
-    config = {"max_output_tokens": max_tokens}
-    if "2.5-pro" in model:
-        config["thinking_config"] = {"thinking_budget": 8000}
-    elif "2.5-flash" in model:
-        config["thinking_config"] = {"thinking_budget": 0}
-    else:
-        config["temperature"] = 0
+    config = _build_gemini_config(max_tokens, model)
 
     response = _gemini_client.models.generate_content(
         model=model,

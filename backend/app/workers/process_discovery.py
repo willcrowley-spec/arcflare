@@ -56,9 +56,9 @@ def process_discovery_task(org_id: str) -> str:
     async def _pipeline() -> str:
         from datetime import datetime, timezone
 
-        from sqlalchemy.ext.asyncio import async_sessionmaker
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-        from app.core.database import engine
+        from app.core.config import get_settings
         from app.models.discovery import DiscoveryRun
         from app.services.processes.discovery import (
             cleanup_previous_run,
@@ -67,88 +67,93 @@ def process_discovery_task(org_id: str) -> str:
             run_pass3,
         )
 
+        settings = get_settings()
+        engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
         factory = async_sessionmaker(engine, expire_on_commit=False)
 
-        async with factory() as session:
-            from app.models.organization import Organization
+        try:
+            async with factory() as session:
+                from app.models.organization import Organization
 
-            org = await session.get(Organization, UUID(org_id))
-            org_config = (org.analysis_config or {}) if org else {}
+                org = await session.get(Organization, UUID(org_id))
+                org_config = (org.analysis_config or {}) if org else {}
 
-            run = DiscoveryRun(org_id=UUID(org_id), status="running")
-            session.add(run)
-            await session.flush()
-            run_id = run.id
-            r.hset(run_key, "run_id", str(run_id))
+                run = DiscoveryRun(org_id=UUID(org_id), status="running")
+                session.add(run)
+                await session.flush()
+                run_id = run.id
+                r.hset(run_key, "run_id", str(run_id))
 
-            try:
-                _update("context_gathering", "pulling")
-                await cleanup_previous_run(UUID(org_id), session)
-                await session.commit()
-                _update("context_gathering", "done")
-
-                _update("domain_discovery", "pulling", 0, 1)
-                domains = await run_pass1(
-                    UUID(org_id), run_id, session,
-                    progress_cb=_discovery_progress_cb, model_config=org_config,
-                )
-                await session.commit()
-                _update("domain_discovery", "done", len(domains), max(len(domains), 1))
-
-                _update("domain_decomposition", "pulling", 0, max(len(domains), 1))
-                process_count = await run_pass2(
-                    UUID(org_id), run_id, session,
-                    progress_cb=_discovery_progress_cb, model_config=org_config,
-                )
-                await session.commit()
-                _update("domain_decomposition", "done", process_count, max(process_count, 1))
-
-                _update("cross_domain_synthesis", "pulling", 0, 1)
-                synthesis = await run_pass3(
-                    UUID(org_id), run_id, session,
-                    progress_cb=_discovery_progress_cb, model_config=org_config,
-                )
-                await session.commit()
-                _update("cross_domain_synthesis", "done", 1, 1)
-
-                _update("graph_generation", "pulling")
-                _update("graph_generation", "done")
-
-                run.status = "completed"
-                run.completed_at = datetime.now(tz=timezone.utc)
-                run.pass_results = {
-                    "domains": len(domains),
-                    "processes": process_count,
-                    "executive_summary": synthesis.get("executive_summary", ""),
-                }
-                await session.commit()
-
-                r.hset(run_key, "status", "completed")
-                logger.info(
-                    "discovery_complete org=%s run=%s domains=%d processes=%d",
-                    org_id,
-                    run_id,
-                    len(domains),
-                    process_count,
-                )
-                return str(run_id)
-
-            except Exception as exc:
-                logger.exception("discovery_failed org=%s", org_id)
                 try:
-                    await session.rollback()
-                except Exception:
-                    logger.exception("discovery_rollback_failed org=%s", org_id)
-                try:
-                    run.status = "failed"
-                    run.error = str(exc)[:2000]
-                    run.completed_at = datetime.now(tz=timezone.utc)
+                    _update("context_gathering", "pulling")
+                    await cleanup_previous_run(UUID(org_id), session)
                     await session.commit()
-                except Exception:
-                    logger.exception("failed_to_update_run_status org=%s", org_id)
-                r.hset(run_key, "status", "failed")
-                r.hset(run_key, "error", str(exc)[:500])
-                raise
+                    _update("context_gathering", "done")
+
+                    _update("domain_discovery", "pulling", 0, 1)
+                    domains = await run_pass1(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    _update("domain_discovery", "done", len(domains), max(len(domains), 1))
+
+                    _update("domain_decomposition", "pulling", 0, max(len(domains), 1))
+                    process_count = await run_pass2(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    _update("domain_decomposition", "done", process_count, max(process_count, 1))
+
+                    _update("cross_domain_synthesis", "pulling", 0, 1)
+                    synthesis = await run_pass3(
+                        UUID(org_id), run_id, session,
+                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    )
+                    await session.commit()
+                    _update("cross_domain_synthesis", "done", 1, 1)
+
+                    _update("graph_generation", "pulling")
+                    _update("graph_generation", "done")
+
+                    run.status = "completed"
+                    run.completed_at = datetime.now(tz=timezone.utc)
+                    run.pass_results = {
+                        "domains": len(domains),
+                        "processes": process_count,
+                        "executive_summary": synthesis.get("executive_summary", ""),
+                    }
+                    await session.commit()
+
+                    r.hset(run_key, "status", "completed")
+                    logger.info(
+                        "discovery_complete org=%s run=%s domains=%d processes=%d",
+                        org_id,
+                        run_id,
+                        len(domains),
+                        process_count,
+                    )
+                    return str(run_id)
+
+                except Exception as exc:
+                    logger.exception("discovery_failed org=%s", org_id)
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        logger.exception("discovery_rollback_failed org=%s", org_id)
+                    try:
+                        run.status = "failed"
+                        run.error = str(exc)[:2000]
+                        run.completed_at = datetime.now(tz=timezone.utc)
+                        await session.commit()
+                    except Exception:
+                        logger.exception("failed_to_update_run_status org=%s", org_id)
+                    r.hset(run_key, "status", "failed")
+                    r.hset(run_key, "error", str(exc)[:500])
+                    raise
+        finally:
+            await engine.dispose()
 
     try:
         lf = get_langfuse()
