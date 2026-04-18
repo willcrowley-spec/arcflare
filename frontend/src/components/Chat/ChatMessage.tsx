@@ -5,9 +5,14 @@ import { OptionCardGroup } from '@/components/Chat/OptionCard'
 import { SummaryCard } from '@/components/Chat/SummaryCard'
 import { useChatStore } from '@/stores/chatStore'
 
-function formatTime(iso: string) {
+function formatTimestamp(iso: string) {
   try {
-    return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    const d = new Date(iso)
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    if (isToday) return time
+    return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
   } catch {
     return ''
   }
@@ -26,13 +31,10 @@ function tryParseArc(content: string): ArcResponse | null {
 
 function ArcBubble({ text, time }: { text: string; time: string }) {
   return (
-    <div className="group flex justify-start px-2 py-1.5">
-      <div
-        title={time}
-        className="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm"
-      >
+    <div className="flex justify-start px-2 py-1.5">
+      <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm">
         <p className="whitespace-pre-wrap break-words">{text}</p>
-        <p className="mt-1 hidden text-[10px] text-slate-400 group-hover:block">{time}</p>
+        <p className="mt-1 text-[10px] text-slate-400">{time}</p>
       </div>
     </div>
   )
@@ -44,7 +46,7 @@ interface Props {
 }
 
 export function ChatMessage({ message, onQuickReply }: Props) {
-  const time = formatTime(message.created_at)
+  const time = formatTimestamp(message.created_at)
   const agentName = useChatStore((s) => s.agentName)
 
   const arcResponse = useMemo(() => {
@@ -67,13 +69,10 @@ export function ChatMessage({ message, onQuickReply }: Props) {
 
   if (message.role === 'user') {
     return (
-      <div className="group flex justify-end px-2 py-1.5">
-        <div
-          title={time}
-          className="max-w-[85%] rounded-2xl rounded-br-md bg-blue-50 px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm ring-1 ring-blue-100/80"
-        >
+      <div className="flex justify-end px-2 py-1.5">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-blue-50 px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm ring-1 ring-blue-100/80">
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          <p className="mt-1 hidden text-right text-[10px] text-slate-400 group-hover:block">{time}</p>
+          <p className="mt-1 text-right text-[10px] text-slate-400">{time}</p>
         </div>
       </div>
     )

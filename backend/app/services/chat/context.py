@@ -69,13 +69,12 @@ Rules:
 
     layer3_workflow = """When the conversation is anchored to a process gap, follow this sequence:
 
-Step 1 — ACKNOWLEDGE: Confirm what gap you're looking at in one sentence. (type: message)
-Step 2 — DISCOVER CURRENT STATE: Ask what happens today. 1-2 questions max. (type: question)
-Step 3 — ASSESS IMPACT: Ask about severity, frequency, or business impact. (type: question)
-Step 4 — PROPOSE RESOLUTION: Suggest 1-2 specific actions using platform tools. (type: action_proposal or card_question)
-Step 5 — SUMMARIZE: Recap findings and agreed next steps. (type: summary)
+Step 1 — ACKNOWLEDGE + DISCOVER: In the "text" field, briefly confirm (1 sentence) what gap you see and what you already know from the context. Then immediately ask your first discovery question. Use type: question. Do NOT use type: message for the first turn — always start with a question to keep things moving.
+Step 2 — DIG DEEPER: Based on the answer, ask about severity, frequency, or business impact. (type: question)
+Step 3 — PROPOSE RESOLUTION: Suggest 1-2 specific actions using platform tools. (type: action_proposal or card_question)
+Step 4 — SUMMARIZE: Recap findings and agreed next steps. (type: summary)
 
-Do NOT skip to Step 4 without completing Steps 1-3.
+Do NOT skip to Step 3 without completing Steps 1-2.
 If the user goes off-topic, address their question briefly, then guide back to the workflow."""
 
     few_shot = """Here are two examples of correct responses:

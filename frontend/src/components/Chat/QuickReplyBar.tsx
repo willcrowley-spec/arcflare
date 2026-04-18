@@ -10,7 +10,7 @@ export function QuickReplyBar({ options, onSelect }: QuickReplyBarProps) {
   const [selected, setSelected] = useState<string | null>(null)
 
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5 px-2">
+    <div className="mt-2 flex flex-col gap-1.5 px-2">
       {options.map((opt) => (
         <button
           key={opt.id}
@@ -21,7 +21,7 @@ export function QuickReplyBar({ options, onSelect }: QuickReplyBarProps) {
             onSelect(opt)
           }}
           className={
-            'rounded-full border px-3 py-1.5 text-xs font-medium transition ' +
+            'w-fit rounded-full border px-3 py-1.5 text-left text-xs font-medium transition ' +
             (selected === opt.id
               ? 'border-orange-300 bg-orange-50 text-orange-800'
               : selected !== null
@@ -29,7 +29,7 @@ export function QuickReplyBar({ options, onSelect }: QuickReplyBarProps) {
                 : 'border-slate-200 bg-white text-slate-700 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800')
           }
         >
-          <span className="mr-1 font-semibold text-slate-400">{opt.id.toUpperCase()}</span>
+          <span className="mr-1.5 font-semibold text-slate-400">{opt.id.toUpperCase()}</span>
           {opt.label}
         </button>
       ))}
