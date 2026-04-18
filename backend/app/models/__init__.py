@@ -8,6 +8,7 @@ from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject, RecordTelemetry
 from app.models.organization import Organization, User
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
+from app.models.prompt import PromptBlock, PromptOptimizationRun
 from app.models.recommendation import Recommendation
 
 __all__ = [
@@ -31,6 +32,8 @@ __all__ = [
     "ProcessEdge",
     "ProcessHandoff",
     "ProcessNode",
+    "PromptBlock",
+    "PromptOptimizationRun",
     "Recommendation",
     "RecordTelemetry",
     "User",
