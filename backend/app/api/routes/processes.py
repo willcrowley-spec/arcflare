@@ -19,6 +19,7 @@ from app.schemas.process import (
 from app.services.chat.actions import format_gap_handoff_item
 from app.services.processes.export import export_json, export_lucidchart, export_svg
 from app.services.processes.graph import build_process_graph
+from app.services.processes.domain_graph import get_domain_graph
 
 router = APIRouter()
 
@@ -211,6 +212,50 @@ async def put_process_nodes(
         updated += 1
     await db.commit()
     return {"updated": updated}
+
+
+@router.get("/{domain_id}/domain-graph")
+async def get_domain_graph_endpoint(
+    domain_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Return the full recursive hierarchy and edges for a domain."""
+    try:
+        return await get_domain_graph(domain_id, org.id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.put("/{domain_id}/domain-graph/positions")
+async def save_domain_positions(
+    domain_id: UUID,
+    body: dict,
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Persist manual position overrides for the domain map."""
+    proc = await db.get(BusinessProcess, domain_id)
+    if proc is None or proc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    proc.domain_map_positions = body.get("positions", {})
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/{domain_id}/domain-graph/positions")
+async def clear_domain_positions(
+    domain_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Clear saved position overrides (reset layout)."""
+    proc = await db.get(BusinessProcess, domain_id)
+    if proc is None or proc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Domain not found")
+    proc.domain_map_positions = {}
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
