@@ -469,3 +469,13 @@ export interface GapItem {
   is_gap: boolean
   needs_review: boolean
 }
+
+export type QuickOption = { id: string; label: string }
+export type CardOption = { id: string; label: string; description: string }
+
+export type ArcResponse =
+  | { type: 'message'; text: string }
+  | { type: 'question'; text: string; question: string; options: QuickOption[] }
+  | { type: 'card_question'; text: string; question: string; options: CardOption[] }
+  | { type: 'action_proposal'; text: string; action_type: string; payload: Record<string, unknown> }
+  | { type: 'summary'; text: string; findings: string[]; next_steps: string[] }

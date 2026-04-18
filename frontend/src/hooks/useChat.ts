@@ -21,6 +21,7 @@ interface SseCallbacks {
   onAction?: (action: StreamAction) => void
   onToolResult?: (result: StreamToolResult) => void
   onToolError?: (info: { tool: string; errors: string[] }) => void
+  onStatus?: (phase: string) => void
 }
 
 function handleSseBlock(block: string, callbacks: SseCallbacks) {
@@ -75,6 +76,11 @@ function handleSseBlock(block: string, callbacks: SseCallbacks) {
 
   if (eventName === 'tool_error' && typeof payload === 'object' && payload !== null) {
     callbacks.onToolError?.(payload as { tool: string; errors: string[] })
+  }
+
+  if (eventName === 'status' && typeof payload === 'object' && payload !== null && 'phase' in payload) {
+    const p = (payload as { phase?: string }).phase
+    if (typeof p === 'string') callbacks.onStatus?.(p)
   }
 }
 
@@ -157,6 +163,7 @@ export function useSendMessage(threadId: string | null) {
       onDelta,
       onAction,
       onToolResult,
+      onStatus,
       signal,
       threadId: threadIdOverride,
     }: {
@@ -164,6 +171,7 @@ export function useSendMessage(threadId: string | null) {
       onDelta?: (chunk: string) => void
       onAction?: (action: StreamAction) => void
       onToolResult?: (result: StreamToolResult) => void
+      onStatus?: (phase: string) => void
       signal?: AbortSignal
       /** Use immediately after creating a thread, before React state commits. */
       threadId?: string
@@ -175,7 +183,7 @@ export function useSendMessage(threadId: string | null) {
         const text = await res.text()
         throw new Error(text || res.statusText || `Request failed (${res.status})`)
       }
-      await consumeChatMessageStream(res, { onDelta, onAction, onToolResult })
+      await consumeChatMessageStream(res, { onDelta, onAction, onToolResult, onStatus })
       await qc.invalidateQueries({ queryKey: ['chat', 'thread', id] })
       await qc.invalidateQueries({ queryKey: ['chat', 'threads'] })
     },

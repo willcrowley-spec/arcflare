@@ -10,6 +10,9 @@ interface ChatState {
   pendingActionsCount: number
   /** Tracks recently dismissed gap IDs so the user can undo. */
   dismissedGaps: Map<string, ReturnType<typeof setTimeout>>
+  agentName: string
+  thinkingPhase: string | null
+  setThinkingPhase: (phase: string | null) => void
   openChat: () => void
   openContextualChat: (anchor: { type: string; id: string }, prompt?: string) => void
   closeChat: () => void
@@ -32,6 +35,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingMessageId: null,
   pendingActionsCount: 0,
   dismissedGaps: new Map(),
+  agentName: 'Arc',
+  thinkingPhase: null,
+  setThinkingPhase: (phase) => set({ thinkingPhase: phase }),
 
   openChat: () => set({ isOpen: true }),
 
