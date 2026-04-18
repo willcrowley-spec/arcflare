@@ -22,8 +22,8 @@ from app.services.processes.context import (
 )
 from app.services.processes.prompts import (
     build_pass1_prompt,
-    build_pass2_prompt,
     build_pass3_prompt,
+    build_stage2_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -235,7 +235,7 @@ async def run_pass2(
             )
 
             domain_dict = {"name": domain.name, "description": domain.description or ""}
-            prompt = await build_pass2_prompt(
+            prompt = await build_stage2_prompt(
                 org_id, db, org_ctx, domain_dict, meta_detail, doc_chunks,
             )
 
