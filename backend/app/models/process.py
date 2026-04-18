@@ -41,8 +41,6 @@ class BusinessProcess(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    efficiency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    automation_level: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, server_default="draft")
     source: Mapped[str | None] = mapped_column(String(50), nullable=True)
     sub_process_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -68,6 +66,29 @@ class BusinessProcess(Base):
     )
     actors: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     artifacts: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    trigger_conditions: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    decision_logic: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    system_touchpoints: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    success_criteria: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    failure_modes: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    value_classification: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    complexity_score: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    automation_potential: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    estimated_duration: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    estimated_frequency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sequencing: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     domain_map_positions: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

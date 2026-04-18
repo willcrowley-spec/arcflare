@@ -38,6 +38,12 @@ class DiscoveryRun(Base):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_by: Mapped[str] = mapped_column(String(100), nullable=False, server_default="system")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_scores: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    stage_results: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
 
     organization: Mapped["Organization"] = relationship("Organization")
 
