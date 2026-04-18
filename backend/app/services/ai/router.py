@@ -171,8 +171,10 @@ def llm_call(
     return result
 
 
-def parse_json_response(text: str) -> dict | list:
+def parse_json_response(text: str | None) -> dict | list:
     """Parse a JSON response, stripping markdown code fences if present."""
+    if not text:
+        raise ValueError("Empty LLM response — nothing to parse")
     raw = text.strip()
 
     if raw.startswith("```"):
@@ -281,11 +283,31 @@ def _call_gemini(
         contents=prompt,
         config=config,
     )
+
+    text = response.text
+    if text is None:
+        parts = []
+        try:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "thought") and part.thought:
+                    continue
+                if part.text:
+                    parts.append(part.text)
+        except (IndexError, AttributeError):
+            pass
+        text = "".join(parts) if parts else ""
+        if not text:
+            logger.warning(
+                "gemini_empty_response model=%s finish=%s",
+                model,
+                getattr(response.candidates[0], "finish_reason", "unknown") if response.candidates else "no_candidates",
+            )
+
     usage = response.usage_metadata
     return LLMResult(
-        text=response.text,
-        input_tokens=usage.prompt_token_count if usage else 0,
-        output_tokens=usage.candidates_token_count if usage else 0,
+        text=text,
+        input_tokens=getattr(usage, "prompt_token_count", 0) or 0 if usage else 0,
+        output_tokens=getattr(usage, "candidates_token_count", 0) or 0 if usage else 0,
         model=model,
         provider="gemini",
     )
