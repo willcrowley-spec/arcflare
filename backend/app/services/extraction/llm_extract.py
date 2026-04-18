@@ -3,13 +3,17 @@
 Used as fallback when spaCy NER misses domain-specific entities.
 """
 import logging
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ai.router import llm_call, parse_json_response
 from app.services.extraction.ner import ExtractedEntity
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_PROMPT = """Extract business entities from this text. Return ONLY a JSON array.
+_FALLBACK_EXTRACTION_PROMPT = """Extract business entities from this text. Return ONLY a JSON array.
 
 Each entity should have:
 - "name": the entity name
@@ -23,19 +27,59 @@ Text:
 
 JSON array:"""
 
-BATCH_PROMPT = """Extract business entities from each text section. Return ONLY a JSON object mapping section numbers to arrays of entities.
+_FALLBACK_BATCH_PROMPT = """Extract business entities from each text section. Return ONLY a JSON object mapping section numbers to arrays of entities.
 
-Each entity: {{"name": "...", "type": "process|metric|product|policy|team|system", "description": "..."}}
+Each entity: {"name": "...", "type": "process|metric|product|policy|team|system", "description": "..."}
 
 {sections}
 
 JSON object:"""
 
 
-def extract_with_llm(text: str, doc_id: str, model_config: dict | None = None) -> list[ExtractedEntity]:
+def _substitute_prompt_vars(template: str, **kwargs: str) -> str:
+    out = template
+    for key, val in kwargs.items():
+        out = out.replace("{" + key + "}", val)
+    return out
+
+
+async def get_entity_extraction_prompt(org_id: UUID | None, db: AsyncSession) -> str:
+    """Single-document entity_extraction: instructions + protocol, or fallback."""
+    blocks = await resolve_prompt_blocks("entity_extraction", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    if instructions and protocol:
+        return f"{instructions}\n\n{protocol}"
+    return _FALLBACK_EXTRACTION_PROMPT
+
+
+async def get_entity_extraction_batch_prompt(org_id: UUID | None, db: AsyncSession) -> str:
+    """Batch entity_extraction: instructions_batch + protocol, or fallback."""
+    blocks = await resolve_prompt_blocks("entity_extraction", org_id, db)
+    batch = (blocks.get("instructions_batch") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    if batch and protocol:
+        return f"{batch}\n\n{protocol}"
+    return _FALLBACK_BATCH_PROMPT
+
+
+async def extract_with_llm(
+    text: str,
+    doc_id: str,
+    model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
+) -> list[ExtractedEntity]:
     """Use LLM to extract complex entities from a single text passage."""
+    if org_id is not None and db is not None:
+        template = await get_entity_extraction_prompt(org_id, db)
+    else:
+        template = _FALLBACK_EXTRACTION_PROMPT
+
+    prompt = _substitute_prompt_vars(template, text=text[:3000])
+
     result = llm_call(
-        prompt=EXTRACTION_PROMPT.format(text=text[:3000]),
+        prompt=prompt,
         max_tokens=1000,
         tier="fast",
         operation="entity_extraction",
@@ -65,16 +109,29 @@ def extract_with_llm(text: str, doc_id: str, model_config: dict | None = None) -
     ]
 
 
-def extract_with_llm_batch(texts: list[str], doc_id: str, model_config: dict | None = None) -> list[ExtractedEntity]:
+async def extract_with_llm_batch(
+    texts: list[str],
+    doc_id: str,
+    model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
+) -> list[ExtractedEntity]:
     """Extract entities from multiple text chunks in a single API call."""
     all_entities: list[ExtractedEntity] = []
+
+    if org_id is not None and db is not None:
+        batch_template = await get_entity_extraction_batch_prompt(org_id, db)
+    else:
+        batch_template = _FALLBACK_BATCH_PROMPT
 
     for batch_start in range(0, len(texts), 10):
         batch = texts[batch_start:batch_start + 10]
         sections = "\n\n".join(f"--- Section {i} ---\n{t[:2000]}" for i, t in enumerate(batch))
 
+        prompt = _substitute_prompt_vars(batch_template, sections=sections)
+
         result = llm_call(
-            prompt=BATCH_PROMPT.format(sections=sections), max_tokens=2000, tier="fast",
+            prompt=prompt, max_tokens=2000, tier="fast",
             operation="entity_extraction", model_config=model_config,
         )
 

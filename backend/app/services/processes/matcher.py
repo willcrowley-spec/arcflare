@@ -9,6 +9,11 @@ similar or identical entities using a multi-stage approach:
 """
 import logging
 from dataclasses import dataclass
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +29,39 @@ class MatchResult:
     relationship: str  # "SAME_AS" or "RELATED_TO"
 
 
-def find_matches(
+_FALLBACK_LLM_DISAMBIGUATION_PROMPT = """Given these entity pairs found in business documents, determine which pairs refer to the same thing.
+
+{pairs_text}
+
+Return a JSON array of pair numbers that ARE the same entity. Example: [1, 3, 5]
+Only include pairs you are confident about."""
+
+
+def _substitute_prompt_vars(template: str, **kwargs: str) -> str:
+    out = template
+    for key, val in kwargs.items():
+        out = out.replace("{" + key + "}", val)
+    return out
+
+
+async def get_process_matching_prompt(org_id: UUID | None, db: AsyncSession) -> str:
+    """Load process_matching instructions + protocol with a {pairs_text} slot, or fall back."""
+    blocks = await resolve_prompt_blocks("process_matching", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    if instructions and protocol:
+        return instructions + "\n\n{pairs_text}\n\n" + protocol
+    return _FALLBACK_LLM_DISAMBIGUATION_PROMPT
+
+
+async def find_matches(
     entities: list[dict],
     fuzzy_threshold: float = 80.0,
     cosine_threshold: float = 0.75,
     use_llm: bool = True,
     model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
 ) -> list[MatchResult]:
     """Find matching entities across a set of entities.
 
@@ -69,7 +101,12 @@ def find_matches(
     if use_llm:
         ambiguous = [m for m in matches if m.match_type == "fuzzy" and m.score < 90]
         if ambiguous:
-            confirmed = _llm_disambiguate(ambiguous, model_config=model_config)
+            confirmed = await _llm_disambiguate(
+                ambiguous,
+                model_config=model_config,
+                org_id=org_id,
+                db=db,
+            )
             for m in matches:
                 if any(c.entity_a_id == m.entity_a_id and c.entity_b_id == m.entity_b_id for c in confirmed):
                     m.match_type = "llm_confirmed"
@@ -168,7 +205,12 @@ def _find_semantic_matches(entities, threshold, seen_pairs) -> list[MatchResult]
     return matches
 
 
-def _llm_disambiguate(ambiguous: list[MatchResult], model_config: dict | None = None) -> list[MatchResult]:
+async def _llm_disambiguate(
+    ambiguous: list[MatchResult],
+    model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
+) -> list[MatchResult]:
     """Use LLM to confirm or reject ambiguous entity matches."""
     from app.services.ai.router import llm_call, parse_json_response
 
@@ -177,12 +219,11 @@ def _llm_disambiguate(ambiguous: list[MatchResult], model_config: dict | None = 
         for i, m in enumerate(ambiguous[:20])
     )
 
-    prompt = f"""Given these entity pairs found in business documents, determine which pairs refer to the same thing.
-
-{pairs_text}
-
-Return a JSON array of pair numbers that ARE the same entity. Example: [1, 3, 5]
-Only include pairs you are confident about."""
+    if org_id is not None and db is not None:
+        template = await get_process_matching_prompt(org_id, db)
+    else:
+        template = _FALLBACK_LLM_DISAMBIGUATION_PROMPT
+    prompt = _substitute_prompt_vars(template, pairs_text=pairs_text)
 
     try:
         result = llm_call(

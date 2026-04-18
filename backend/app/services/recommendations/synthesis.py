@@ -5,6 +5,11 @@ documents with test cases and full source lineage tracking.
 """
 import logging
 from dataclasses import dataclass, field
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,50 @@ class BusinessProcessDoc:
     source_entity_ids: list[str] = field(default_factory=list)
     source_document_ids: list[str] = field(default_factory=list)
     confidence: float = 0.0
+
+
+_FALLBACK_PROCESS_DOCUMENT_PROMPT = """Based on these related business entities, generate a business process document.
+
+Entities:
+{entity_summary}
+{context}
+
+Return ONLY a JSON object:
+{
+    "title": "Process name",
+    "summary": "2-3 sentence description of this business process",
+    "steps": [
+        {"step_number": 1, "action": "What happens", "actor": "Who does it", "system": "Which system"}
+    ],
+    "test_cases": [
+        {"title": "Test case name", "scenario": "Given/When/Then", "expected_outcome": "What should happen"}
+    ],
+    "confidence": 0.0 to 1.0
+}"""
+
+
+def _substitute_prompt_vars(template: str, **kwargs: str) -> str:
+    out = template
+    for key, val in kwargs.items():
+        out = out.replace("{" + key + "}", val)
+    return out
+
+
+async def get_recommendations_prompt(org_id: UUID | None, db: AsyncSession) -> str:
+    """Load recommendations instructions, optional examples, protocol, with entity/context slots."""
+    blocks = await resolve_prompt_blocks("recommendations", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    examples = (blocks.get("examples") or "").strip()
+    if instructions and protocol:
+        dynamic = "Entities:\n{entity_summary}\n{context}"
+        parts = [instructions]
+        if examples:
+            parts.append(examples)
+        parts.append(dynamic)
+        parts.append(protocol)
+        return "\n\n".join(parts)
+    return _FALLBACK_PROCESS_DOCUMENT_PROMPT
 
 
 def cluster_entities(
@@ -64,10 +113,12 @@ def cluster_entities(
         return [embedded]
 
 
-def generate_process_document(
+async def generate_process_document(
     cluster: list[dict],
     context_chunks: list[str] | None = None,
     model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
 ) -> BusinessProcessDoc | None:
     """Generate a business process document from a cluster of related entities.
 
@@ -89,24 +140,12 @@ def generate_process_document(
     if context_chunks:
         context = "\n\nRelevant document excerpts:\n" + "\n---\n".join(context_chunks[:5])
 
-    prompt = f"""Based on these related business entities, generate a business process document.
+    if org_id is not None and db is not None:
+        template = await get_recommendations_prompt(org_id, db)
+    else:
+        template = _FALLBACK_PROCESS_DOCUMENT_PROMPT
 
-Entities:
-{entity_summary}
-{context}
-
-Return ONLY a JSON object:
-{{
-    "title": "Process name",
-    "summary": "2-3 sentence description of this business process",
-    "steps": [
-        {{"step_number": 1, "action": "What happens", "actor": "Who does it", "system": "Which system"}}
-    ],
-    "test_cases": [
-        {{"title": "Test case name", "scenario": "Given/When/Then", "expected_outcome": "What should happen"}}
-    ],
-    "confidence": 0.0 to 1.0
-}}"""
+    prompt = _substitute_prompt_vars(template, entity_summary=entity_summary, context=context)
 
     try:
         result = llm_call(
@@ -129,11 +168,13 @@ Return ONLY a JSON object:
         return None
 
 
-def synthesize_processes(
+async def synthesize_processes(
     entities: list[dict],
     context_chunks: list[str] | None = None,
     min_cluster_size: int = 3,
     model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
 ) -> list[BusinessProcessDoc]:
     """Full synthesis pipeline: cluster entities, then generate process docs.
 
@@ -151,7 +192,13 @@ def synthesize_processes(
     docs: list[BusinessProcessDoc] = []
     for i, cluster in enumerate(clusters):
         logger.info("generating_process cluster=%d/%d entities=%d", i + 1, len(clusters), len(cluster))
-        doc = generate_process_document(cluster, context_chunks, model_config=model_config)
+        doc = await generate_process_document(
+            cluster,
+            context_chunks,
+            model_config=model_config,
+            org_id=org_id,
+            db=db,
+        )
         if doc:
             docs.append(doc)
 

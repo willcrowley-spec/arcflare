@@ -3,11 +3,16 @@
 Generates business-context descriptions of platform objects including
 process roles, state fields, and key relationships.
 """
+import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.ai.router import llm_call, parse_json_response
 from app.services.connectors.base import PlatformObjectMeta
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +23,7 @@ _SYSTEM_FIELDS = {
     "OwnerId", "RecordTypeId",
 }
 
-DESCRIBE_PROMPT = """Analyze this platform object metadata and write a brief structured analysis.
+_FALLBACK_DESCRIBE_PROMPT = """Analyze this platform object metadata and write a brief structured analysis.
 
 Object: {object_name}
 Label: {label}
@@ -31,17 +36,44 @@ Relationships:
 {relationship_summary}
 
 Respond with ONLY a JSON object:
-{{
+{
     "description": "3-4 specific sentences about what business function this object serves.",
     "business_processes": ["List of business process names this object participates in"],
     "state_fields": [
-        {{"field": "API field name", "stages": ["ordered values"], "represents": "what progression"}}
+        {"field": "API field name", "stages": ["ordered values"], "represents": "what progression"}
     ],
     "key_relationships": [
-        {{"target_object": "API name", "relationship_type": "Lookup or MasterDetail", "business_meaning": "meaning"}}
+        {"target_object": "API name", "relationship_type": "Lookup or MasterDetail", "business_meaning": "meaning"}
     ],
     "process_role": "primary_process_object | supporting_object | reference_data | junction_object | system_object"
-}}"""
+}"""
+
+_METADATA_DYNAMIC_BODY = """Object: {object_name}
+Label: {label}
+Record count: {record_count}
+
+Fields (name -- type -- label):
+{field_summary}
+
+Relationships:
+{relationship_summary}"""
+
+
+def _substitute_prompt_vars(template: str, **kwargs: str) -> str:
+    out = template
+    for key, val in kwargs.items():
+        out = out.replace("{" + key + "}", val)
+    return out
+
+
+async def get_describe_prompt(org_id: UUID | None, db: AsyncSession) -> str:
+    """Load metadata_enrichment instructions + protocol from the store, or fall back."""
+    blocks = await resolve_prompt_blocks("metadata_enrichment", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    if instructions and protocol:
+        return f"{instructions}\n\n{_METADATA_DYNAMIC_BODY}\n\n{protocol}"
+    return _FALLBACK_DESCRIBE_PROMPT
 
 
 def build_field_summary(obj: PlatformObjectMeta) -> str:
@@ -76,12 +108,17 @@ def build_relationship_summary(obj: PlatformObjectMeta) -> str:
     return "\n".join(lines) if lines else "None"
 
 
-def describe_object(obj: PlatformObjectMeta, model_config: dict | None = None) -> dict:
-    """Generate AI description for a single platform object."""
-    prompt = DESCRIBE_PROMPT.format(
+def _describe_object_with_template(
+    obj: PlatformObjectMeta,
+    template: str,
+    model_config: dict | None = None,
+) -> dict:
+    """Generate AI description for a single platform object (sync; for thread pool)."""
+    prompt = _substitute_prompt_vars(
+        template,
         object_name=obj.api_name,
         label=obj.label,
-        record_count=obj.record_count,
+        record_count=str(obj.record_count),
         field_summary=build_field_summary(obj),
         relationship_summary=build_relationship_summary(obj),
     )
@@ -105,27 +142,60 @@ def describe_object(obj: PlatformObjectMeta, model_config: dict | None = None) -
     return data
 
 
-def describe_all_objects(
+async def describe_object(
+    obj: PlatformObjectMeta,
+    model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
+) -> dict:
+    """Generate AI description for a single platform object."""
+    if org_id is not None and db is not None:
+        template = await get_describe_prompt(org_id, db)
+    else:
+        template = _FALLBACK_DESCRIBE_PROMPT
+    return _describe_object_with_template(obj, template, model_config=model_config)
+
+
+async def describe_all_objects(
     objects: list[PlatformObjectMeta],
     max_workers: int = 4,
     model_config: dict | None = None,
+    org_id: UUID | None = None,
+    db: AsyncSession | None = None,
 ) -> list[dict]:
     """Generate descriptions for all platform objects concurrently."""
     describable = [obj for obj in objects if obj.field_count > 3]
     logger.info("describing_objects count=%d", len(describable))
 
+    if org_id is not None and db is not None:
+        template = await get_describe_prompt(org_id, db)
+    else:
+        template = _FALLBACK_DESCRIBE_PROMPT
+
+    loop = asyncio.get_running_loop()
     descriptions: list[dict | None] = [None] * len(describable)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(describe_object, obj, model_config): i
-            for i, obj in enumerate(describable)
-        }
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                descriptions[idx] = future.result()
-            except Exception as e:
-                logger.warning("describe_failed object=%s error=%s", describable[idx].api_name, e)
+        tasks = [
+            loop.run_in_executor(
+                executor,
+                _describe_object_with_template,
+                obj,
+                template,
+                model_config,
+            )
+            for obj in describable
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.warning(
+                "describe_failed object=%s error=%s",
+                describable[i].api_name,
+                result,
+            )
+        else:
+            descriptions[i] = result
 
     return [d for d in descriptions if d is not None]
