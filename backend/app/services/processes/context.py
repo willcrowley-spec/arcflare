@@ -196,3 +196,106 @@ async def gather_document_chunks_for_domain(
         {"content": c.content or "", "document_id": str(c.document_id)}
         for c in chunks
     ]
+
+
+async def semantic_document_search(
+    org_id: UUID,
+    db: AsyncSession,
+    query_text: str,
+    limit: int = 10,
+) -> list[dict]:
+    """Find document chunks semantically similar to query_text using pgvector."""
+    from app.services.ai.router import get_embedding_provider
+    from app.services.documents.vectorizer import _embed
+
+    client = get_embedding_provider()
+    if client is None:
+        logger.warning("no_embedding_provider org_id=%s", org_id)
+        return await gather_document_chunks_for_domain(org_id, db, query_text, limit)
+
+    try:
+        query_embedding = await _embed(client, query_text)
+    except Exception as exc:
+        logger.error("embedding_failed org_id=%s error=%s", org_id, exc)
+        return await gather_document_chunks_for_domain(org_id, db, query_text, limit)
+
+    docs_q = await db.execute(
+        select(Document.id).where(Document.org_id == org_id, Document.status == "indexed")
+    )
+    doc_ids = [row[0] for row in docs_q.all()]
+    if not doc_ids:
+        return []
+
+    chunks_q = await db.execute(
+        select(DocumentChunk)
+        .where(
+            DocumentChunk.document_id.in_(doc_ids),
+            DocumentChunk.embedding.isnot(None),
+        )
+        .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+    chunks = chunks_q.scalars().all()
+    return [
+        {
+            "content": c.content or "",
+            "document_id": str(c.document_id),
+            "section_title": c.section_title,
+        }
+        for c in chunks
+    ]
+
+
+async def gather_metadata_relationships(
+    org_id: UUID,
+    db: AsyncSession,
+    object_names: list[str],
+) -> dict:
+    """Lookup/master-detail relationships and automation trigger chains between objects."""
+    if not object_names:
+        return {"relationships": [], "automations": []}
+
+    obj_ids_q = await db.execute(
+        select(MetadataObject.id).where(
+            MetadataObject.org_id == org_id,
+            MetadataObject.api_name.in_(object_names),
+        )
+    )
+    obj_ids = [row[0] for row in obj_ids_q.all()]
+
+    if not obj_ids:
+        return {"relationships": [], "automations": []}
+
+    fields_q = await db.execute(
+        select(MetadataField).where(
+            MetadataField.object_id.in_(obj_ids),
+            MetadataField.relationship_to.isnot(None),
+        )
+    )
+    relationships = []
+    for f in fields_q.scalars().all():
+        relationships.append(
+            {
+                "field": f.api_name,
+                "target_object": f.relationship_to,
+                "type": f.relationship_type or "Lookup",
+            }
+        )
+
+    autos_q = await db.execute(
+        select(MetadataAutomation).where(
+            MetadataAutomation.org_id == org_id,
+            MetadataAutomation.related_object.in_(object_names),
+        )
+    )
+    automations = [
+        {
+            "name": a.api_name,
+            "type": a.automation_type,
+            "trigger_object": a.related_object,
+            "details": a.metadata_json or {},
+        }
+        for a in autos_q.scalars().all()
+    ]
+
+    return {"relationships": relationships, "automations": automations}
