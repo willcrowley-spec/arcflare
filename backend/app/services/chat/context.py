@@ -112,6 +112,36 @@ async def _anchor_context(
             return {"anchor_type": at, "anchor_id": str(aid), "error": "Handoff not found"}
         src = await db.get(BusinessProcess, row.source_process_id)
         tgt = await db.get(BusinessProcess, row.target_process_id)
+
+        def _process_blob(proc: BusinessProcess | None) -> dict | None:
+            if proc is None:
+                return None
+            blob: dict = {
+                "id": str(proc.id),
+                "name": proc.name,
+                "level": proc.level,
+                "category": proc.category,
+                "status": proc.status,
+                "description": proc.description,
+                "narrative": proc.narrative,
+            }
+            if proc.actors:
+                blob["actors"] = proc.actors
+            if proc.artifacts:
+                blob["artifacts"] = proc.artifacts
+            return blob
+
+        src_domain = None
+        tgt_domain = None
+        if src and src.parent_id:
+            src_parent = await db.get(BusinessProcess, src.parent_id)
+            if src_parent:
+                src_domain = {"name": src_parent.name, "level": src_parent.level}
+        if tgt and tgt.parent_id:
+            tgt_parent = await db.get(BusinessProcess, tgt.parent_id)
+            if tgt_parent:
+                tgt_domain = {"name": tgt_parent.name, "level": tgt_parent.level}
+
         return {
             "anchor_type": at,
             "anchor_id": str(aid),
@@ -119,12 +149,16 @@ async def _anchor_context(
                 "id": str(row.id),
                 "handoff_type": row.handoff_type,
                 "description": row.description,
+                "confidence_score": row.confidence_score,
                 "is_gap": row.is_gap,
+                "needs_review": row.needs_review,
                 "gap_status": row.gap_status,
                 "resolution_note": row.resolution_note,
-                "source_process_name": src.name if src else None,
-                "target_process_name": tgt.name if tgt else None,
             },
+            "source_process": _process_blob(src),
+            "target_process": _process_blob(tgt),
+            "source_domain": src_domain,
+            "target_domain": tgt_domain,
         }
     if at in ("process", "domain"):
         proc = await db.get(BusinessProcess, aid)

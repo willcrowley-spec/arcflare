@@ -230,14 +230,25 @@ def stream_chat_with_tools(
         _gemini_client = genai.Client(api_key=getattr(settings, "GEMINI_API_KEY", ""))
 
     from google.genai import types
+    from app.services.ai.operations import get_output_format, get_thinking_budget
 
+    output_fmt = get_output_format(operation)
+    thinking = get_thinking_budget(operation)
     supports_thinking = "2.5-pro" in model or "2.5-flash" in model
+
     config_kwargs: dict = {
         "max_output_tokens": max_tokens,
         "tools": [tools],
         "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
     }
-    if supports_thinking:
+    if output_fmt == "json":
+        config_kwargs["response_mime_type"] = "application/json"
+        if supports_thinking:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+    elif supports_thinking and thinking > 0:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
+        config_kwargs["max_output_tokens"] = max_tokens + thinking
+    elif supports_thinking:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
 
     contents = _messages_to_gemini_contents(messages)
