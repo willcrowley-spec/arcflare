@@ -115,7 +115,10 @@ def process_discovery_task(org_id: str) -> str:
                     _update("cross_domain_synthesis", "done", 1, 1)
 
                     _update("graph_generation", "pulling")
-                    _update("graph_generation", "done")
+                    from app.services.processes.graph import generate_graphs_for_run
+                    graph_nodes = await generate_graphs_for_run(UUID(org_id), run_id, session)
+                    await session.commit()
+                    _update("graph_generation", "done", graph_nodes, graph_nodes)
 
                     run.status = "completed"
                     run.completed_at = datetime.now(tz=timezone.utc)

@@ -25,6 +25,7 @@ router = APIRouter()
 class ProcessListResponse(BaseModel):
     items: list[ProcessResponse]
     kpis: ProcessKpis
+    tree: list[dict] = []
 
 
 class NodeBulkUpdate(BaseModel):
@@ -39,39 +40,33 @@ async def list_processes(
     q = await db.execute(
         select(BusinessProcess).where(BusinessProcess.org_id == org.id).order_by(BusinessProcess.name)
     )
-    rows = q.scalars().all()
-    items = [ProcessResponse.model_validate(r) for r in rows]
+    all_rows = q.scalars().all()
 
-    total = await db.scalar(
-        select(func.count()).select_from(BusinessProcess).where(BusinessProcess.org_id == org.id)
-    )
+    by_id: dict[UUID, ProcessResponse] = {}
+    children_map: dict[UUID | None, list[ProcessResponse]] = {}
+    for r in all_rows:
+        resp = ProcessResponse.model_validate(r)
+        by_id[r.id] = resp
+        children_map.setdefault(r.parent_id, []).append(resp)
+
+    def attach_children(item: ProcessResponse) -> dict:
+        d = item.model_dump()
+        kids = children_map.get(item.id, [])
+        d["children"] = [attach_children(c) for c in kids]
+        return d
+
+    roots = children_map.get(None, [])
+    items_tree = [attach_children(r) for r in roots]
+    items_flat = [ProcessResponse.model_validate(r) for r in all_rows]
+
+    total = len(all_rows)
     avg_eff = await db.scalar(
         select(func.avg(BusinessProcess.efficiency_score)).where(BusinessProcess.org_id == org.id)
     )
-    draft_c = await db.scalar(
-        select(func.count()).select_from(BusinessProcess).where(
-            BusinessProcess.org_id == org.id,
-            BusinessProcess.status == "draft",
-        )
-    )
-    pub_c = await db.scalar(
-        select(func.count()).select_from(BusinessProcess).where(
-            BusinessProcess.org_id == org.id,
-            BusinessProcess.status == "published",
-        )
-    )
-    domain_c = await db.scalar(
-        select(func.count()).select_from(BusinessProcess).where(
-            BusinessProcess.org_id == org.id,
-            BusinessProcess.level == "domain",
-        )
-    )
-    review_c = await db.scalar(
-        select(func.count()).select_from(BusinessProcess).where(
-            BusinessProcess.org_id == org.id,
-            BusinessProcess.needs_review == True,
-        )
-    )
+    draft_c = sum(1 for r in all_rows if r.status == "draft")
+    pub_c = sum(1 for r in all_rows if r.status == "published")
+    domain_c = sum(1 for r in all_rows if r.level == "domain")
+    review_c = sum(1 for r in all_rows if r.needs_review)
     handoff_c = await db.scalar(
         select(func.count()).select_from(ProcessHandoff).where(
             ProcessHandoff.org_id == org.id,
@@ -84,16 +79,16 @@ async def list_processes(
         )
     )
     kpis = ProcessKpis(
-        total_processes=int(total or 0),
+        total_processes=total,
         avg_efficiency=float(avg_eff) if avg_eff is not None else None,
-        draft_count=int(draft_c or 0),
-        published_count=int(pub_c or 0),
-        domain_count=int(domain_c or 0),
-        needs_review_count=int(review_c or 0),
+        draft_count=draft_c,
+        published_count=pub_c,
+        domain_count=domain_c,
+        needs_review_count=review_c,
         handoff_count=int(handoff_c or 0),
         gap_count=int(gap_c or 0),
     )
-    return ProcessListResponse(items=items, kpis=kpis)
+    return ProcessListResponse(items=items_flat, kpis=kpis, tree=items_tree)
 
 
 @router.get("/{process_id}")

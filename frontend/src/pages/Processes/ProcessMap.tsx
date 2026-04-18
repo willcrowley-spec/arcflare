@@ -30,6 +30,7 @@ type ApiGraphNode = {
   id: string
   type?: string
   label?: string | null
+  subtitle?: string | null
   position?: { x: number; y: number }
 }
 
@@ -63,7 +64,7 @@ function toFlowNodes(nodes: ApiGraphNode[] | undefined): Node<DemoData>[] {
       position: pos,
       data: {
         title: n.label?.trim() || 'Untitled step',
-        subtitle: (n.type ?? 'process').replace(/_/g, ' '),
+        subtitle: n.subtitle?.trim() || (n.type ?? 'process').replace(/_/g, ' '),
         variant,
       },
     }

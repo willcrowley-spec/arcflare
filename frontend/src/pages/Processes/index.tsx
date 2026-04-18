@@ -57,15 +57,23 @@ type ProcessItem = {
   needs_review?: boolean
   narrative?: string | null
   parent_id?: string | null
+  children?: ProcessItem[]
 }
 
-function normalizeProcessList(data: unknown): { items: ProcessItem[]; kpis: ProcessKpis } {
-  if (!data || typeof data !== 'object') return { items: [], kpis: {} }
-  const d = data as { items?: unknown[]; kpis?: ProcessKpis }
+function normalizeProcessList(data: unknown): {
+  items: ProcessItem[]
+  tree: ProcessItem[]
+  kpis: ProcessKpis
+} {
+  if (!data || typeof data !== 'object') return { items: [], tree: [], kpis: {} }
+  const d = data as { items?: unknown[]; tree?: unknown[]; kpis?: ProcessKpis }
   const items = Array.isArray(d.items)
     ? (d.items as ProcessItem[]).filter((p) => p && typeof p.id === 'string')
     : []
-  return { items, kpis: d.kpis ?? {} }
+  const tree = Array.isArray(d.tree)
+    ? (d.tree as ProcessItem[]).filter((p) => p && typeof p.id === 'string')
+    : []
+  return { items, tree, kpis: d.kpis ?? {} }
 }
 
 function hasPriorDiscovery(data: DiscoveryStatus | undefined): boolean {
@@ -117,7 +125,7 @@ export default function ProcessesPage() {
   const confirmMutation = useConfirmProcess()
   const rejectMutation = useRejectProcess()
 
-  const { items, kpis } = useMemo(() => normalizeProcessList(data), [data])
+  const { items, tree, kpis } = useMemo(() => normalizeProcessList(data), [data])
 
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [q, setQ] = useState('')
@@ -137,18 +145,34 @@ export default function ProcessesPage() {
     setOpen((s) => ({ ...s, [id]: !s[id] }))
   }, [])
 
+  const displayTree = useMemo(() => (tree.length > 0 ? tree : items), [tree, items])
+
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase()
-    if (!qq) return items
-    return items.filter(
-      (p) =>
+    if (!qq) return displayTree
+
+    function matchesSearch(p: ProcessItem): boolean {
+      return (
         p.name.toLowerCase().includes(qq) ||
         (p.category ?? '').toLowerCase().includes(qq) ||
         (p.description ?? '').toLowerCase().includes(qq) ||
         (p.narrative ?? '').toLowerCase().includes(qq) ||
-        (p.automation_level ?? '').toLowerCase().includes(qq),
-    )
-  }, [items, q])
+        (p.automation_level ?? '').toLowerCase().includes(qq)
+      )
+    }
+
+    function filterTree(nodes: ProcessItem[]): ProcessItem[] {
+      return nodes.reduce<ProcessItem[]>((acc, node) => {
+        const childMatches = filterTree(node.children ?? [])
+        if (matchesSearch(node) || childMatches.length > 0) {
+          acc.push({ ...node, children: childMatches.length > 0 ? childMatches : node.children })
+        }
+        return acc
+      }, [])
+    }
+
+    return filterTree(displayTree)
+  }, [displayTree, q])
 
   const discoveryKpis = useMemo(
     () => ({
@@ -205,6 +229,109 @@ export default function ProcessesPage() {
     )
   }, [discoveryBusy, priorDiscovery, handleStartDiscovery])
 
+  const renderProcessActions = useCallback(
+    (p: ProcessItem) => {
+      const isDiscovered = p.status.toLowerCase() === 'discovered'
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to={`/processes/${p.id}/map`}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Open process map
+          </Link>
+          {isDiscovered ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={confirmMutation.isPending || rejectMutation.isPending}
+                onClick={() => confirmMutation.mutate(p.id)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Check className="h-3.5 w-3.5" /> Confirm
+              </button>
+              <button
+                type="button"
+                disabled={confirmMutation.isPending || rejectMutation.isPending}
+                onClick={() => rejectMutation.mutate(p.id)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <X className="h-3.5 w-3.5" /> Reject
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )
+    },
+    [confirmMutation, rejectMutation],
+  )
+
+  const renderChildren = useCallback(
+    (children: ProcessItem[], depth: number) => {
+      if (!children.length) return null
+      return (
+        <div className={clsx('space-y-2', depth === 0 ? 'mt-3' : 'mt-2 ml-4')}>
+          {children.map((child) => {
+            const childExpanded = open[child.id] ?? false
+            const childHealth = processHealthFromStatus(child.status)
+            const childConf = confidenceBadgeForScore(child.confidence_score ?? null)
+            const childKids = child.children ?? []
+            const childMeta = [
+              childKids.length > 0 ? `${childKids.length} sub-processes` : null,
+              child.level,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <div
+                key={child.id}
+                className={clsx(
+                  'rounded-lg border bg-white/60',
+                  child.needs_review ? 'border-amber-200' : 'border-slate-200/60',
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleAccordionToggle(child.id)}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/60"
+                >
+                  <div className="flex min-w-0 flex-1 items-start gap-2">
+                    <span className="mt-0.5 shrink-0 text-slate-400">
+                      {childExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-navy-900">{child.name}</p>
+                      {childMeta ? <p className="mt-0.5 text-xs text-slate-500">{childMeta}</p> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {childConf}
+                    <StatusBadge status={childHealth} />
+                  </div>
+                </button>
+                {childExpanded ? (
+                  <div className="border-t border-slate-100 px-4 py-3">
+                    {child.description ? <p className="text-sm text-slate-600">{child.description}</p> : null}
+                    {child.narrative ? (
+                      <div className="mt-2 rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Narrative</p>
+                        <p className="mt-1 text-sm leading-relaxed text-slate-700">{child.narrative}</p>
+                      </div>
+                    ) : null}
+                    <div className="mt-2">{renderProcessActions(child)}</div>
+                    {childKids.length > 0 ? renderChildren(childKids, depth + 1) : null}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      )
+    },
+    [open, handleAccordionToggle, renderProcessActions],
+  )
+
   const listSection = useMemo(() => {
     if (filtered.length === 0) {
       return (
@@ -219,17 +346,18 @@ export default function ProcessesPage() {
       <div className="space-y-3">
         {filtered.map((p) => {
           const expanded = open[p.id] ?? false
+          const kids = p.children ?? []
+          const childCount = kids.length || p.sub_process_count
           const meta = [
-            `${p.sub_process_count} sub-processes`,
-            `${p.managed_asset_count} assets`,
-            p.category ? p.category : 'Uncategorized',
+            childCount > 0 ? `${childCount} sub-processes` : null,
+            p.managed_asset_count > 0 ? `${p.managed_asset_count} assets` : null,
+            p.category ? p.category : null,
             p.level ? p.level : null,
           ]
             .filter(Boolean)
             .join(' · ')
           const health = processHealthFromStatus(p.status)
           const confBadge = confidenceBadgeForScore(p.confidence_score ?? null)
-          const isDiscovered = p.status.toLowerCase() === 'discovered'
           return (
             <AccordionRow
               key={p.id}
@@ -249,62 +377,15 @@ export default function ProcessesPage() {
                     <p className="mt-1 text-sm leading-relaxed text-slate-700">{p.narrative}</p>
                   </div>
                 ) : null}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link
-                    to={`/processes/${p.id}/map`}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
-                  >
-                    <GitBranch className="h-3.5 w-3.5" />
-                    Open process map
-                  </Link>
-                  {isDiscovered ? (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={confirmMutation.isPending || rejectMutation.isPending}
-                        onClick={() => confirmMutation.mutate(p.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Check className="h-3.5 w-3.5" /> Confirm
-                      </button>
-                      <button
-                        type="button"
-                        disabled={confirmMutation.isPending || rejectMutation.isPending}
-                        onClick={() => rejectMutation.mutate(p.id)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <X className="h-3.5 w-3.5" /> Reject
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-                {p.automation_level || p.efficiency_score != null ? (
-                  <SubProcess
-                    title="Automation profile"
-                    tags={
-                      [p.automation_level, p.efficiency_score != null ? `Efficiency ${Number(p.efficiency_score).toFixed(1)}` : null].filter(
-                        Boolean,
-                      ) as string[]
-                    }
-                    stat={p.source ? `Source: ${p.source}` : 'Mined from connected platforms'}
-                    tone="ok"
-                  />
-                ) : null}
+                {renderProcessActions(p)}
+                {kids.length > 0 ? renderChildren(kids, 0) : null}
               </div>
             </AccordionRow>
           )
         })}
       </div>
     )
-  }, [
-    confirmMutation.isPending,
-    confirmMutation.mutate,
-    filtered,
-    handleAccordionToggle,
-    open,
-    rejectMutation.isPending,
-    rejectMutation.mutate,
-  ])
+  }, [filtered, handleAccordionToggle, open, renderProcessActions, renderChildren])
 
   return (
     <div className="space-y-8">
