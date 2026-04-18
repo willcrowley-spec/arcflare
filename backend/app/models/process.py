@@ -68,6 +68,9 @@ class BusinessProcess(Base):
     )
     actors: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     artifacts: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    domain_map_positions: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
 
     organization: Mapped["Organization"] = relationship("Organization")
     children: Mapped[list["BusinessProcess"]] = relationship(
