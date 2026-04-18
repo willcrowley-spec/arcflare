@@ -65,6 +65,10 @@ def _safe_parse(text: str, label: str) -> dict:
 TOKEN_BUDGET_LIMIT = 100_000
 
 
+_RETRYABLE_ERROR_TYPES = {"RateLimitError", "InternalServerError", "ServiceUnavailableError", "APIConnectionError"}
+_BACKOFF_CAP = 60
+
+
 def _call_with_retry(
     prompt: str,
     max_tokens: int,
@@ -75,15 +79,16 @@ def _call_with_retry(
     retries: int = 2,
     budget_multiplier: float = 1.5,
 ) -> tuple[LLMResult, dict]:
-    """LLM call with automatic retry on JSON parse failure and rate-limit backoff.
+    """LLM call with retry for transient errors and JSON parse failures.
 
-    Returns (result, parsed_dict).  On the retry attempt, ``max_tokens``
-    is multiplied by ``budget_multiplier`` to give the model more room.
-    Prompts exceeding TOKEN_BUDGET_LIMIT are truncated.
-
-    Rate-limit errors (429) get exponential backoff (30s, 60s, 90s) to
-    let the per-minute window drain before retrying.
+    Retry policy (per industry best practice):
+      - Only retries 429 (rate limit) and 5xx (server) errors.
+      - Reads ``retry-after`` header when available; otherwise uses full
+        jitter exponential backoff: ``random(0, min(cap, base * 2^attempt))``.
+      - 400/401/403 errors fail immediately (non-retryable).
+      - JSON parse failures retry with a larger ``max_tokens`` budget.
     """
+    import random as _random
     import time as _time
 
     est = _estimate_tokens(prompt)
@@ -107,18 +112,33 @@ def _call_with_retry(
                 operation=operation, model_config=model_config,
             )
         except Exception as exc:
-            is_rate_limit = "RateLimitError" in type(exc).__name__ or "rate_limit" in str(exc).lower()
+            exc_type = type(exc).__name__
+            is_retryable = any(t in exc_type for t in _RETRYABLE_ERROR_TYPES)
+            is_rate_limit = "RateLimitError" in exc_type or "rate_limit" in str(exc).lower()
+
             logger.error(
-                "llm_call_failed label=%s attempt=%d error=%s",
-                label, attempt + 1, exc,
+                "llm_call_failed label=%s attempt=%d retryable=%s error=%s",
+                label, attempt + 1, is_retryable, exc,
             )
-            if attempt < retries:
-                if is_rate_limit:
-                    backoff = 30 * (attempt + 1)
-                    logger.info("rate_limit_backoff label=%s sleep=%ds", label, backoff)
-                    _time.sleep(backoff)
-                continue
-            return _empty_llm_result(), {}
+
+            if not is_retryable or attempt >= retries:
+                return _empty_llm_result(), {}
+
+            retry_after = getattr(exc, "retry_after", None) or getattr(exc, "retry_after_ms", None)
+            if retry_after is not None:
+                wait = float(retry_after)
+                if wait > 1000:
+                    wait = wait / 1000.0
+                wait = min(wait, _BACKOFF_CAP)
+                logger.info("rate_limit_retry_after label=%s wait=%.1fs", label, wait)
+            elif is_rate_limit:
+                wait = min(_BACKOFF_CAP, 8 * (2 ** attempt)) + _random.uniform(0, 2)
+                logger.info("rate_limit_jitter_backoff label=%s wait=%.1fs", label, wait)
+            else:
+                wait = min(_BACKOFF_CAP, 2 * (2 ** attempt)) + _random.uniform(0, 1)
+
+            _time.sleep(wait)
+            continue
 
         parsed = _safe_parse(result.text, label)
         if parsed:
