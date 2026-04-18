@@ -89,7 +89,7 @@ For each domain:
 Do NOT use generic templates. Derive domains from what you actually see in the data.
 Objects with zero records or classified as "deprecated" have been excluded."""
 
-_DISCOVERY_DOMAIN_PROTOCOL = """Respond with ONLY a valid JSON object (not an array). The root MUST be an object with a "domains" key:
+_DISCOVERY_DOMAIN_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "domains": [
     {
@@ -126,7 +126,7 @@ Before decomposing, reason step by step:
 
 For each item, list which metadata artifacts (objects, flows, validation rules) you associate with it."""
 
-_DISCOVERY_STRUCTURE_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_STRUCTURE_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "processes": [
     {
@@ -169,7 +169,7 @@ For each step, trace backward from its artifacts:
 10. estimated_duration — minutes, hours, or days per execution
 11. estimated_frequency — per_transaction, daily, weekly, or monthly"""
 
-_DISCOVERY_ENRICHMENT_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_ENRICHMENT_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "enriched_steps": [
     {
@@ -204,7 +204,7 @@ If two steps read from the same trigger but write to different objects with no d
 ## Handoff Data Contracts
 For each handoff between processes, identify what data transfers — list specific Object.Field combinations that cross the boundary."""
 
-_DISCOVERY_FLOW_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_FLOW_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "step_flows": [
     {
@@ -249,7 +249,7 @@ Part B: For each issue, produce a specific fix. Output both the critique and the
 
 One critique, one patch. Do not iterate."""
 
-_DISCOVERY_VALIDATION_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_VALIDATION_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "critique": [
     {
@@ -282,7 +282,7 @@ _DISCOVERY_SYNTHESIS_INSTRUCTIONS = """You are a senior business process analyst
 3. Categorize orphaned artifacts — do they belong to an undiscovered process?
 4. Write a 3-paragraph executive summary: (1) core revenue flow, (2) supporting operations, (3) identified gaps and automation opportunities."""
 
-_DISCOVERY_SYNTHESIS_PROTOCOL = """Respond with valid JSON only:
+_DISCOVERY_SYNTHESIS_PROTOCOL = """Return a JSON object matching the enforced schema:
 {
   "cross_domain_handoffs": [
     {

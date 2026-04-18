@@ -405,26 +405,27 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
 
 
 def _build_gemini_config(max_tokens: int, model: str, operation: str | None = None):
-    """Build a GenerateContentConfig with JSON mode and per-operation thinking budget.
+    """Build a GenerateContentConfig with JSON mode, schema enforcement, and thinking budget.
 
-    Strategy driven by research into Gemini 2.5 thinking-budget bugs
+    JSON operations use Gemini's constrained decoding via ``response_schema``
+    so the model is structurally unable to return a shape that violates the
+    contract (e.g. a raw array when the schema requires an object root).
+    This replaces fragile prompt-level "please return this JSON" instructions
+    with API-level enforcement.
+
+    Thinking budget strategy driven by research into Gemini 2.5 bugs
     (googleapis/python-genai #782, #1405, #2062):
     - ``max_output_tokens`` is a COMBINED cap for thinking + output tokens.
-    - The ``thinking_budget`` parameter is sometimes ignored by the model.
-    - This causes truncated/empty responses when the model overspends on thinking.
-
-    Enterprise fix:
-    - JSON-output operations → ``response_mime_type="application/json"`` with
-      thinking disabled.  Gemini enforces valid JSON at the API level, eliminating
-      parse failures.  The model is still 2.5 Pro — quality stays high.
-    - Text-output operations → thinking enabled with generous ``max_output_tokens``
-      headroom so the model can reason deeply without truncating the response.
+    - JSON operations → thinking disabled (constrained decoding is sufficient).
+    - Text operations → thinking enabled with generous headroom.
     """
     from app.services.ai.operations import get_output_format, get_thinking_budget
+    from app.services.ai.response_schemas import get_response_schema
 
     output_fmt = get_output_format(operation)
     thinking = get_thinking_budget(operation)
     supports_thinking = "2.5-pro" in model or "2.5-flash" in model
+    schema = get_response_schema(operation)
 
     try:
         from google.genai import types
@@ -433,6 +434,8 @@ def _build_gemini_config(max_tokens: int, model: str, operation: str | None = No
 
         if output_fmt == "json":
             kwargs["response_mime_type"] = "application/json"
+            if schema:
+                kwargs["response_schema"] = schema
             if supports_thinking:
                 kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         elif supports_thinking and thinking > 0:
@@ -449,6 +452,8 @@ def _build_gemini_config(max_tokens: int, model: str, operation: str | None = No
         config: dict = {"max_output_tokens": max_tokens}
         if output_fmt == "json":
             config["response_mime_type"] = "application/json"
+            if schema:
+                config["response_schema"] = schema
         if not supports_thinking:
             config["temperature"] = 0
         return config
