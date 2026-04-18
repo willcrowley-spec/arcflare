@@ -14,6 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
+from app.core.model_prices import compute_cost
+from app.core.observability import langfuse_context, langfuse_generation, langfuse_span
 from app.core.security import CurrentUser
 from app.models.chat import ChatAction, ChatMessage, ChatThread
 from app.models.organization import Organization, User
@@ -359,176 +361,200 @@ async def send_message(
             )
             gemini_tools = None
 
-        try:
-            from app.core.observability import langfuse_span
+        org_id_str = str(thread.org_id)
 
+        with langfuse_context(
+            user_id=str(u.id), org_id=org_id_str, session_id=str(thread.id),
+        ):
             with langfuse_span(
                 name="chat_request",
-                session_id=str(thread.id),
                 metadata={"user_id": str(u.id), "thread_id": str(thread.id)},
             ) as span:
                 trace_id = _trace_id_from_span(span)
-        except Exception as lf_exc:
-            logger.warning("langfuse_span_failed thread=%s err=%s", thread_id_str, lf_exc)
-            trace_id = None
 
-        chunks: list[ChatStreamChunk] = []
-        yield f"event: status\ndata: {json.dumps({'phase': 'thinking'})}\n\n"
-        try:
-            chunks = await asyncio.to_thread(
-                _collect_stream_chunks, ctx, gemini_tools, analysis_config,
-            )
-        except Exception as collect_exc:
-            logger.exception("chat_stream_collect_failed thread=%s", thread_id_str)
-            yield (
-                "event: error\ndata: "
-                + json.dumps({"error": str(collect_exc), "code": "stream_collect_failed"})
-                + "\n\n"
-            )
-            err_text = f"Stream error: {collect_exc!s}"
-            text_parts.append(err_text)
-            yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
+                chunks: list[ChatStreamChunk] = []
+                yield f"event: status\ndata: {json.dumps({'phase': 'thinking'})}\n\n"
+                try:
+                    chunks = await asyncio.to_thread(
+                        _collect_stream_chunks, ctx, gemini_tools, analysis_config,
+                    )
+                except Exception as collect_exc:
+                    logger.exception("chat_stream_collect_failed thread=%s", thread_id_str)
+                    yield (
+                        "event: error\ndata: "
+                        + json.dumps({"error": str(collect_exc), "code": "stream_collect_failed"})
+                        + "\n\n"
+                    )
+                    err_text = f"Stream error: {collect_exc!s}"
+                    text_parts.append(err_text)
+                    yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
 
-        try:
-            for chunk in chunks:
-                if chunk.type == "text" and chunk.text:
-                    text_parts.append(chunk.text)
-                    parsed = parse_arc_response(chunk.text)
-                    yield f"event: text\ndata: {json.dumps({'chunk': json.dumps(parsed)})}\n\n"
+                try:
+                    for chunk in chunks:
+                        if chunk.type == "text" and chunk.text:
+                            text_parts.append(chunk.text)
+                            parsed = parse_arc_response(chunk.text)
+                            yield f"event: text\ndata: {json.dumps({'chunk': json.dumps(parsed)})}\n\n"
 
-                    if parsed.get("type") == "action_proposal":
-                        ap_action_type = str(parsed.get("action_type", ""))
-                        ap_payload = parsed.get("payload") or {}
-                        if ap_action_type:
-                            idem_key = f"{thread_id_str}:{user_msg_id}:arc_proposal:{ap_action_type}"
-                            action = ChatAction(
-                                thread_id=UUID(thread_id_str),
-                                message_id=user_msg_id,
-                                action_type=ap_action_type,
-                                target_id=_extract_target_id(ap_payload),
-                                payload=ap_payload,
-                                status="proposed",
-                                idempotency_key=idem_key[:100],
-                            )
-                            db.add(action)
-                            await db.commit()
-                            await db.refresh(action)
-                            action_data = {
-                                "action_id": str(action.id),
-                                "action_type": action.action_type,
-                                "target_id": str(action.target_id) if action.target_id else None,
-                                "payload": action.payload,
-                                "status": "proposed",
+                            if parsed.get("type") == "action_proposal":
+                                ap_action_type = str(parsed.get("action_type", ""))
+                                ap_payload = parsed.get("payload") or {}
+                                if ap_action_type:
+                                    idem_key = f"{thread_id_str}:{user_msg_id}:arc_proposal:{ap_action_type}"
+                                    action = ChatAction(
+                                        thread_id=UUID(thread_id_str),
+                                        message_id=user_msg_id,
+                                        action_type=ap_action_type,
+                                        target_id=_extract_target_id(ap_payload),
+                                        payload=ap_payload,
+                                        status="proposed",
+                                        idempotency_key=idem_key[:100],
+                                    )
+                                    db.add(action)
+                                    await db.commit()
+                                    await db.refresh(action)
+                                    action_data = {
+                                        "action_id": str(action.id),
+                                        "action_type": action.action_type,
+                                        "target_id": str(action.target_id) if action.target_id else None,
+                                        "payload": action.payload,
+                                        "status": "proposed",
+                                    }
+                                    actions_created.append(action_data)
+                                    yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
+
+                        elif chunk.type == "function_call":
+                            tool_def = get_tool(chunk.function_name)
+                            if not tool_def:
+                                logger.warning("unknown_tool_call name=%s", chunk.function_name)
+                                continue
+
+                            tc_record = {
+                                "name": chunk.function_name,
+                                "args": chunk.function_args or {},
+                                "call_id": chunk.function_call_id,
                             }
-                            actions_created.append(action_data)
-                            yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
+                            tool_calls_collected.append(tc_record)
 
-                elif chunk.type == "function_call":
-                    tool_def = get_tool(chunk.function_name)
-                    if not tool_def:
-                        logger.warning("unknown_tool_call name=%s", chunk.function_name)
-                        continue
+                            if tool_def["auto_execute"]:
+                                try:
+                                    result = await execute_auto_tool(
+                                        chunk.function_name,
+                                        chunk.function_args or {},
+                                        org_id,
+                                        db,
+                                    )
+                                    yield f"event: tool_result\ndata: {json.dumps({'tool': chunk.function_name, 'result': result})}\n\n"
+                                except Exception as exc:
+                                    logger.warning(
+                                        "auto_tool_failed name=%s err=%s", chunk.function_name, exc,
+                                    )
+                                    yield f"event: tool_result\ndata: {json.dumps({'tool': chunk.function_name, 'error': str(exc)})}\n\n"
+                            else:
+                                valid, errors, enriched = await validate_tool_call(
+                                    chunk.function_name,
+                                    chunk.function_args or {},
+                                    org_id,
+                                    db,
+                                )
+                                if not valid:
+                                    yield f"event: tool_error\ndata: {json.dumps({'tool': chunk.function_name, 'errors': errors})}\n\n"
+                                    continue
 
-                    tc_record = {
-                        "name": chunk.function_name,
-                        "args": chunk.function_args or {},
-                        "call_id": chunk.function_call_id,
-                    }
-                    tool_calls_collected.append(tc_record)
+                                idem_key = (
+                                    f"{thread_id_str}:{user_msg_id}:"
+                                    f"{chunk.function_name}:{chunk.function_call_id}"
+                                )
+                                action = ChatAction(
+                                    thread_id=UUID(thread_id_str),
+                                    message_id=user_msg_id,
+                                    action_type=chunk.function_name,
+                                    target_id=_extract_target_id(enriched),
+                                    payload=enriched,
+                                    status="proposed",
+                                    idempotency_key=idem_key[:100],
+                                )
+                                db.add(action)
+                                await db.commit()
+                                await db.refresh(action)
 
-                    if tool_def["auto_execute"]:
-                        try:
-                            result = await execute_auto_tool(
-                                chunk.function_name,
-                                chunk.function_args or {},
-                                org_id,
-                                db,
+                                action_data = {
+                                    "action_id": str(action.id),
+                                    "action_type": action.action_type,
+                                    "target_id": str(action.target_id) if action.target_id else None,
+                                    "payload": action.payload,
+                                    "status": "proposed",
+                                    "cascade_info": enriched.get("_cascade_info"),
+                                }
+                                actions_created.append(action_data)
+                                yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
+
+                        elif chunk.type == "done":
+                            total_tokens = chunk.input_tokens + chunk.output_tokens
+
+                        elif chunk.type == "error":
+                            text_parts.append(f"\n\nI encountered an error: {chunk.text}")
+                            yield f"event: text\ndata: {json.dumps({'chunk': f'I encountered an error: {chunk.text}'})}\n\n"
+
+                except Exception as exc:
+                    logger.exception("chat_stream_failed thread=%s", thread_id_str)
+                    yield (
+                        "event: error\ndata: "
+                        + json.dumps({"error": str(exc), "code": "stream_failed"})
+                        + "\n\n"
+                    )
+                    err_text = f"Stream error: {exc!s}"
+                    text_parts.append(err_text)
+                    yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
+
+                full_response_text = "".join(text_parts)
+
+                done_chunks = [c for c in chunks if c.type == "done"]
+                if done_chunks:
+                    dc = done_chunks[-1]
+                    with langfuse_generation(
+                        name="chat_completion",
+                        model=dc.model,
+                        input=body.content[:500],
+                    ) as gen:
+                        if gen is not None:
+                            gen.update(
+                                output=full_response_text[:1000] if full_response_text else "",
+                                usage_details={
+                                    "input": dc.input_tokens,
+                                    "output": dc.output_tokens,
+                                },
+                                cost_details=compute_cost(
+                                    dc.model, dc.input_tokens, dc.output_tokens,
+                                ),
                             )
-                            yield f"event: tool_result\ndata: {json.dumps({'tool': chunk.function_name, 'result': result})}\n\n"
-                        except Exception as exc:
-                            logger.warning("auto_tool_failed name=%s err=%s", chunk.function_name, exc)
-                            yield f"event: tool_result\ndata: {json.dumps({'tool': chunk.function_name, 'error': str(exc)})}\n\n"
-                    else:
-                        valid, errors, enriched = await validate_tool_call(
-                            chunk.function_name,
-                            chunk.function_args or {},
-                            org_id,
-                            db,
-                        )
-                        if not valid:
-                            yield f"event: tool_error\ndata: {json.dumps({'tool': chunk.function_name, 'errors': errors})}\n\n"
-                            continue
 
-                        idem_key = f"{thread_id_str}:{user_msg_id}:{chunk.function_name}:{chunk.function_call_id}"
-                        action = ChatAction(
-                            thread_id=UUID(thread_id_str),
-                            message_id=user_msg_id,
-                            action_type=chunk.function_name,
-                            target_id=_extract_target_id(enriched),
-                            payload=enriched,
-                            status="proposed",
-                            idempotency_key=idem_key[:100],
-                        )
-                        db.add(action)
-                        await db.commit()
-                        await db.refresh(action)
+                assistant_msg = ChatMessage(
+                    thread_id=UUID(thread_id_str),
+                    role="assistant",
+                    content=full_response_text,
+                    tool_calls=tool_calls_collected or [],
+                    token_count=total_tokens or None,
+                    langfuse_trace_id=trace_id,
+                )
+                db.add(assistant_msg)
 
-                        action_data = {
-                            "action_id": str(action.id),
-                            "action_type": action.action_type,
-                            "target_id": str(action.target_id) if action.target_id else None,
-                            "payload": action.payload,
-                            "status": "proposed",
-                            "cascade_info": enriched.get("_cascade_info"),
-                        }
-                        actions_created.append(action_data)
-                        yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
+                for action_data in actions_created:
+                    try:
+                        act = await db.get(ChatAction, UUID(action_data["action_id"]))
+                        if act:
+                            act.message_id = assistant_msg.id
+                    except Exception:
+                        pass
 
-                elif chunk.type == "done":
-                    total_tokens = chunk.input_tokens + chunk.output_tokens
+                thread_obj = await db.get(ChatThread, UUID(thread_id_str))
+                if thread_obj:
+                    thread_obj.message_count = int(thread_obj.message_count or 0) + 1
 
-                elif chunk.type == "error":
-                    text_parts.append(f"\n\nI encountered an error: {chunk.text}")
-                    yield f"event: text\ndata: {json.dumps({'chunk': f'I encountered an error: {chunk.text}'})}\n\n"
+                await db.commit()
+                await db.refresh(assistant_msg)
 
-        except Exception as exc:
-            logger.exception("chat_stream_failed thread=%s", thread_id_str)
-            yield (
-                "event: error\ndata: "
-                + json.dumps({"error": str(exc), "code": "stream_failed"})
-                + "\n\n"
-            )
-            err_text = f"Stream error: {exc!s}"
-            text_parts.append(err_text)
-            yield f"event: text\ndata: {json.dumps({'chunk': err_text})}\n\n"
-
-        full_text = "".join(text_parts)
-        assistant_msg = ChatMessage(
-            thread_id=UUID(thread_id_str),
-            role="assistant",
-            content=full_text,
-            tool_calls=tool_calls_collected or [],
-            token_count=total_tokens or None,
-            langfuse_trace_id=trace_id,
-        )
-        db.add(assistant_msg)
-
-        for action_data in actions_created:
-            try:
-                act = await db.get(ChatAction, UUID(action_data["action_id"]))
-                if act:
-                    act.message_id = assistant_msg.id
-            except Exception:
-                pass
-
-        thread_obj = await db.get(ChatThread, UUID(thread_id_str))
-        if thread_obj:
-            thread_obj.message_count = int(thread_obj.message_count or 0) + 1
-
-        await db.commit()
-        await db.refresh(assistant_msg)
-
-        yield f"event: done\ndata: {json.dumps({'message_id': str(assistant_msg.id)})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'message_id': str(assistant_msg.id)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
