@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { ChatMessage as ChatMessageRow, ArcResponse } from '@/types'
 import { QuickReplyBar } from '@/components/Chat/QuickReplyBar'
 import { OptionCardGroup } from '@/components/Chat/OptionCard'
@@ -79,6 +79,21 @@ export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
 
   const { displayed, done: textDone } = useTypewriter(fullText, !!animate, onTick)
   const showCursor = !!animate && !textDone
+
+  const onTickRef = useRef(onTick)
+  onTickRef.current = onTick
+
+  const optionCount = (arcResponse as { options?: unknown[] } | null)?.options?.length ?? 0
+
+  useEffect(() => {
+    if (!textDone || !onTickRef.current) return
+    // Scroll once immediately after options mount…
+    const raf = requestAnimationFrame(() => onTickRef.current?.())
+    // …and again after the last staggered option finishes fading in.
+    const staggerMs = optionCount * 80 + 300
+    const timer = window.setTimeout(() => onTickRef.current?.(), staggerMs)
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(timer) }
+  }, [textDone, optionCount])
 
   if (message.role === 'system' || message.role === 'tool_result') {
     return (
