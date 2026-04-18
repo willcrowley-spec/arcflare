@@ -124,21 +124,20 @@ Before decomposing, reason step by step:
 - Every leaf node must be a "step" — no empty containers.
 - Do NOT include actors, triggers, system touchpoints, or enrichment data. Pure structure only.
 
+## Output Format
+- Return a FLAT list of ALL items (processes, subprocesses, steps) in a single array.
+- Use parent_name to express hierarchy — do NOT nest children objects.
+- Items with no parent (top-level processes) should have parent_name: null.
+- Order: parents before their children (parent must appear earlier in the list than its children).
+
 For each item, list which metadata artifacts (objects, flows, validation rules) you associate with it."""
 
-_DISCOVERY_STRUCTURE_PROTOCOL = """Return a JSON object matching the enforced schema:
+_DISCOVERY_STRUCTURE_PROTOCOL = """Return a JSON object matching the enforced schema. Output a FLAT list of ALL items — processes, subprocesses, AND steps — with parent_name to express hierarchy. Do NOT nest children. Every leaf must be level "step".
 {
   "processes": [
-    {
-      "name": "string",
-      "level": "process|subprocess|step",
-      "description": "string",
-      "narrative": "string",
-      "confidence": 0.0,
-      "needs_review": false,
-      "artifacts": [{"type": "object|flow|validation_rule", "api_name": "string"}],
-      "children": []
-    }
+    {"name": "Lead Management", "level": "process", "parent_name": null, "description": "...", "narrative": "...", "confidence": 0.85, "needs_review": false, "artifacts": [{"type": "object", "api_name": "Lead"}]},
+    {"name": "Lead Scoring", "level": "subprocess", "parent_name": "Lead Management", "description": "...", "narrative": "...", "confidence": 0.8, "needs_review": false, "artifacts": []},
+    {"name": "Assign Lead Score", "level": "step", "parent_name": "Lead Scoring", "description": "...", "narrative": "...", "confidence": 0.75, "needs_review": true, "artifacts": [{"type": "flow", "api_name": "Lead_Score_Assignment"}]}
   ]
 }"""
 

@@ -270,12 +270,22 @@ async def run_stage2(
                     )
                 processes = []
 
-            async def persist_process(proc_data: dict, parent_id: UUID | None) -> None:
-                nonlocal total_processes
+            name_to_id: dict[str, UUID] = {}
+
+            for proc_data in processes:
+                if not isinstance(proc_data, dict):
+                    continue
+                name = str(proc_data.get("name", "Unnamed"))[:255]
+                parent_name = proc_data.get("parent_name")
+                if parent_name and str(parent_name) in name_to_id:
+                    parent_id = name_to_id[str(parent_name)]
+                else:
+                    parent_id = domain.id
+
                 confidence = float(proc_data.get("confidence", 0.5))
                 bp = BusinessProcess(
                     org_id=org_id,
-                    name=str(proc_data.get("name", "Unnamed"))[:255],
+                    name=name,
                     description=proc_data.get("description"),
                     level=str(proc_data.get("level", "process"))[:50],
                     parent_id=parent_id,
@@ -292,20 +302,10 @@ async def run_stage2(
                 )
                 db.add(bp)
                 await db.flush()
+                name_to_id[name] = bp.id
                 total_processes += 1
 
-                children = proc_data.get("children")
-                if not isinstance(children, list):
-                    children = []
-                for child in children:
-                    if isinstance(child, dict):
-                        await persist_process(child, bp.id)
-
-            for proc in processes:
-                if isinstance(proc, dict):
-                    await persist_process(proc, domain.id)
-
-            domain.sub_process_count = len(processes)
+            domain.sub_process_count = len(name_to_id)
             await db.flush()
 
         logger.info(

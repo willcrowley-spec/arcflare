@@ -38,11 +38,17 @@ DISCOVERY_STRUCTURE_SCHEMA: dict = {
     "properties": {
         "processes": {
             "type": "ARRAY",
+            "description": "Flat list of ALL items at every level. Use parent_name to express hierarchy.",
             "items": {
                 "type": "OBJECT",
                 "properties": {
                     "name": {"type": "STRING"},
                     "level": {"type": "STRING", "enum": ["process", "subprocess", "step"]},
+                    "parent_name": {
+                        "type": "STRING",
+                        "nullable": True,
+                        "description": "Name of the parent process/subprocess. null for top-level processes.",
+                    },
                     "description": {"type": "STRING"},
                     "narrative": {"type": "STRING"},
                     "confidence": {"type": "NUMBER"},
@@ -58,7 +64,6 @@ DISCOVERY_STRUCTURE_SCHEMA: dict = {
                             "required": ["type", "api_name"],
                         },
                     },
-                    "children": {"type": "ARRAY", "items": {"type": "OBJECT"}},
                 },
                 "required": ["name", "level", "description", "confidence"],
             },
