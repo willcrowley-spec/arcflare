@@ -125,7 +125,9 @@ async def run_pass1(
         meta_summary = await gather_metadata_summary(org_id, db)
         doc_summary = await gather_document_summary(org_id, db)
 
-        prompt = build_pass1_prompt(org_ctx, meta_summary, doc_summary)
+        prompt = await build_pass1_prompt(
+            org_id, db, org_ctx, meta_summary, doc_summary,
+        )
 
         result, parsed = _call_with_retry(
             prompt=prompt, max_tokens=8000, tier="strong",
@@ -233,7 +235,9 @@ async def run_pass2(
             )
 
             domain_dict = {"name": domain.name, "description": domain.description or ""}
-            prompt = build_pass2_prompt(org_ctx, domain_dict, meta_detail, doc_chunks)
+            prompt = await build_pass2_prompt(
+                org_id, db, org_ctx, domain_dict, meta_detail, doc_chunks,
+            )
 
             with _lf_span(f"pass2_domain_{domain.name}", metadata={"domain_index": i, "domain_total": len(domains)}):
                 result, parsed = _call_with_retry(
@@ -412,7 +416,9 @@ async def run_pass3(
             if isinstance(o, dict) and str(o.get("api_name", "")) not in claimed_objects
         ]
 
-        prompt = build_pass3_prompt(org_ctx, all_domains_data, orphaned)
+        prompt = await build_pass3_prompt(
+            org_id, db, org_ctx, all_domains_data, orphaned,
+        )
 
         result, parsed = _call_with_retry(
             prompt=prompt, max_tokens=8000, tier="strong",
