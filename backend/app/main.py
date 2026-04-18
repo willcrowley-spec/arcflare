@@ -16,6 +16,7 @@ from app.api.routes import (
     metadata,
     organization,
     processes,
+    prompts,
     recommendations,
 )
 from app.core.config import get_settings
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix=f"{api_prefix}/agents", tags=["agents"])
     app.include_router(discovery.router, prefix=f"{api_prefix}/discovery", tags=["discovery"])
     app.include_router(chat.router, prefix=f"{api_prefix}/chat", tags=["chat"])
+    app.include_router(prompts.router, prefix=f"{api_prefix}/prompts", tags=["prompts"])
 
     return app
 
