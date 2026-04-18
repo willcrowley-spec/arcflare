@@ -29,6 +29,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting Arcflare API (environment=%s)", settings.ENVIRONMENT)
     yield
+    from app.core.observability import shutdown_langfuse
+    shutdown_langfuse()
     logger.info("Shutting down Arcflare API")
 
 

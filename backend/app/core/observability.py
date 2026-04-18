@@ -54,6 +54,19 @@ def flush_langfuse():
             logger.warning("langfuse_flush_failed error=%s", e)
 
 
+def shutdown_langfuse():
+    """Graceful shutdown — flush and release the client. Call from FastAPI lifespan."""
+    global _langfuse_client
+    lf = _langfuse_client
+    if lf is not None:
+        try:
+            lf.flush()
+        except Exception as e:
+            logger.warning("langfuse_shutdown_flush_failed error=%s", e)
+    _langfuse_client = None
+    logger.info("langfuse_shutdown_complete")
+
+
 # ---------------------------------------------------------------------------
 # v3 context-manager helpers
 #
@@ -82,6 +95,47 @@ def _close_observation(mgr):
         mgr.__exit__(*sys.exc_info())
     except Exception:
         pass
+
+
+@contextmanager
+def langfuse_context(
+    user_id: str | None = None,
+    org_id: str | None = None,
+    session_id: str | None = None,
+) -> Generator[None, None, None]:
+    """Propagate user/org/session to all nested Langfuse observations.
+
+    Must wrap the outermost scope (API route handler, Celery task) so that
+    every ``langfuse_span`` and ``langfuse_generation`` inside automatically
+    inherits ``user_id``, ``session_id``, tags, and metadata.
+    """
+    lf = get_langfuse()
+    if lf is None:
+        yield
+        return
+
+    tags: list[str] = []
+    if org_id:
+        tags.append(f"org:{org_id}")
+    meta: dict[str, str] = {}
+    if org_id:
+        meta["org_id"] = org_id
+    if user_id:
+        meta["user_id"] = user_id
+
+    try:
+        from langfuse import propagate_attributes
+
+        with propagate_attributes(
+            user_id=user_id,
+            session_id=session_id,
+            tags=tags,
+            metadata=meta,
+        ):
+            yield
+    except Exception as e:
+        logger.warning("langfuse_context_failed error=%s", e)
+        yield
 
 
 @contextmanager
@@ -142,7 +196,8 @@ def langfuse_generation(
     """Open a Langfuse generation observation.
 
     Yields the observation object (or ``None``).  Caller should call
-    ``obs.update(output=..., usage=...)`` before exiting.
+    ``obs.update(output=..., usage_details=..., cost_details=...)`` before
+    exiting.
     """
     lf = get_langfuse()
     if lf is None:
@@ -156,3 +211,18 @@ def langfuse_generation(
         yield obs
     finally:
         _close_observation(mgr)
+
+
+def langfuse_score(name: str, value: float, comment: str | None = None) -> None:
+    """Post a numeric score to the current Langfuse trace.
+
+    Must be called inside an active ``langfuse_span`` or ``langfuse_generation``
+    context so the score attaches to the correct trace.
+    """
+    lf = get_langfuse()
+    if lf is None:
+        return
+    try:
+        lf.score(name=name, value=value, comment=comment)
+    except Exception as e:
+        logger.debug("langfuse_score_failed name=%s error=%s", name, e)
