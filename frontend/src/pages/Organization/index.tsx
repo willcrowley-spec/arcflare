@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useReanalyze, useUpdateOrgSettings } from '@/hooks/useApi'
+import { PromptsSection } from '@/components/PromptEditor/PromptsSection'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import type { AnalysisConfig, ModelCatalog, ModelOperation, PlatformConnection } from '@/types'
@@ -624,6 +625,14 @@ export default function OrganizationPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Prompt Management</h2>
+        <p className="mb-6 text-sm text-slate-500">
+          Customize the prompts used by each AI operation. Locked blocks maintain system integrity.
+        </p>
+        <PromptsSection />
       </section>
     </div>
   )
