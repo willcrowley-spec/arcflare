@@ -7,6 +7,7 @@ import {
   SendHorizontal,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useChatStore } from '@/stores/chatStore'
@@ -19,7 +20,7 @@ import {
   useThread,
   useThreads,
 } from '@/hooks/useChat'
-import type { ChatAction, ChatMessage as ChatMessageRow } from '@/types'
+import type { ArcResponse, ChatAction, ChatMessage as ChatMessageRow } from '@/types'
 import type { StreamAction } from '@/hooks/useChat'
 import { ActionCard } from '@/components/Chat/ActionCard'
 import { ChatMessage } from '@/components/Chat/ChatMessage'
@@ -47,6 +48,17 @@ export function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const didSendInitialRef = useRef(false)
 
+  const scrollToBottom = useCallback(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [])
+
+  const autoGrow = useCallback(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`
+  }, [])
+
   const { data: threads = [], isLoading: threadsLoading } = useThreads()
   const { data: detail, isLoading: detailLoading, isFetching } = useThread(activeThreadId)
 
@@ -71,11 +83,7 @@ export function ChatPanel() {
     }
   }, [isOpen, setThinkingPhase])
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [streamingText, detail?.messages])
+  useEffect(() => { scrollToBottom() }, [streamingText, detail?.messages, scrollToBottom])
 
   const handleSend = useCallback(
     async (overrideText?: string) => {
@@ -196,15 +204,16 @@ export function ChatPanel() {
             </p>
           ) : null}
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setThreadMenu((p) => !p)}
-            className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-            aria-label="Thread menu"
-          >
-            <List className="h-4 w-4" />
-          </button>
+        <div className="flex items-center gap-0.5">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setThreadMenu((p) => !p)}
+              className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Thread menu"
+            >
+              <List className="h-4 w-4" />
+            </button>
           {threadMenu ? (
             <>
               <button
@@ -305,6 +314,15 @@ export function ChatPanel() {
               </div>
             </>
           ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={closeChat}
+            className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            aria-label="Close chat"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       </header>
 
@@ -358,6 +376,7 @@ export function ChatPanel() {
                     message={m}
                     onQuickReply={handleQuickReply}
                     animate={m.role === 'assistant' && idx === sortedMessages.length - 1 && !streamingText}
+                    onTick={m.role === 'assistant' && idx === sortedMessages.length - 1 ? scrollToBottom : undefined}
                   />
                   {(proposedByMessageId.get(m.id) ?? []).map((a) => (
                     <ActionCard
@@ -375,16 +394,27 @@ export function ChatPanel() {
               ))
             )}
 
-            {streamingText ? (
-              <div className="group flex justify-start px-2 py-1.5">
-                <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm">
-                  <p className="whitespace-pre-wrap break-words">{streamingText}</p>
-                  <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-orange-500">
-                    <Loader2 className="h-2.5 w-2.5 animate-spin" /> Generating
-                  </span>
+            {streamingText ? (() => {
+              let parsed: ArcResponse | null = null
+              try {
+                const obj = JSON.parse(streamingText)
+                if (obj && typeof obj === 'object' && 'type' in obj) parsed = obj as ArcResponse
+              } catch { /* partial JSON — not parseable yet */ }
+
+              const displayText = parsed?.text
+              if (!displayText) return null
+
+              return (
+                <div className="group flex justify-start px-2 py-1.5">
+                  <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm">
+                    <p className="whitespace-pre-wrap break-words">{displayText}</p>
+                    <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-orange-500">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" /> Generating
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              )
+            })() : null}
 
             <ThinkingIndicator />
 
@@ -428,7 +458,8 @@ export function ChatPanel() {
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            disabled={!!streamingText || sendMessage.isPending}
+            onChange={(e) => { setInput(e.target.value); autoGrow() }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -436,14 +467,19 @@ export function ChatPanel() {
               }
             }}
             rows={1}
-            placeholder={`Message ${agentName}…`}
-            className="min-h-[38px] max-h-24 flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm text-slate-800 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20"
+            placeholder={streamingText ? `${agentName} is responding…` : `Message ${agentName}…`}
+            className={clsx(
+              'min-h-[44px] max-h-32 flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-[15px] leading-snug text-slate-800 shadow-inner shadow-slate-900/5 placeholder:text-slate-400 focus:border-orange-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-400/20',
+              streamingText || sendMessage.isPending
+                ? 'border-slate-100 bg-slate-50 opacity-60 cursor-not-allowed'
+                : 'border-slate-200 bg-slate-50/80',
+            )}
           />
           <button
             type="button"
             onClick={() => void handleSend()}
-            disabled={sendMessage.isPending || createThread.isPending || !input.trim()}
-            className="inline-flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={sendMessage.isPending || createThread.isPending || !input.trim() || !!streamingText}
+            className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Send"
           >
             {sendMessage.isPending || createThread.isPending ? (

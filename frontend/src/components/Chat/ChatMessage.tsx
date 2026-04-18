@@ -59,9 +59,11 @@ interface Props {
   onQuickReply?: (text: string) => void
   /** When true, text reveals word-by-word and interactive controls fade in after. */
   animate?: boolean
+  /** Fires on each typewriter tick — used by the parent to auto-scroll. */
+  onTick?: () => void
 }
 
-export function ChatMessage({ message, onQuickReply, animate }: Props) {
+export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
   const time = formatTimestamp(message.created_at)
 
   const arcResponse = useMemo(() => {
@@ -75,7 +77,7 @@ export function ChatMessage({ message, onQuickReply, animate }: Props) {
       : arcResponse.text
     : message.content
 
-  const { displayed, done: textDone } = useTypewriter(fullText, !!animate)
+  const { displayed, done: textDone } = useTypewriter(fullText, !!animate, onTick)
   const showCursor = !!animate && !textDone
 
   if (message.role === 'system' || message.role === 'tool_result') {
@@ -118,12 +120,11 @@ export function ChatMessage({ message, onQuickReply, animate }: Props) {
       <div>
         <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
         {showControls ? (
-          <div className={animate ? 'animate-[fade-in_300ms_ease-out]' : undefined}>
-            <QuickReplyBar
-              options={r.options}
-              onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-            />
-          </div>
+          <QuickReplyBar
+            options={r.options}
+            onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
+            stagger={!!animate}
+          />
         ) : null}
       </div>
     )
@@ -134,12 +135,11 @@ export function ChatMessage({ message, onQuickReply, animate }: Props) {
       <div>
         <ArcBubble text={`${r.text}\n\n${r.question}`} time={time} displayedText={animate ? displayed : undefined} showCursor={showCursor} />
         {showControls ? (
-          <div className={animate ? 'animate-[fade-in_300ms_ease-out]' : undefined}>
-            <OptionCardGroup
-              options={r.options}
-              onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
-            />
-          </div>
+          <OptionCardGroup
+            options={r.options}
+            onSelect={(opt) => onQuickReply?.(`[${opt.id.toUpperCase()}] ${opt.label}`)}
+            stagger={!!animate}
+          />
         ) : null}
       </div>
     )

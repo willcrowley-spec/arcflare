@@ -9,11 +9,19 @@ const WORD_INTERVAL_MS = 35
  *
  * If `enabled` is false the full text is returned immediately (for older
  * messages that shouldn't animate).
+ *
+ * `onTick` fires on each word reveal — useful for scrolling the container.
  */
-export function useTypewriter(text: string, enabled: boolean) {
+export function useTypewriter(
+  text: string,
+  enabled: boolean,
+  onTick?: () => void,
+) {
   const [wordIndex, setWordIndex] = useState(0)
   const wordsRef = useRef<string[]>([])
   const prevTextRef = useRef('')
+  const onTickRef = useRef(onTick)
+  onTickRef.current = onTick
 
   if (text !== prevTextRef.current) {
     prevTextRef.current = text
@@ -31,6 +39,7 @@ export function useTypewriter(text: string, enabled: boolean) {
 
     const id = window.setTimeout(() => {
       setWordIndex((i) => Math.min(i + 1, total))
+      onTickRef.current?.()
     }, WORD_INTERVAL_MS)
 
     return () => window.clearTimeout(id)
