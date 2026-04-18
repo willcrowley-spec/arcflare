@@ -235,13 +235,15 @@ export default function ProcessesPage() {
       const isDiscovered = p.status.toLowerCase() === 'discovered'
       return (
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to={`/processes/${p.id}/map`}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            Open process map
-          </Link>
+          {p.level === 'domain' ? (
+            <Link
+              to={`/processes/${p.id}/map`}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              Open process map
+            </Link>
+          ) : null}
           {isDiscovered ? (
             <div className="flex flex-wrap gap-2">
               <button
@@ -398,15 +400,19 @@ export default function ProcessesPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {items[0] ? (
-            <Link
-              to={`/processes/${items[0].id}/map`}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
-            >
-              <GitBranch className="h-4 w-4" />
-              Process Map
-            </Link>
-          ) : null}
+          {(() => {
+            const firstDomain = items.find((i) => i.level === 'domain')
+            if (!firstDomain) return null
+            return (
+              <Link
+                to={`/processes/${firstDomain.id}/map`}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+              >
+                <GitBranch className="h-4 w-4" />
+                Process Map
+              </Link>
+            )
+          })()}
           {discoveryButton}
         </div>
       </div>
