@@ -247,6 +247,40 @@ export interface ProcessEdge {
   label?: string
 }
 
+export interface DomainGraphNode {
+  id: string
+  name: string
+  parent_id: string | null
+  level: string
+  status: string
+  confidence_score: number | null
+  needs_review: boolean
+  description: string | null
+  is_leaf: boolean
+  leaf_count: number
+  children: DomainGraphNode[]
+}
+
+export interface DomainGraphEdge {
+  id: string
+  source_id: string
+  target_id: string
+  label: string
+  description: string | null
+  is_gap: boolean
+}
+
+export interface DomainGraphResponse {
+  domain: { id: string; name: string }
+  hierarchy: DomainGraphNode[]
+  edges: DomainGraphEdge[]
+}
+
+export interface ProcessMapSettings {
+  process_map_direction: 'LR' | 'TB'
+  process_map_default_state: 'expanded' | 'collapsed'
+}
+
 export interface BusinessProcess {
   id: string
   name: string

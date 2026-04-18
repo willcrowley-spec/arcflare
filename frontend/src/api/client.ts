@@ -8,6 +8,7 @@ import type {
   DiscoveryStatus,
   Document,
   DocumentSearchResult,
+  DomainGraphResponse,
   FleetAnalytics,
   GapItem,
   MetadataAutomation,
@@ -19,6 +20,7 @@ import type {
   PaginatedResponse,
   PlatformConnection,
   ProcessHandoffItem,
+  ProcessMapSettings,
   PromptBlock,
   PromptOperation,
   Recommendation,
@@ -220,6 +222,17 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+    domainGraph: (domainId: string) =>
+      request<DomainGraphResponse>(`/processes/${domainId}/domain-graph`),
+    saveDomainPositions: (domainId: string, positions: Record<string, { x: number; y: number }>) =>
+      request<void>(`/processes/${domainId}/domain-graph/positions`, {
+        method: 'PUT',
+        body: JSON.stringify({ positions }),
+      }),
+    clearDomainPositions: (domainId: string) =>
+      request<void>(`/processes/${domainId}/domain-graph/positions`, {
+        method: 'DELETE',
+      }),
   },
   chat: {
     listThreads: () => request<unknown>('/chat/threads').then(normalizeChatThreads),
@@ -293,6 +306,13 @@ export const api = {
         body: JSON.stringify(data),
       }),
     reanalyze: () => request<unknown>('/organization/reanalyze', { method: 'POST' }),
+    processMapSettings: () =>
+      request<ProcessMapSettings>('/organization/process-map-settings'),
+    updateProcessMapSettings: (data: ProcessMapSettings) =>
+      request<ProcessMapSettings>('/organization/process-map-settings', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
   agents: {
     list: () => request<unknown>('/agents'),

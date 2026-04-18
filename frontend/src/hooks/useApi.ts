@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import type { ProcessMapSettings } from '@/types'
 
 export function useConnections() {
   return useQuery({
@@ -381,5 +382,43 @@ export function usePromptTemplate(operationId: string, blockType: string) {
     queryKey: ['prompts', 'template', operationId, blockType],
     queryFn: () => api.prompts.template(operationId, blockType),
     staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function useDomainGraph(domainId: string) {
+  return useQuery({
+    queryKey: ['processes', 'domain-graph', domainId],
+    queryFn: () => api.processes.domainGraph(domainId),
+    enabled: !!domainId,
+  })
+}
+
+export function useProcessMapSettings() {
+  return useQuery({
+    queryKey: ['organization', 'process-map-settings'],
+    queryFn: () => api.organization.processMapSettings(),
+  })
+}
+
+export function useUpdateProcessMapSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: ProcessMapSettings) => api.organization.updateProcessMapSettings(data),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['organization', 'process-map-settings'] }),
+  })
+}
+
+export function useSaveDomainPositions() {
+  return useMutation({
+    mutationFn: ({ domainId, positions }: { domainId: string; positions: Record<string, { x: number; y: number }> }) =>
+      api.processes.saveDomainPositions(domainId, positions),
+  })
+}
+
+export function useClearDomainPositions(domainId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.processes.clearDomainPositions(domainId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['processes', 'domain-graph', domainId] }),
   })
 }
