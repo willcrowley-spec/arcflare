@@ -1,21 +1,33 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
   GitBranch,
+  Layers,
   Sparkles,
   Timer,
   Workflow,
+  X,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useQueryClient } from '@tanstack/react-query'
 import { KpiCard } from '@/components/KpiCard'
 import { SearchBar } from '@/components/SearchBar'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
-import { useGenerateProcesses, useProcesses } from '@/hooks/useApi'
+import { DiscoveryPipeline } from '@/components/DiscoveryPipeline'
+import {
+  useConfirmProcess,
+  useDiscoveryStatus,
+  useProcesses,
+  useRejectProcess,
+  useStartDiscovery,
+} from '@/hooks/useApi'
+import type { DiscoveryStatus } from '@/types'
 
 type ProcessKpis = {
   total_processes?: number
@@ -24,6 +36,9 @@ type ProcessKpis = {
   active_count?: number | null
   draft_count?: number
   published_count?: number
+  domain_count?: number
+  needs_review_count?: number
+  gap_count?: number
 }
 
 type ProcessItem = {
@@ -37,6 +52,11 @@ type ProcessItem = {
   status: string
   sub_process_count: number
   managed_asset_count: number
+  level?: string
+  confidence_score?: number | null
+  needs_review?: boolean
+  narrative?: string | null
+  parent_id?: string | null
 }
 
 function normalizeProcessList(data: unknown): { items: ProcessItem[]; kpis: ProcessKpis } {
@@ -48,24 +68,74 @@ function normalizeProcessList(data: unknown): { items: ProcessItem[]; kpis: Proc
   return { items, kpis: d.kpis ?? {} }
 }
 
+function hasPriorDiscovery(data: DiscoveryStatus | undefined): boolean {
+  if (!data) return false
+  const rid = data.run_id?.trim()
+  if (rid) return true
+  if (data.started_at || data.completed_at) return true
+  if (data.status && data.status !== 'idle') return true
+  return Object.keys(data.phases ?? {}).length > 0
+}
+
 function processHealthFromStatus(status: string): 'OPTIMIZED' | 'NEEDS ATTENTION' | 'DRAFT' {
   const s = status.toLowerCase()
-  if (s === 'published') return 'OPTIMIZED'
+  if (s === 'published' || s === 'confirmed') return 'OPTIMIZED'
+  if (s === 'discovered') return 'DRAFT'
+  if (s === 'rejected') return 'NEEDS ATTENTION'
   if (s === 'draft') return 'DRAFT'
   return 'NEEDS ATTENTION'
 }
 
+function confidenceBadgeForScore(score: number | null | undefined): ReactNode {
+  if (score == null || Number.isNaN(score)) return null
+  if (score >= 0.8) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 ring-1 ring-emerald-200/80">
+        High confidence
+      </span>
+    )
+  }
+  if (score >= 0.5) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200/80">
+        Medium confidence
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-800 ring-1 ring-red-200/80">
+      Low confidence
+    </span>
+  )
+}
+
 export default function ProcessesPage() {
+  const queryClient = useQueryClient()
   const { data, isLoading, isError, error, refetch } = useProcesses()
-  const generateMutation = useGenerateProcesses()
+  const { data: discoveryData } = useDiscoveryStatus()
+  const startDiscovery = useStartDiscovery()
+  const confirmMutation = useConfirmProcess()
+  const rejectMutation = useRejectProcess()
+
   const { items, kpis } = useMemo(() => normalizeProcessList(data), [data])
 
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [q, setQ] = useState('')
 
-  function toggle(id: string) {
+  const prevDiscoveryStatusRef = useRef<string | undefined>(undefined)
+
+  useEffect(() => {
+    const s = discoveryData?.status
+    const prev = prevDiscoveryStatusRef.current
+    if (prev !== undefined && prev !== 'completed' && s === 'completed') {
+      void queryClient.invalidateQueries({ queryKey: ['processes'] })
+    }
+    prevDiscoveryStatusRef.current = s
+  }, [discoveryData?.status, queryClient])
+
+  const handleAccordionToggle = useCallback((id: string) => {
     setOpen((s) => ({ ...s, [id]: !s[id] }))
-  }
+  }, [])
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase()
@@ -75,57 +145,166 @@ export default function ProcessesPage() {
         p.name.toLowerCase().includes(qq) ||
         (p.category ?? '').toLowerCase().includes(qq) ||
         (p.description ?? '').toLowerCase().includes(qq) ||
+        (p.narrative ?? '').toLowerCase().includes(qq) ||
         (p.automation_level ?? '').toLowerCase().includes(qq),
     )
   }, [items, q])
 
-  const totalProcesses = kpis.total_processes ?? items.length
-  const avgEff = kpis.avg_efficiency
-  const automationPct =
-    kpis.automation_coverage != null
-      ? typeof kpis.automation_coverage === 'number'
-        ? `${kpis.automation_coverage.toFixed(1)}%`
-        : String(kpis.automation_coverage)
-      : avgEff != null
-        ? `${Number(avgEff).toFixed(1)}%`
-        : '—'
-  const activeOrPublished = kpis.active_count ?? kpis.published_count ?? 0
-  const draftAttention = kpis.draft_count ?? 0
+  const discoveryKpis = useMemo(
+    () => ({
+      domainCount: kpis.domain_count ?? 0,
+      needsReviewCount: kpis.needs_review_count ?? 0,
+      gapCount: kpis.gap_count ?? 0,
+      totalProcesses: kpis.total_processes ?? items.length,
+    }),
+    [kpis.domain_count, kpis.gap_count, kpis.needs_review_count, kpis.total_processes, items.length],
+  )
 
-  if (isLoading) {
-    return (
-      <div className="space-y-8">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
-          </p>
-        </div>
-        <LoadingState message="Loading processes…" />
-      </div>
-    )
-  }
+  const priorDiscovery = hasPriorDiscovery(discoveryData)
+  const discoveryRunning = discoveryData?.status === 'running'
+  const discoveryBusy = discoveryRunning || startDiscovery.isPending
 
-  if (isError) {
-    return (
-      <div className="space-y-8">
-        <div>
-          <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
-          </p>
-        </div>
-        <ErrorState message={error instanceof Error ? error.message : undefined} />
+  const handleStartDiscovery = useCallback(() => {
+    startDiscovery.mutate()
+  }, [startDiscovery])
+
+  const discoveryButton = useMemo(() => {
+    if (discoveryBusy) {
+      return (
         <button
           type="button"
-          onClick={() => refetch()}
-          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+          disabled
+          className="inline-flex cursor-not-allowed items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500 shadow-sm"
         >
-          Retry
+          <Sparkles className="h-4 w-4 opacity-60" />
+          Discovering…
         </button>
+      )
+    }
+    if (!priorDiscovery) {
+      return (
+        <button
+          type="button"
+          onClick={handleStartDiscovery}
+          className="inline-flex items-center gap-2 rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900"
+        >
+          <Sparkles className="h-4 w-4" />
+          Discover Processes
+        </button>
+      )
+    }
+    return (
+      <button
+        type="button"
+        onClick={handleStartDiscovery}
+        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+      >
+        <Sparkles className="h-4 w-4 text-navy-700" />
+        Re-discover
+      </button>
+    )
+  }, [discoveryBusy, priorDiscovery, handleStartDiscovery])
+
+  const listSection = useMemo(() => {
+    if (filtered.length === 0) {
+      return (
+        <EmptyState
+          icon={<Workflow className="h-10 w-10" />}
+          title="No processes discovered"
+          description="Connect a platform and run discovery to populate this catalog."
+        />
+      )
+    }
+    return (
+      <div className="space-y-3">
+        {filtered.map((p) => {
+          const expanded = open[p.id] ?? false
+          const meta = [
+            `${p.sub_process_count} sub-processes`,
+            `${p.managed_asset_count} assets`,
+            p.category ? p.category : 'Uncategorized',
+            p.level ? p.level : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+          const health = processHealthFromStatus(p.status)
+          const confBadge = confidenceBadgeForScore(p.confidence_score ?? null)
+          const isDiscovered = p.status.toLowerCase() === 'discovered'
+          return (
+            <AccordionRow
+              key={p.id}
+              id={p.id}
+              title={p.name}
+              meta={meta}
+              status={health}
+              confidenceBadge={confBadge}
+              expanded={expanded}
+              onToggle={handleAccordionToggle}
+            >
+              <div className="space-y-3">
+                {p.description ? <p className="text-sm text-slate-600">{p.description}</p> : null}
+                {p.narrative ? (
+                  <div className="rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discovery narrative</p>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-700">{p.narrative}</p>
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    to={`/processes/${p.id}/map`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    Open process map
+                  </Link>
+                  {isDiscovered ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={confirmMutation.isPending || rejectMutation.isPending}
+                        onClick={() => confirmMutation.mutate(p.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Check className="h-3.5 w-3.5" /> Confirm
+                      </button>
+                      <button
+                        type="button"
+                        disabled={confirmMutation.isPending || rejectMutation.isPending}
+                        onClick={() => rejectMutation.mutate(p.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <X className="h-3.5 w-3.5" /> Reject
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {p.automation_level || p.efficiency_score != null ? (
+                  <SubProcess
+                    title="Automation profile"
+                    tags={
+                      [p.automation_level, p.efficiency_score != null ? `Efficiency ${Number(p.efficiency_score).toFixed(1)}` : null].filter(
+                        Boolean,
+                      ) as string[]
+                    }
+                    stat={p.source ? `Source: ${p.source}` : 'Mined from connected platforms'}
+                    tone="ok"
+                  />
+                ) : null}
+              </div>
+            </AccordionRow>
+          )
+        })}
       </div>
     )
-  }
+  }, [
+    confirmMutation.isPending,
+    confirmMutation.mutate,
+    filtered,
+    handleAccordionToggle,
+    open,
+    rejectMutation.isPending,
+    rejectMutation.mutate,
+  ])
 
   return (
     <div className="space-y-8">
@@ -133,7 +312,7 @@ export default function ProcessesPage() {
         <div>
           <h1 className="font-display text-3xl font-bold tracking-tight text-navy-900">Business Processes</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            End-to-end operational map with automation coverage, latency hotspots, and agent-assisted steps.
+            End-to-end operational map with discovery-driven domains, review queues, and cross-domain handoff gaps.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -146,100 +325,54 @@ export default function ProcessesPage() {
               Process Map
             </Link>
           ) : null}
+          {discoveryButton}
+        </div>
+      </div>
+
+      <DiscoveryPipeline data={discoveryData} isActive={discoveryRunning} />
+
+      {isLoading ? (
+        <LoadingState message="Loading processes…" />
+      ) : isError ? (
+        <div className="space-y-4">
+          <ErrorState message={error instanceof Error ? error.message : undefined} />
           <button
             type="button"
-            disabled={generateMutation.isPending}
-            onClick={() => generateMutation.mutate()}
-            className="inline-flex items-center gap-2 rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => refetch()}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
           >
-            <Sparkles className="h-4 w-4" />
-            {generateMutation.isPending ? 'Generating…' : 'Generate'}
+            Retry
           </button>
         </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <KpiCard
-          icon={Workflow}
-          label="Total processes"
-          value={String(totalProcesses)}
-          sublabel={`${activeOrPublished} published · ${draftAttention} draft`}
-        />
-        <KpiCard
-          icon={Activity}
-          label="Automation coverage (avg)"
-          value={automationPct}
-          sublabel="From efficiency / coverage KPIs"
-        />
-        <KpiCard
-          icon={AlertTriangle}
-          label="Draft processes"
-          value={String(draftAttention)}
-          sublabel="Candidates for review and publishing"
-        />
-      </div>
-
-      <div className="max-w-xl">
-        <SearchBar
-          value={q}
-          onChange={setQ}
-          placeholder="Search processes, owners, or systems…"
-        />
-      </div>
-
-      {filtered.length === 0 ? (
-        <EmptyState
-          icon={<Workflow className="h-10 w-10" />}
-          title="No processes discovered"
-          description="Connect a platform and run analysis first."
-        />
       ) : (
-        <div className="space-y-3">
-          {filtered.map((p) => {
-            const expanded = open[p.id] ?? false
-            const meta = [
-              `${p.sub_process_count} sub-processes`,
-              `${p.managed_asset_count} assets`,
-              p.category ? p.category : 'Uncategorized',
-            ].join(' · ')
-            return (
-              <AccordionRow
-                key={p.id}
-                id={p.id}
-                title={p.name}
-                meta={meta}
-                status={processHealthFromStatus(p.status)}
-                expanded={expanded}
-                onToggle={() => toggle(p.id)}
-              >
-                <div className="space-y-3">
-                  {p.description ? <p className="text-sm text-slate-600">{p.description}</p> : null}
-                  <div className="flex flex-wrap gap-2">
-                    <Link
-                      to={`/processes/${p.id}/map`}
-                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
-                    >
-                      <GitBranch className="h-3.5 w-3.5" />
-                      Open process map
-                    </Link>
-                  </div>
-                  {p.automation_level || p.efficiency_score != null ? (
-                    <SubProcess
-                      title="Automation profile"
-                      tags={
-                        [p.automation_level, p.efficiency_score != null ? `Efficiency ${Number(p.efficiency_score).toFixed(1)}` : null].filter(
-                          Boolean,
-                        ) as string[]
-                      }
-                      stat={p.source ? `Source: ${p.source}` : 'Mined from connected platforms'}
-                      tone="ok"
-                    />
-                  ) : null}
-                </div>
-              </AccordionRow>
-            )
-          })}
-        </div>
+        <>
+          <div className="grid gap-4 md:grid-cols-3">
+            <KpiCard
+              icon={Layers}
+              label="Domain processes"
+              value={String(discoveryKpis.domainCount)}
+              sublabel={`${discoveryKpis.totalProcesses} total in catalog`}
+            />
+            <KpiCard
+              icon={Activity}
+              label="Needs review"
+              value={String(discoveryKpis.needsReviewCount)}
+              sublabel="Flagged during discovery"
+            />
+            <KpiCard
+              icon={AlertTriangle}
+              label="Handoff gaps"
+              value={String(discoveryKpis.gapCount)}
+              sublabel="Cross-domain gaps detected"
+            />
+          </div>
+
+          <div className="max-w-xl">
+            <SearchBar value={q} onChange={setQ} placeholder="Search processes, narratives, or systems…" />
+          </div>
+
+          {listSection}
+        </>
       )}
     </div>
   )
@@ -249,6 +382,7 @@ function AccordionRow({
   title,
   meta,
   status,
+  confidenceBadge,
   expanded,
   onToggle,
   children,
@@ -257,8 +391,9 @@ function AccordionRow({
   title: string
   meta: string
   status: 'OPTIMIZED' | 'NEEDS ATTENTION' | 'DRAFT'
+  confidenceBadge?: ReactNode
   expanded: boolean
-  onToggle: () => void
+  onToggle: (id: string) => void
   children: ReactNode
   id: string
 }) {
@@ -269,21 +404,24 @@ function AccordionRow({
       <button
         type="button"
         id={headerId}
-        onClick={onToggle}
+        onClick={() => onToggle(id)}
         aria-expanded={expanded}
         aria-controls={panelId}
         className="flex w-full items-start justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50/80"
       >
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 text-slate-400" aria-hidden="true">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true">
             {expanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
           </span>
-          <div>
+          <div className="min-w-0">
             <p className="text-base font-semibold text-navy-900">{title}</p>
             <p className="mt-1 text-sm text-slate-600">{meta}</p>
           </div>
         </div>
-        <StatusBadge status={status} />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {confidenceBadge}
+          <StatusBadge status={status} />
+        </div>
       </button>
       {expanded ? (
         <div id={panelId} role="region" aria-labelledby={headerId} className="border-t border-slate-100 bg-slate-50/40 px-5 py-4">
