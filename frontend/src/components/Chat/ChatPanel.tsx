@@ -37,6 +37,7 @@ export function ChatPanel() {
   const agentName = useChatStore((s) => s.agentName)
 
   const [threadMenu, setThreadMenu] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [streamingText, setStreamingText] = useState('')
   const [streamingActions, setStreamingActions] = useState<StreamAction[]>([])
@@ -209,7 +210,7 @@ export function ChatPanel() {
               <button
                 type="button"
                 className="fixed inset-0 z-10"
-                onClick={() => setThreadMenu(false)}
+                onClick={() => { setThreadMenu(false); setConfirmDeleteId(null) }}
                 aria-hidden
               />
               <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
@@ -238,29 +239,65 @@ export function ChatPanel() {
                         key={t.id}
                         className={clsx(
                           'group flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition',
-                          t.id === activeThreadId ? 'bg-orange-50 text-orange-800' : 'hover:bg-slate-50',
+                          confirmDeleteId === t.id
+                            ? 'bg-red-50'
+                            : t.id === activeThreadId
+                              ? 'bg-orange-50 text-orange-800'
+                              : 'hover:bg-slate-50',
                         )}
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveThread(t.id)
-                            setThreadMenu(false)
-                          }}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <p className="truncate text-xs font-medium">{t.title || 'Untitled'}</p>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            void handleDeleteThread(t.id)
-                          }}
-                          className="shrink-0 rounded p-0.5 text-slate-400 opacity-0 transition hover:text-red-500 group-hover:opacity-100"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                        {confirmDeleteId === t.id ? (
+                          <div className="flex w-full items-center justify-between gap-2">
+                            <p className="truncate text-xs font-medium text-red-700">Delete?</p>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmDeleteId(null)
+                                  void handleDeleteThread(t.id)
+                                }}
+                                className="rounded px-2 py-0.5 text-[11px] font-semibold text-red-600 transition hover:bg-red-100"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setConfirmDeleteId(null)
+                                }}
+                                className="rounded px-2 py-0.5 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100"
+                              >
+                                No
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveThread(t.id)
+                                setThreadMenu(false)
+                                setConfirmDeleteId(null)
+                              }}
+                              className="min-w-0 flex-1 text-left"
+                            >
+                              <p className="truncate text-xs font-medium">{t.title || 'Untitled'}</p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setConfirmDeleteId(t.id)
+                              }}
+                              className="shrink-0 rounded p-0.5 text-slate-400 opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>

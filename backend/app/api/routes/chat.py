@@ -190,6 +190,7 @@ async def create_thread(
     thread = ChatThread(
         org_id=org.id,
         user_id=u.id,
+        title=body.title or "New conversation",
         anchor_type=body.anchor_type,
         anchor_id=body.anchor_id,
         model_override=body.model_override,

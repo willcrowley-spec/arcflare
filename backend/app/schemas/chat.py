@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ThreadCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
     anchor_type: str | None = Field(default=None, max_length=50)
     anchor_id: UUID | None = None
     model_override: str | None = Field(default=None, max_length=255)
