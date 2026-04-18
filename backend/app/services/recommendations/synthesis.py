@@ -67,6 +67,7 @@ def cluster_entities(
 def generate_process_document(
     cluster: list[dict],
     context_chunks: list[str] | None = None,
+    model_config: dict | None = None,
 ) -> BusinessProcessDoc | None:
     """Generate a business process document from a cluster of related entities.
 
@@ -108,7 +109,10 @@ Return ONLY a JSON object:
 }}"""
 
     try:
-        result = llm_call(prompt=prompt, max_tokens=3000, tier="strong")
+        result = llm_call(
+            prompt=prompt, max_tokens=3000, tier="strong",
+            operation="recommendations", model_config=model_config,
+        )
         data = parse_json_response(result.text)
 
         return BusinessProcessDoc(
@@ -129,6 +133,7 @@ def synthesize_processes(
     entities: list[dict],
     context_chunks: list[str] | None = None,
     min_cluster_size: int = 3,
+    model_config: dict | None = None,
 ) -> list[BusinessProcessDoc]:
     """Full synthesis pipeline: cluster entities, then generate process docs.
 
@@ -146,7 +151,7 @@ def synthesize_processes(
     docs: list[BusinessProcessDoc] = []
     for i, cluster in enumerate(clusters):
         logger.info("generating_process cluster=%d/%d entities=%d", i + 1, len(clusters), len(cluster))
-        doc = generate_process_document(cluster, context_chunks)
+        doc = generate_process_document(cluster, context_chunks, model_config=model_config)
         if doc:
             docs.append(doc)
 

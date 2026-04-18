@@ -53,6 +53,36 @@ export interface AnalysisConfig {
   embedding_provider: string
   vector_store_provider: string
   llm_provider: string
+  model_overrides?: Record<string, string>
+}
+
+export interface ModelProviderModel {
+  id: string
+  model_id: string
+  label: string
+  tier_default: string
+}
+
+export interface ModelProvider {
+  id: string
+  name: string
+  models: ModelProviderModel[]
+}
+
+export interface ModelOperation {
+  id: string
+  label: string
+  group: string
+  group_label: string
+  description: string
+  default_tier: string
+  effective_model: string
+  effective_provider: string
+}
+
+export interface ModelCatalog {
+  providers: ModelProvider[]
+  operations: ModelOperation[]
 }
 
 export interface User {

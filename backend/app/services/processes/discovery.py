@@ -125,6 +125,7 @@ async def run_pass1(
     run_id: UUID,
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
 ) -> list[dict]:
     """Pass 1: Domain Discovery. Returns list of domain dicts."""
     lf = get_langfuse()
@@ -143,7 +144,10 @@ async def run_pass1(
         prompt = build_pass1_prompt(org_ctx, meta_summary, doc_summary)
 
         try:
-            result = llm_call(prompt=prompt, max_tokens=4000, tier="strong")
+            result = llm_call(
+                prompt=prompt, max_tokens=4000, tier="strong",
+                operation="discovery_domain", model_config=model_config,
+            )
         except Exception as exc:
             logger.error("pass1_llm_failed org_id=%s run_id=%s error=%s", org_id, run_id, exc)
             result = _empty_llm_result()
@@ -221,6 +225,7 @@ async def run_pass2(
     run_id: UUID,
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
 ) -> int:
     """Pass 2: Process decomposition per domain. Returns total process rows created."""
     lf = get_langfuse()
@@ -275,7 +280,10 @@ async def run_pass2(
                 lf, "pass2_domain_llm", domain_meta, trace_ctx
             ) as domain_span:
                 try:
-                    result = llm_call(prompt=prompt, max_tokens=6000, tier="strong")
+                    result = llm_call(
+                        prompt=prompt, max_tokens=6000, tier="strong",
+                        operation="discovery_decomposition", model_config=model_config,
+                    )
                     total_input_tokens += result.input_tokens
                     total_output_tokens += result.output_tokens
                     parsed = _safe_parse(result.text, f"pass2_domain_{domain.name}")
@@ -426,6 +434,7 @@ async def run_pass3(
     run_id: UUID,
     db: AsyncSession,
     progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
 ) -> dict:
     """Pass 3: Cross-domain synthesis. Returns parsed synthesis dict."""
     lf = get_langfuse()
@@ -488,7 +497,10 @@ async def run_pass3(
         prompt = build_pass3_prompt(org_ctx, all_domains_data, orphaned)
 
         try:
-            result = llm_call(prompt=prompt, max_tokens=4000, tier="strong")
+            result = llm_call(
+                prompt=prompt, max_tokens=4000, tier="strong",
+                operation="discovery_synthesis", model_config=model_config,
+            )
         except Exception as exc:
             logger.error("pass3_llm_failed org_id=%s run_id=%s error=%s", org_id, run_id, exc)
             result = _empty_llm_result()

@@ -18,12 +18,12 @@ interface SyncProgressData {
 const PHASE_LABELS: Record<string, string> = {
   objects: 'Data Objects',
   automations: 'Automations',
-  code: 'Code',
-  permissions: 'Permissions',
+  code: 'Code Assets',
+  permissions: 'Security',
   ui_components: 'UI Components',
   installed_packages: 'Packages',
   licensing: 'Licensing',
-  user_velocity: 'User Velocity',
+  user_velocity: 'Adoption',
   entities: 'Org Hierarchy',
   classification: 'Classification',
   vectorization: 'Vectorization',
@@ -52,8 +52,10 @@ function PhaseChip({ name, info }: { name: string; info: PhaseInfo }) {
         {isDone && <Check className="h-3.5 w-3.5 text-emerald-600" />}
       </span>
       <span className="truncate font-medium">{label}</span>
-      {isDone && info.count > 0 && (
-        <span className="ml-auto shrink-0 tabular-nums font-semibold">{info.count.toLocaleString()}</span>
+      {(isDone || isPulling) && info.count > 0 && (
+        <span className={clsx('ml-auto shrink-0 tabular-nums font-semibold', isPulling && 'animate-pulse')}>
+          {info.count.toLocaleString()}
+        </span>
       )}
     </div>
   )

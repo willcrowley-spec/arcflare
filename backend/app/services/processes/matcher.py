@@ -29,6 +29,7 @@ def find_matches(
     fuzzy_threshold: float = 80.0,
     cosine_threshold: float = 0.75,
     use_llm: bool = True,
+    model_config: dict | None = None,
 ) -> list[MatchResult]:
     """Find matching entities across a set of entities.
 
@@ -68,7 +69,7 @@ def find_matches(
     if use_llm:
         ambiguous = [m for m in matches if m.match_type == "fuzzy" and m.score < 90]
         if ambiguous:
-            confirmed = _llm_disambiguate(ambiguous)
+            confirmed = _llm_disambiguate(ambiguous, model_config=model_config)
             for m in matches:
                 if any(c.entity_a_id == m.entity_a_id and c.entity_b_id == m.entity_b_id for c in confirmed):
                     m.match_type = "llm_confirmed"
@@ -167,7 +168,7 @@ def _find_semantic_matches(entities, threshold, seen_pairs) -> list[MatchResult]
     return matches
 
 
-def _llm_disambiguate(ambiguous: list[MatchResult]) -> list[MatchResult]:
+def _llm_disambiguate(ambiguous: list[MatchResult], model_config: dict | None = None) -> list[MatchResult]:
     """Use LLM to confirm or reject ambiguous entity matches."""
     from app.services.ai.router import llm_call, parse_json_response
 
@@ -184,7 +185,10 @@ Return a JSON array of pair numbers that ARE the same entity. Example: [1, 3, 5]
 Only include pairs you are confident about."""
 
     try:
-        result = llm_call(prompt=prompt, max_tokens=200, tier="fast")
+        result = llm_call(
+            prompt=prompt, max_tokens=200, tier="fast",
+            operation="process_matching", model_config=model_config,
+        )
         confirmed_indices = parse_json_response(result.text)
         if isinstance(confirmed_indices, list):
             return [ambiguous[i - 1] for i in confirmed_indices if 0 < i <= len(ambiguous)]

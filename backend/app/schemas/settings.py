@@ -8,13 +8,15 @@ class AnalysisConfig(BaseModel):
     embedding_provider: str = "default"
     vector_store_provider: str = "default"
     llm_provider: str = "default"
+    model_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class AnalysisConfigUpdate(BaseModel):
     velocity_window_days: int | None = Field(default=None, ge=1, le=730)
     classification_threshold: float | None = Field(default=None, ge=0.0)
     min_records_for_vectorization: int | None = Field(default=None, ge=0)
+    model_overrides: dict[str, str] | None = None
 
 
 class ClassificationUpdate(BaseModel):
-    classification: str = Field(..., pattern="^(operational|configuration|empty|deprecated)$")
+    classification: str = Field(..., pattern="^(operational|configuration|deprecated)$")

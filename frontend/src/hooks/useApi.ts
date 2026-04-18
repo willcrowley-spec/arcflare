@@ -166,6 +166,13 @@ export function useUpdateClassification() {
   })
 }
 
+export function useModelCatalog() {
+  return useQuery({
+    queryKey: ['organization', 'models'],
+    queryFn: () => api.organization.models(),
+  })
+}
+
 export function useOrgSettings() {
   return useQuery({
     queryKey: ['organization', 'settings'],

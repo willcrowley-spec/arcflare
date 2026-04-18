@@ -5,20 +5,20 @@ import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { useUpdateClassification } from '@/hooks/useApi'
 import type { MetadataObject } from '@/types'
 
-const CLASSIFICATIONS = ['operational', 'configuration', 'empty', 'deprecated'] as const
+const CLASSIFICATIONS = ['operational', 'configuration', 'deprecated'] as const
 type ClassificationValue = (typeof CLASSIFICATIONS)[number]
 
 const CLASS_SELECT_STYLE: Record<ClassificationValue, string> = {
   operational: 'bg-emerald-50 text-emerald-900 border-emerald-200',
   configuration: 'bg-sky-50 text-sky-900 border-sky-200',
-  empty: 'bg-slate-100 text-slate-800 border-slate-200',
   deprecated: 'bg-amber-50 text-amber-900 border-amber-200',
 }
 
 function normalizeClassification(raw: string | null | undefined): ClassificationValue {
   const v = (raw ?? '').toLowerCase().trim()
+  if (v === 'empty') return 'deprecated'
   if (CLASSIFICATIONS.includes(v as ClassificationValue)) return v as ClassificationValue
-  return 'empty'
+  return 'deprecated'
 }
 
 function velocityPresentation(score: number | undefined, recordCount: number | undefined) {
@@ -164,7 +164,7 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
       getRowClassName={(r) => {
         const rc = r.record_count ?? 0
         const cls = normalizeClassification(r.classification)
-        if (rc === 0 || cls === 'empty' || cls === 'deprecated') return 'opacity-60'
+        if (rc === 0 || cls === 'deprecated') return 'opacity-60'
         return undefined
       }}
     />

@@ -32,12 +32,14 @@ Each entity: {{"name": "...", "type": "process|metric|product|policy|team|system
 JSON object:"""
 
 
-def extract_with_llm(text: str, doc_id: str) -> list[ExtractedEntity]:
+def extract_with_llm(text: str, doc_id: str, model_config: dict | None = None) -> list[ExtractedEntity]:
     """Use LLM to extract complex entities from a single text passage."""
     result = llm_call(
         prompt=EXTRACTION_PROMPT.format(text=text[:3000]),
         max_tokens=1000,
         tier="fast",
+        operation="entity_extraction",
+        model_config=model_config,
     )
 
     try:
@@ -63,7 +65,7 @@ def extract_with_llm(text: str, doc_id: str) -> list[ExtractedEntity]:
     ]
 
 
-def extract_with_llm_batch(texts: list[str], doc_id: str) -> list[ExtractedEntity]:
+def extract_with_llm_batch(texts: list[str], doc_id: str, model_config: dict | None = None) -> list[ExtractedEntity]:
     """Extract entities from multiple text chunks in a single API call."""
     all_entities: list[ExtractedEntity] = []
 
@@ -71,7 +73,10 @@ def extract_with_llm_batch(texts: list[str], doc_id: str) -> list[ExtractedEntit
         batch = texts[batch_start:batch_start + 10]
         sections = "\n\n".join(f"--- Section {i} ---\n{t[:2000]}" for i, t in enumerate(batch))
 
-        result = llm_call(prompt=BATCH_PROMPT.format(sections=sections), max_tokens=2000, tier="fast")
+        result = llm_call(
+            prompt=BATCH_PROMPT.format(sections=sections), max_tokens=2000, tier="fast",
+            operation="entity_extraction", model_config=model_config,
+        )
 
         try:
             results = parse_json_response(result.text)

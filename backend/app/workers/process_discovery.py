@@ -70,6 +70,11 @@ def process_discovery_task(org_id: str) -> str:
         factory = async_sessionmaker(engine, expire_on_commit=False)
 
         async with factory() as session:
+            from app.models.organization import Organization
+
+            org = await session.get(Organization, UUID(org_id))
+            org_config = (org.analysis_config or {}) if org else {}
+
             run = DiscoveryRun(org_id=UUID(org_id), status="running")
             session.add(run)
             await session.flush()
@@ -84,24 +89,24 @@ def process_discovery_task(org_id: str) -> str:
 
                 _update("domain_discovery", "pulling", 0, 1)
                 domains = await run_pass1(
-                    UUID(org_id), run_id, session, progress_cb=_discovery_progress_cb
+                    UUID(org_id), run_id, session,
+                    progress_cb=_discovery_progress_cb, model_config=org_config,
                 )
                 await session.commit()
                 _update("domain_discovery", "done", len(domains), max(len(domains), 1))
 
                 _update("domain_decomposition", "pulling", 0, max(len(domains), 1))
                 process_count = await run_pass2(
-                    UUID(org_id),
-                    run_id,
-                    session,
-                    progress_cb=_discovery_progress_cb,
+                    UUID(org_id), run_id, session,
+                    progress_cb=_discovery_progress_cb, model_config=org_config,
                 )
                 await session.commit()
                 _update("domain_decomposition", "done", process_count, max(process_count, 1))
 
                 _update("cross_domain_synthesis", "pulling", 0, 1)
                 synthesis = await run_pass3(
-                    UUID(org_id), run_id, session, progress_cb=_discovery_progress_cb
+                    UUID(org_id), run_id, session,
+                    progress_cb=_discovery_progress_cb, model_config=org_config,
                 )
                 await session.commit()
                 _update("cross_domain_synthesis", "done", 1, 1)

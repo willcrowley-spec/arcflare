@@ -42,6 +42,50 @@ def _to_hierarchy_nodes(data: list[dict]) -> list[HierarchyNode]:
     return out
 
 
+@router.get("/models")
+async def get_model_catalog(org: CurrentOrg) -> dict:
+    """Return available providers/models and per-operation effective model mapping."""
+    from app.core.config import get_settings as get_app_settings
+    from app.services.ai.operations import MODEL_OPERATIONS, OPERATION_GROUPS
+    from app.services.ai.router import PROVIDER_DEFAULTS, _resolve_model
+
+    settings = get_app_settings()
+    org_config = org.analysis_config or {}
+
+    providers = []
+    provider_checks = [
+        ("gemini", "GEMINI_API_KEY", "Google Gemini"),
+        ("anthropic", "ANTHROPIC_API_KEY", "Anthropic"),
+        ("openai", "OPENAI_API_KEY", "OpenAI"),
+    ]
+    for pid, key_attr, name in provider_checks:
+        key_val = (getattr(settings, key_attr, "") or "").strip()
+        if not key_val:
+            continue
+        models = []
+        for tier_name, model_id in PROVIDER_DEFAULTS.get(pid, {}).items():
+            models.append({"id": f"{pid}/{model_id}", "model_id": model_id, "label": model_id, "tier_default": tier_name})
+        providers.append({"id": pid, "name": name, "models": models})
+
+    operations = []
+    for op_id, meta in MODEL_OPERATIONS.items():
+        provider, model = _resolve_model(
+            meta["tier"], operation=op_id, model_config=org_config
+        )
+        operations.append({
+            "id": op_id,
+            "label": meta["label"],
+            "group": meta["group"],
+            "group_label": OPERATION_GROUPS.get(meta["group"], meta["group"]),
+            "description": meta["description"],
+            "default_tier": meta["tier"],
+            "effective_model": f"{provider}/{model}",
+            "effective_provider": provider,
+        })
+
+    return {"providers": providers, "operations": operations}
+
+
 @router.get("/settings", response_model=AnalysisConfig)
 async def get_settings(org: CurrentOrg) -> AnalysisConfig:
     config = org.analysis_config or {}

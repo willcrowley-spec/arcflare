@@ -76,7 +76,7 @@ def build_relationship_summary(obj: PlatformObjectMeta) -> str:
     return "\n".join(lines) if lines else "None"
 
 
-def describe_object(obj: PlatformObjectMeta) -> dict:
+def describe_object(obj: PlatformObjectMeta, model_config: dict | None = None) -> dict:
     """Generate AI description for a single platform object."""
     prompt = DESCRIBE_PROMPT.format(
         object_name=obj.api_name,
@@ -86,7 +86,10 @@ def describe_object(obj: PlatformObjectMeta) -> dict:
         relationship_summary=build_relationship_summary(obj),
     )
 
-    result = llm_call(prompt=prompt, max_tokens=4000, tier="lite")
+    result = llm_call(
+        prompt=prompt, max_tokens=4000, tier="lite",
+        operation="metadata_enrichment", model_config=model_config,
+    )
 
     try:
         data = parse_json_response(result.text)
@@ -102,7 +105,11 @@ def describe_object(obj: PlatformObjectMeta) -> dict:
     return data
 
 
-def describe_all_objects(objects: list[PlatformObjectMeta], max_workers: int = 4) -> list[dict]:
+def describe_all_objects(
+    objects: list[PlatformObjectMeta],
+    max_workers: int = 4,
+    model_config: dict | None = None,
+) -> list[dict]:
     """Generate descriptions for all platform objects concurrently."""
     describable = [obj for obj in objects if obj.field_count > 3]
     logger.info("describing_objects count=%d", len(describable))
@@ -111,7 +118,7 @@ def describe_all_objects(objects: list[PlatformObjectMeta], max_workers: int = 4
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(describe_object, obj): i
+            executor.submit(describe_object, obj, model_config): i
             for i, obj in enumerate(describable)
         }
         for future in as_completed(futures):

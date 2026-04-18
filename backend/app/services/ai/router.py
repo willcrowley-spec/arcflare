@@ -66,8 +66,25 @@ def get_reasoning_provider():
     raise RuntimeError(f"Unknown LLM_PROVIDER: {provider}")
 
 
-def _resolve_model(tier: Literal["lite", "fast", "strong"]) -> tuple[str, str]:
-    """Resolve tier to (provider, model) tuple."""
+PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "anthropic": {"lite": "claude-3-haiku-20240307", "fast": "claude-sonnet-4-20250514", "strong": "claude-opus-4-20250514"},
+    "openai": {"lite": "gpt-4o-mini", "fast": "gpt-4o", "strong": "gpt-4o"},
+    "gemini": {"lite": "gemini-2.0-flash-lite", "fast": "gemini-2.5-flash", "strong": "gemini-2.5-pro"},
+}
+
+
+def _resolve_model(
+    tier: Literal["lite", "fast", "strong"],
+    operation: str | None = None,
+    model_config: dict | None = None,
+) -> tuple[str, str]:
+    """Resolve (provider, model) via: operation override -> env var -> hardcoded default."""
+    from app.services.ai.operations import resolve_model_for_operation
+
+    override = resolve_model_for_operation(operation, model_config, tier)
+    if override:
+        return override
+
     settings = get_settings()
     provider = getattr(settings, "LLM_PROVIDER", "anthropic")
 
@@ -80,12 +97,7 @@ def _resolve_model(tier: Literal["lite", "fast", "strong"]) -> tuple[str, str]:
     model = model_map.get(tier)
 
     if not model:
-        defaults = {
-            "anthropic": {"lite": "claude-3-haiku-20240307", "fast": "claude-sonnet-4-20250514", "strong": "claude-opus-4-20250514"},
-            "openai": {"lite": "gpt-4o-mini", "fast": "gpt-4o", "strong": "gpt-4o"},
-            "gemini": {"lite": "gemini-2.0-flash-lite", "fast": "gemini-2.5-flash", "strong": "gemini-2.5-pro"},
-        }
-        model = defaults.get(provider, defaults["anthropic"])[tier]
+        model = PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["anthropic"])[tier]
 
     return provider, model
 
@@ -94,11 +106,18 @@ def llm_call(
     prompt: str,
     max_tokens: int = 1000,
     tier: Literal["lite", "fast", "strong"] = "fast",
+    operation: str | None = None,
+    model_config: dict | None = None,
 ) -> LLMResult:
-    """Make an LLM call using the configured provider and tier."""
+    """Make an LLM call using the configured provider and tier.
+
+    Args:
+        operation: Named operation (e.g. "discovery_synthesis") for org-level overrides.
+        model_config: Org analysis_config dict containing optional model_overrides.
+    """
     global _last_call_time
 
-    provider, model = _resolve_model(tier)
+    provider, model = _resolve_model(tier, operation=operation, model_config=model_config)
 
     settings = get_settings()
     rate_delay = float(getattr(settings, "LLM_RATE_DELAY", 0))
@@ -140,7 +159,7 @@ def llm_call(
                 output=result.text,
                 start_time=datetime.fromtimestamp(start_time, tz=timezone.utc),
                 end_time=datetime.fromtimestamp(end_time, tz=timezone.utc),
-                metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens},
+                metadata={"provider": provider, "tier": tier, "max_tokens": max_tokens, "operation": operation},
                 usage={
                     "input": result.input_tokens,
                     "output": result.output_tokens,

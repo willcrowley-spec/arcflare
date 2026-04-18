@@ -24,7 +24,7 @@ def _get_config(org: Organization) -> dict:
 
 def classify_object(record_count: int, velocity_score: float, threshold: float) -> str:
     if record_count == 0:
-        return "empty"
+        return "deprecated"
     ratio = velocity_score / record_count if record_count > 0 else 0.0
     if ratio > threshold:
         return "operational"
@@ -54,7 +54,7 @@ async def run_classification(
     result = await db.execute(select(MetadataObject).where(*filters))
     objects = result.scalars().all()
 
-    counts = {"operational": 0, "configuration": 0, "empty": 0}
+    counts = {"operational": 0, "configuration": 0, "deprecated": 0}
     for obj in objects:
         obj.classification = classify_object(obj.record_count, obj.velocity_score, threshold)
         counts[obj.classification] = counts.get(obj.classification, 0) + 1

@@ -15,10 +15,10 @@ import {
   Wrench,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useConnections, useOrgProfile, useOrgSettings, useReanalyze, useUpdateOrgSettings } from '@/hooks/useApi'
+import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useReanalyze, useUpdateOrgSettings } from '@/hooks/useApi'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
-import type { AnalysisConfig, PlatformConnection } from '@/types'
+import type { AnalysisConfig, ModelCatalog, ModelOperation, PlatformConnection } from '@/types'
 
 type OrgProfileData = {
   name?: string
@@ -131,6 +131,7 @@ function normalizeAnalysisSettings(x: unknown): AnalysisConfig | null {
     embedding_provider: typeof o.embedding_provider === 'string' ? o.embedding_provider : 'default',
     vector_store_provider: typeof o.vector_store_provider === 'string' ? o.vector_store_provider : 'default',
     llm_provider: typeof o.llm_provider === 'string' ? o.llm_provider : 'default',
+    model_overrides: o.model_overrides && typeof o.model_overrides === 'object' ? (o.model_overrides as Record<string, string>) : {},
   }
 }
 
@@ -146,6 +147,7 @@ function ProfileRow({ label, children }: { label: string; children: ReactNode })
 function AnalysisField({
   id,
   label,
+  helpText,
   suffix,
   value,
   onChange,
@@ -156,6 +158,7 @@ function AnalysisField({
 }: {
   id: string
   label: string
+  helpText?: string
   suffix?: string
   value: string
   onChange: (v: string) => void
@@ -169,6 +172,7 @@ function AnalysisField({
       <label htmlFor={id} className="text-sm font-medium text-slate-700">
         {label}
       </label>
+      {helpText ? <p className="text-xs leading-relaxed text-slate-400">{helpText}</p> : null}
       <div className="flex items-center gap-2">
         <input
           id={id}
@@ -201,6 +205,7 @@ export default function OrganizationPage() {
   const settingsQuery = useOrgSettings()
   const updateSettings = useUpdateOrgSettings()
   const reanalyze = useReanalyze()
+  const modelCatalogQuery = useModelCatalog()
 
   const [reanalyzeBanner, setReanalyzeBanner] = useState<string | null>(null)
 
@@ -287,6 +292,33 @@ export default function OrganizationPage() {
       },
     })
   }
+
+  const catalog = modelCatalogQuery.data as ModelCatalog | undefined
+
+  const onModelOverrideChange = useCallback(
+    (operationId: string, value: string) => {
+      const current = analysis?.model_overrides ?? {}
+      const next = { ...current }
+      if (!value || value === 'default') {
+        delete next[operationId]
+      } else {
+        next[operationId] = value
+      }
+      patchSetting({ model_overrides: next })
+    },
+    [analysis, patchSetting],
+  )
+
+  const operationsByGroup = useMemo(() => {
+    if (!catalog?.operations) return new Map<string, ModelOperation[]>()
+    const m = new Map<string, ModelOperation[]>()
+    for (const op of catalog.operations) {
+      const key = op.group_label || op.group
+      if (!m.has(key)) m.set(key, [])
+      m.get(key)!.push(op)
+    }
+    return m
+  }, [catalog])
 
   return (
     <div className="mx-auto max-w-5xl space-y-10 px-4 py-8 sm:px-6 lg:px-8">
@@ -457,6 +489,7 @@ export default function OrganizationPage() {
               <AnalysisField
                 id="velocity-window"
                 label="Velocity window"
+                helpText="Number of days to look back when measuring object modification activity. Higher values smooth out spikes."
                 suffix="days"
                 value={velocityDraft}
                 onChange={setVelocityDraft}
@@ -466,6 +499,7 @@ export default function OrganizationPage() {
               <AnalysisField
                 id="classification-threshold"
                 label="Classification threshold"
+                helpText="Velocity-to-record ratio above which an object is classified as operational vs configuration. Lower values classify more objects as operational."
                 value={thresholdDraft}
                 onChange={setThresholdDraft}
                 onBlur={saveThreshold}
@@ -476,6 +510,7 @@ export default function OrganizationPage() {
               <AnalysisField
                 id="min-vectorization"
                 label="Min records for vectorization"
+                helpText="Objects with fewer records than this are skipped during vectorization. Set to 0 to vectorize all objects."
                 value={minVecDraft}
                 onChange={setMinVecDraft}
                 onBlur={saveMinVec}
@@ -504,6 +539,72 @@ export default function OrganizationPage() {
               ) : null}
               {reanalyze.isError ? <span className="text-sm text-red-600">Re-analyze failed. Try again.</span> : null}
             </div>
+          </div>
+        )}
+      </section>
+
+      {/* Section 4: Model configuration */}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold text-navy-900">Model configuration</h2>
+          <p className="text-sm text-slate-600">
+            Choose which AI model powers each pipeline stage. Defaults come from platform environment settings.
+          </p>
+        </div>
+        {modelCatalogQuery.isError ? (
+          <ErrorState message="Could not load model catalog." />
+        ) : modelCatalogQuery.isPending || !catalog ? (
+          <div className={cardClass}>
+            <LoadingState message="Loading models…" />
+          </div>
+        ) : catalog.providers.length === 0 ? (
+          <div className={clsx(cardClass, 'text-sm text-slate-500')}>
+            No AI provider API keys are configured. Set at least one provider key (Gemini, Anthropic, or OpenAI) to enable model selection.
+          </div>
+        ) : (
+          <div className={clsx(cardClass, 'space-y-6')}>
+            {[...operationsByGroup.entries()].map(([groupLabel, ops]) => (
+              <div key={groupLabel}>
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{groupLabel}</h3>
+                <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                  {ops.map((op) => {
+                    const currentOverride = analysis?.model_overrides?.[op.id] ?? ''
+                    return (
+                      <div key={op.id} className="flex flex-col gap-1.5">
+                        <label htmlFor={`model-${op.id}`} className="text-sm font-medium text-slate-700">
+                          {op.label}
+                        </label>
+                        <p className="text-xs leading-relaxed text-slate-400">{op.description}</p>
+                        <select
+                          id={`model-${op.id}`}
+                          value={currentOverride}
+                          disabled={updateSettings.isPending}
+                          onChange={(e) => onModelOverrideChange(op.id, e.target.value)}
+                          className={clsx(
+                            'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-navy-900 shadow-sm outline-none transition',
+                            'ring-slate-900/5 focus:border-navy-400 focus:ring-2 focus:ring-navy-200',
+                            updateSettings.isPending && 'cursor-not-allowed opacity-60',
+                          )}
+                        >
+                          <option value="">
+                            Platform default ({op.effective_model.split('/').pop()})
+                          </option>
+                          {catalog.providers.map((provider) => (
+                            <optgroup key={provider.id} label={provider.name}>
+                              {provider.models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

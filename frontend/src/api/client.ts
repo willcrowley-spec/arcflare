@@ -11,6 +11,7 @@ import type {
   MetadataField,
   MetadataObject,
   MetadataSummary,
+  ModelCatalog,
   PaginatedResponse,
   PlatformConnection,
   ProcessHandoffItem,
@@ -213,6 +214,7 @@ export const api = {
     userVelocity: () => request<unknown[]>('/organization/user-velocity/'),
     syncFromSalesforce: () =>
       request<void>('/organization/sync-from-salesforce', { method: 'POST' }),
+    models: () => request<ModelCatalog>('/organization/models'),
     settings: () => request<unknown>('/organization/settings'),
     updateSettings: (data: Record<string, unknown>) =>
       request<unknown>('/organization/settings', {
