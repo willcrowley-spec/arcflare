@@ -233,17 +233,26 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> LLMResult:
 
 
 def _build_gemini_config(max_tokens: int, model: str):
-    """Build a GenerateContentConfig using SDK types with graceful fallback."""
+    """Build a GenerateContentConfig using SDK types with graceful fallback.
+
+    Gemini 2.5 models: max_output_tokens is the TOTAL budget for thinking +
+    response.  We add the thinking budget on top of the caller's requested
+    output tokens so the response isn't starved.
+    """
     try:
         from google.genai import types
 
-        kwargs: dict = {"max_output_tokens": max_tokens}
+        kwargs: dict = {}
         if "2.5-pro" in model:
-            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=8000)
+            thinking = min(max_tokens, 8000)
+            kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking)
+            kwargs["max_output_tokens"] = max_tokens + thinking
         elif "2.5-flash" in model:
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+            kwargs["max_output_tokens"] = max_tokens
         else:
             kwargs["temperature"] = 0
+            kwargs["max_output_tokens"] = max_tokens
         return types.GenerateContentConfig(**kwargs)
     except Exception as exc:
         logger.debug("gemini_typed_config_failed model=%s error=%s, falling back to plain dict", model, exc)
