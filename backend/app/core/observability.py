@@ -135,7 +135,7 @@ def langfuse_context(
             yield
     except Exception as e:
         logger.warning("langfuse_context_failed error=%s", e)
-        yield
+        raise
 
 
 @contextmanager

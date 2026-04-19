@@ -25,6 +25,15 @@ _METADATA_TYPES = {"key_value", "list_item", "table"}
 _LARGE_TYPES = {"narrative", "code_block"}
 
 
+def _is_binary_content(text: str) -> bool:
+    """Detect content that is clearly binary data (e.g. raw ZIP bytes read as text)."""
+    if "\x00" in text:
+        return True
+    sample = text[:4096]
+    non_printable = sum(1 for c in sample if not c.isprintable() and c not in "\n\r\t")
+    return non_printable / max(len(sample), 1) > 0.1
+
+
 @dataclass
 class TextChunk:
     document_id: str
@@ -56,6 +65,9 @@ def chunk_document(doc_id: str, elements: list[ParsedElement]) -> list[TextChunk
     current_page = None
 
     for element in elements:
+        if _is_binary_content(element.text):
+            logger.warning("skipping_binary_element doc=%s type=%s len=%d", doc_id, element.element_type, len(element.text))
+            continue
         if element.element_type == "title":
             if len(enc.encode(current_text)) > 30:
                 chunks.append(_make_chunk(doc_id, current_text, len(chunks), current_section, current_page))

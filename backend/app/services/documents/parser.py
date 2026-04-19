@@ -31,17 +31,17 @@ def parse_file(file_path: str | Path) -> list[ParsedElement]:
     logger.info("parsing file=%s mime=%s", path.name, mime_type)
 
     if mime_type in ("application/pdf",):
-        return _parse_with_unstructured(path)
+        return _parse_pdf(path)
     elif mime_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
     ):
-        return _parse_with_unstructured(path)
+        return _parse_docx(path)
     elif mime_type in (
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.ms-powerpoint",
     ):
-        return _parse_with_unstructured(path)
+        return _parse_pptx(path)
     elif mime_type in (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "application/vnd.ms-excel",
@@ -73,16 +73,16 @@ def _guess_from_extension(ext: str) -> str:
 
 
 def _parse_with_unstructured(path: Path) -> list[ParsedElement]:
-    """Parse PDF, DOCX, PPTX using unstructured library."""
+    """Parse using unstructured library. Raises on failure (callers handle fallback)."""
     try:
         from unstructured.partition.auto import partition
         raw_elements = partition(filename=str(path))
     except ImportError:
-        logger.warning("unstructured not installed, falling back to text extraction")
-        return _parse_text(path)
+        logger.warning("unstructured not installed")
+        raise
     except Exception as e:
         logger.error("unstructured_parse_failed file=%s error=%s", path.name, e)
-        return _parse_text(path)
+        raise
 
     elements: list[ParsedElement] = []
     for el in raw_elements:
@@ -109,6 +109,128 @@ def _parse_with_unstructured(path: Path) -> list[ParsedElement]:
         ))
 
     logger.info("parsed_with_unstructured file=%s elements=%d", path.name, len(elements))
+    return elements
+
+
+def _parse_pdf(path: Path) -> list[ParsedElement]:
+    """Parse PDF: try unstructured, return empty on failure (no text fallback for binary)."""
+    try:
+        return _parse_with_unstructured(path)
+    except Exception:
+        logger.error("pdf_parse_failed file=%s — no fallback available for binary PDF", path.name)
+        return []
+
+
+def _parse_docx(path: Path) -> list[ParsedElement]:
+    """Parse DOCX: try unstructured first, fall back to python-docx."""
+    try:
+        elements = _parse_with_unstructured(path)
+        if elements:
+            return elements
+    except Exception:
+        pass
+    logger.info("docx_fallback file=%s", path.name)
+    return _parse_docx_native(path)
+
+
+def _parse_docx_native(path: Path) -> list[ParsedElement]:
+    """Parse DOCX using python-docx (no spaCy dependency)."""
+    try:
+        from docx import Document as DocxDocument
+    except ImportError:
+        logger.error("python-docx not installed, cannot parse %s", path.name)
+        return []
+
+    try:
+        doc = DocxDocument(str(path))
+    except Exception as e:
+        logger.error("docx_open_failed file=%s error=%s", path.name, e)
+        return []
+
+    elements: list[ParsedElement] = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style_name = (para.style.name or "").lower() if para.style else ""
+        if "heading" in style_name or "title" in style_name:
+            elements.append(ParsedElement(text=text, element_type="title"))
+        elif "list" in style_name or "bullet" in style_name:
+            elements.append(ParsedElement(text=text, element_type="list_item"))
+        else:
+            elements.append(ParsedElement(text=text, element_type="narrative"))
+
+    for table in doc.tables:
+        rows_text = []
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            if any(cells):
+                rows_text.append(" | ".join(cells))
+        if rows_text:
+            elements.append(ParsedElement(text="\n".join(rows_text), element_type="table"))
+
+    logger.info("parsed_docx_native file=%s elements=%d", path.name, len(elements))
+    return elements
+
+
+def _parse_pptx(path: Path) -> list[ParsedElement]:
+    """Parse PPTX: try unstructured first, fall back to python-pptx."""
+    try:
+        elements = _parse_with_unstructured(path)
+        if elements:
+            return elements
+    except Exception:
+        pass
+    logger.info("pptx_fallback file=%s", path.name)
+    return _parse_pptx_native(path)
+
+
+def _parse_pptx_native(path: Path) -> list[ParsedElement]:
+    """Parse PPTX using python-pptx (no spaCy dependency)."""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        logger.error("python-pptx not installed, cannot parse %s", path.name)
+        return []
+
+    try:
+        prs = Presentation(str(path))
+    except Exception as e:
+        logger.error("pptx_open_failed file=%s error=%s", path.name, e)
+        return []
+
+    elements: list[ParsedElement] = []
+    for slide_idx, slide in enumerate(prs.slides, 1):
+        slide_texts: list[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        slide_texts.append(text)
+            if shape.has_table:
+                for row in shape.table.rows:
+                    cells = [c.text.strip() for c in row.cells]
+                    if any(cells):
+                        elements.append(ParsedElement(
+                            text=" | ".join(cells),
+                            element_type="table",
+                            page_number=slide_idx,
+                        ))
+        if slide_texts:
+            elements.append(ParsedElement(
+                text=slide_texts[0],
+                element_type="title",
+                page_number=slide_idx,
+            ))
+            for t in slide_texts[1:]:
+                elements.append(ParsedElement(
+                    text=t,
+                    element_type="narrative",
+                    page_number=slide_idx,
+                ))
+
+    logger.info("parsed_pptx_native file=%s slides=%d elements=%d", path.name, len(prs.slides), len(elements))
     return elements
 
 
