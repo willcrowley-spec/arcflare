@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
   Code,
@@ -16,7 +15,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { StatusBadge } from '@/components/StatusBadge'
-import { SyncProgressPanel } from '@/components/SyncProgressPanel'
+import { SyncEventLogPanel } from '@/components/SyncEventLogPanel'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import {
   useConnections,
@@ -27,9 +26,9 @@ import {
   useOrgLicensing,
   useReauthConnection,
   useSyncConnection,
-  useSyncProgress,
   useUserVelocity,
 } from '@/hooks/useApi'
+import { useSyncEventStream } from '@/hooks/useSyncEventStream'
 import type { MetadataComponent, MetadataSummary } from '@/types'
 import { DataObjectsTable } from './DataObjectsTable'
 
@@ -146,10 +145,9 @@ function KpiCard({
 export default function PlatformDetailPage() {
   const { connectionId } = useParams<{ connectionId: string }>()
   const navigate = useNavigate()
-  const qc = useQueryClient()
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
-  const syncProgressQuery = useSyncProgress(activeSyncId)
+  const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
 
   const connectionsQuery = useConnections()
   const syncConnection = useSyncConnection()
@@ -170,8 +168,6 @@ export default function PlatformDetailPage() {
       setActiveSyncId(connectionId)
     }
   }, [connection?.status, connectionId, activeSyncId])
-
-  const dismissSyncPanel = useCallback(() => setActiveSyncId(null), [])
 
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''
@@ -245,14 +241,14 @@ export default function PlatformDetailPage() {
 
   const onSync = useCallback(() => {
     if (!connection) return
+    resetSyncStream()
     const cid = String(connection.id)
-    qc.removeQueries({ queryKey: ['sync-progress', cid] })
     setSyncingId(cid)
     setActiveSyncId(cid)
     syncConnection.mutate(cid, {
       onSettled: () => setSyncingId(null),
     })
-  }, [syncConnection, qc, connection])
+  }, [syncConnection, connection, resetSyncStream])
 
   const platformLabel = connection ? platformTypeToLabel(connection.platform_type ?? connection.platform) : 'Platform'
   const instanceUrl = connection?.instance_url?.trim() || '—'
@@ -371,13 +367,12 @@ export default function PlatformDetailPage() {
         </div>
       </div>
 
-      {activeSyncId ? (
-        <SyncProgressPanel
-          data={syncProgressQuery.data}
-          isActive={!!activeSyncId}
-          onDismiss={dismissSyncPanel}
+      {activeSyncId && (
+        <SyncEventLogPanel
+          events={syncEvents}
+          status={syncStreamStatus}
         />
-      ) : null}
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
