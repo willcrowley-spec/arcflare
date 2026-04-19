@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { BarChart3, FileSpreadsheet, KeyRound, Link2, RefreshCw, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
@@ -13,8 +12,8 @@ import {
   useInitiateSalesforce,
   useReauthConnection,
   useSyncConnection,
-  useSyncProgress,
 } from '@/hooks/useApi'
+import { useSyncEventStream } from '@/hooks/useSyncEventStream'
 import type { PlatformConnection } from '@/types'
 
 function platformTypeToKey(raw: string | undefined): string {
@@ -78,8 +77,7 @@ export default function AnalysisPage() {
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
   const [showSyncModal, setShowSyncModal] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
-  const qc = useQueryClient()
-  const syncProgressQuery = useSyncProgress(activeSyncId)
+  const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
 
   const connectionsQuery = useConnections()
   const initiateSalesforce = useInitiateSalesforce()
@@ -126,7 +124,7 @@ export default function AnalysisPage() {
 
   const onSync = useCallback(
     (id: string) => {
-      qc.removeQueries({ queryKey: ['sync-progress', id] })
+      resetSyncStream()
       setSyncingId(id)
       setActiveSyncId(id)
       setShowSyncModal(true)
@@ -134,7 +132,7 @@ export default function AnalysisPage() {
         onSettled: () => setSyncingId(null),
       })
     },
-    [syncConnection, qc],
+    [syncConnection, resetSyncStream],
   )
 
   const onDelete = useCallback(
@@ -225,7 +223,8 @@ export default function AnalysisPage() {
       <SyncProgressModal
         open={showSyncModal && !!activeSyncId}
         onClose={() => setShowSyncModal(false)}
-        data={syncProgressQuery.data}
+        events={syncEvents}
+        streamStatus={syncStreamStatus}
         platformLabel={
           activeSyncId
             ? platformLabelFromType(

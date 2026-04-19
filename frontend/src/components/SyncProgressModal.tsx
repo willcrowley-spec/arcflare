@@ -1,23 +1,18 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { Info, X } from 'lucide-react'
-import { SyncProgressPanel } from './SyncProgressPanel'
-
-interface SyncProgressData {
-  status: string
-  started_at: string | null
-  completed_at: string | null
-  error: string | null
-  phases?: Record<string, { status: string; count: number }>
-}
+import { SyncEventLogPanel } from './SyncEventLogPanel'
+import type { SyncEvent } from '@/types'
+import type { SyncStreamStatus } from '@/hooks/useSyncEventStream'
 
 interface Props {
   open: boolean
   onClose: () => void
-  data: SyncProgressData | undefined
+  events: SyncEvent[]
+  streamStatus: SyncStreamStatus
   platformLabel?: string
 }
 
-export function SyncProgressModal({ open, onClose, data, platformLabel }: Props) {
+export function SyncProgressModal({ open, onClose, events, streamStatus, platformLabel }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -60,7 +55,7 @@ export function SyncProgressModal({ open, onClose, data, platformLabel }: Props)
 
   if (!open) return null
 
-  const isTerminal = data?.status === 'completed' || data?.status === 'failed'
+  const isTerminal = streamStatus === 'completed' || streamStatus === 'failed'
 
   return (
     <div
@@ -93,7 +88,7 @@ export function SyncProgressModal({ open, onClose, data, platformLabel }: Props)
         </div>
 
         <div className="px-6 py-5">
-          <SyncProgressPanel data={data} isActive={!isTerminal} />
+          <SyncEventLogPanel events={events} status={streamStatus} />
         </div>
 
         <div className="flex items-start gap-2.5 border-t border-slate-100 px-6 py-3.5">
