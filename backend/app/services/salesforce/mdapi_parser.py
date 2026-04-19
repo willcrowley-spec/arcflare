@@ -236,3 +236,91 @@ def parse_flow(xml_bytes: bytes, filename: str) -> dict[str, Any]:
         "raw_xml_hash": raw_xml_hash,
         "source_filename": filename,
     }
+
+
+def parse_custom_object(xml_bytes: bytes, filename: str) -> dict[str, Any]:
+    root = ET.fromstring(xml_bytes)
+    sharing_model = _text(root, "md:sharingModel")
+
+    validation_rules: list[dict[str, Any]] = []
+    for vr in root.findall("md:validationRules", NS):
+        validation_rules.append(
+            {
+                "name": _text(vr, "md:fullName"),
+                "active": (_text(vr, "md:active") or "").lower() == "true",
+                "description": _text(vr, "md:description"),
+                "error_condition_formula": _text(vr, "md:errorConditionFormula"),
+                "error_message": _text(vr, "md:errorMessage"),
+                "error_display_field": _text(vr, "md:errorDisplayField"),
+            }
+        )
+
+    formula_fields: list[dict[str, str | None]] = []
+    for field in root.findall("md:fields", NS):
+        formula = _text(field, "md:formula")
+        if formula:
+            formula_fields.append(
+                {
+                    "api_name": _text(field, "md:fullName"),
+                    "formula": formula,
+                    "formula_treat_blanks_as": _text(field, "md:formulaTreatBlanksAs"),
+                }
+            )
+
+    record_types: list[dict[str, Any]] = []
+    for rt in root.findall("md:recordTypes", NS):
+        record_types.append(
+            {
+                "developer_name": _text(rt, "md:fullName"),
+                "label": _text(rt, "md:label"),
+                "active": (_text(rt, "md:active") or "").lower() == "true",
+                "description": _text(rt, "md:description"),
+            }
+        )
+
+    field_sets: list[dict[str, Any]] = []
+    for fs in root.findall("md:fieldSets", NS):
+        field_names = [_text(df, "md:field") for df in fs.findall("md:displayedFields", NS)]
+        field_sets.append(
+            {
+                "label": _text(fs, "md:fullName"),
+                "description": _text(fs, "md:description"),
+                "fields": [f for f in field_names if f],
+            }
+        )
+
+    list_views: list[dict[str, Any]] = []
+    for lv in root.findall("md:listViews", NS):
+        cols = [_text(c, "md:field") or (c.text or "").strip() for c in lv.findall("md:columns", NS)]
+        cols = [c for c in cols if c]
+        list_views.append(
+            {
+                "developer_name": _text(lv, "md:fullName"),
+                "label": _text(lv, "md:label"),
+                "filter_scope": _text(lv, "md:filterScope"),
+                "filters": [],
+                "columns": cols,
+            }
+        )
+
+    web_links: list[dict[str, Any]] = []
+    for wl in root.findall("md:webLinks", NS):
+        web_links.append(
+            {
+                "name": _text(wl, "md:fullName"),
+                "link_type": "url",
+                "url_or_page": _text(wl, "md:url"),
+            }
+        )
+
+    return {
+        "validation_rules": validation_rules,
+        "formula_fields": formula_fields,
+        "record_types": record_types,
+        "field_sets": field_sets,
+        "list_views": list_views,
+        "web_links": web_links,
+        "sharing_model": sharing_model,
+        "raw_xml_hash": hashlib.sha256(xml_bytes).hexdigest(),
+        "source_filename": filename,
+    }
