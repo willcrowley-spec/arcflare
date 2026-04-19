@@ -1,10 +1,12 @@
-"""Handle multipart uploads and persist Document rows."""
+"""Handle multipart uploads with content hashing and dedup."""
 
+import hashlib
 import uuid
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
@@ -16,9 +18,11 @@ async def handle_upload(
     user_id: UUID | None,
     db: AsyncSession,
     upload_root: str = "uploads",
-) -> Document:
-    """
-    Stream upload to disk under upload_root/org_id and create Document record.
+) -> tuple[Document, bool]:
+    """Stream upload to disk, compute hash, dedup, create Document record.
+
+    Returns (document, is_new). If is_new is False, the returned document
+    is an existing duplicate and no file was written.
     """
     safe_name = Path(file.filename or "unnamed").name
     doc_id = uuid.uuid4()
@@ -26,6 +30,7 @@ async def handle_upload(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / f"{doc_id}_{safe_name}"
 
+    sha256 = hashlib.sha256()
     size = 0
     with dest_path.open("wb") as out:
         while True:
@@ -33,7 +38,24 @@ async def handle_upload(
             if not chunk:
                 break
             size += len(chunk)
+            sha256.update(chunk)
             out.write(chunk)
+
+    content_hash = sha256.hexdigest()
+
+    existing = await db.scalar(
+        select(Document).where(
+            Document.org_id == org_id,
+            Document.content_hash == content_hash,
+            Document.status == "indexed",
+        )
+    )
+    if existing:
+        dest_path.unlink(missing_ok=True)
+        return existing, False
+
+    from app.core.config import get_settings
+    settings = get_settings()
 
     doc = Document(
         id=doc_id,
@@ -46,7 +68,9 @@ async def handle_upload(
         uploaded_by=user_id,
         tags=[],
         chunk_count=0,
+        content_hash=content_hash,
+        embedding_model=settings.EMBEDDING_MODEL,
     )
     db.add(doc)
     await db.flush()
-    return doc
+    return doc, True

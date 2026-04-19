@@ -35,9 +35,10 @@ async def upload_document(
     res = await db.execute(select(User).where(User.clerk_user_id == user.clerk_user_id))
     db_user = res.scalar_one_or_none()
     user_id = db_user.id if db_user else None
-    doc = await handle_upload(file, org.id, user_id, db)
+    doc, is_new = await handle_upload(file, org.id, user_id, db)
     await db.commit()
-    vectorize_document_task.delay(str(doc.id))
+    if is_new:
+        vectorize_document_task.delay(str(doc.id))
     return DocumentUploadResponse.model_validate(doc)
 
 

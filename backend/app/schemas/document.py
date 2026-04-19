@@ -14,6 +14,10 @@ class DocumentUploadResponse(BaseModel):
     storage_path: str | None
     status: str
     chunk_count: int
+    content_hash: str | None = None
+    concept_count: int = 0
+    community_ids: list = Field(default_factory=list)
+    embedding_model: str | None = None
     created_at: datetime
 
 
@@ -31,6 +35,10 @@ class DocumentResponse(BaseModel):
     uploaded_by: UUID | None
     tags: list
     chunk_count: int
+    content_hash: str | None = None
+    concept_count: int = 0
+    community_ids: list = Field(default_factory=list)
+    embedding_model: str | None = None
     created_at: datetime
 
 
