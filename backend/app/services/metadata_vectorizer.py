@@ -206,6 +206,71 @@ def _describe_component(comp: MetadataComponent) -> str:
     return "\n".join(lines)
 
 
+def describe_component_chunks(comp: MetadataComponent) -> list[tuple[str, str]]:
+    """Return (suffix, text) pairs for a component. Apex classes get per-method chunks."""
+    meta = comp.metadata_json or {}
+    methods = meta.get("methods", [])
+
+    if comp.component_category == "apex_class" and methods:
+        overview_lines = [
+            f"Apex Class: {comp.label or comp.api_name}",
+            f"API Name: {comp.api_name}",
+        ]
+        if meta.get("api_version"):
+            overview_lines.append(f"API Version: {meta['api_version']}")
+        lc = meta.get("line_count")
+        if lc:
+            overview_lines.append(f"Lines: {lc}")
+        if meta.get("callout_detected"):
+            overview_lines.append("Makes HTTP callouts")
+        dml = meta.get("dml_objects", [])
+        if dml:
+            overview_lines.append(f"DML Objects: {', '.join(str(o) for o in dml)}")
+        soql = meta.get("soql_objects", [])
+        if soql:
+            overview_lines.append(f"SOQL Objects: {', '.join(str(o) for o in soql)}")
+        overview_lines.append(f"Methods: {len(methods)}")
+        for m in methods:
+            overview_lines.append(f"  - {m.get('name', '?')}{m.get('parameters', '()')}: {m.get('return_type', 'void')}")
+
+        chunks = [("overview", "\n".join(overview_lines))]
+
+        for m in methods:
+            mname = m.get("name", "unknown")
+            mlines = [
+                f"Apex Method: {comp.api_name}.{mname}",
+                f"Return Type: {m.get('return_type', 'void')}",
+                f"Parameters: {m.get('parameters', '()')}",
+            ]
+            if m.get("has_dml"):
+                mlines.append("Contains DML operations")
+            if m.get("has_soql"):
+                mlines.append("Contains SOQL queries")
+            if m.get("has_callout"):
+                mlines.append("Makes HTTP callouts")
+            chunks.append((f"method_{mname}", "\n".join(mlines)))
+
+        return chunks
+
+    elif comp.component_category == "custom_metadata_type":
+        lines = [f"Custom Metadata Type: {comp.api_name}"]
+        rec_count = meta.get("record_count", 0)
+        lines.append(f"Records: {rec_count}")
+        fields = meta.get("fields", [])
+        if fields:
+            lines.append(f"Fields: {', '.join(str(f) for f in fields[:20])}")
+        records = meta.get("records", [])
+        if records:
+            lines.append("Sample values:")
+            for rec in records[:5]:
+                vals = {k: v for k, v in rec.items()
+                        if k != "attributes" and v is not None}
+                lines.append(f"  {vals}")
+        return [("", "\n".join(lines))]
+
+    return [("", _describe_component(comp))]
+
+
 def _describe_licensing(snap: OrgLicenseSnapshot) -> str:
     lines = [
         f"Salesforce Org Licensing Snapshot",
@@ -313,18 +378,22 @@ async def vectorize_org_metadata(
     ).scalars().all()
 
     for comp in components:
-        text = _describe_component(comp)
-        chunks.append({
-            "chunk_index": idx,
-            "content": text,
-            "section_title": f"{comp.component_category}: {comp.label or comp.api_name}",
-            "metadata_json": {
-                "source": "metadata_sync",
-                "type": comp.component_category,
-                "api_name": comp.api_name,
-            },
-        })
-        idx += 1
+        for suffix, text in describe_component_chunks(comp):
+            section = f"{comp.component_category}: {comp.label or comp.api_name}"
+            if suffix:
+                section += f" ({suffix})"
+            chunks.append({
+                "chunk_index": idx,
+                "content": text,
+                "section_title": section,
+                "metadata_json": {
+                    "source": "metadata_sync",
+                    "type": comp.component_category,
+                    "api_name": comp.api_name,
+                    "chunk_suffix": suffix,
+                },
+            })
+            idx += 1
 
     license_snap = (
         await db.execute(
