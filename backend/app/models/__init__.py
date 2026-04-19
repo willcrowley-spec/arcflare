@@ -3,6 +3,13 @@ from app.models.chat import ChatAction, ChatMessage, ChatThread
 from app.models.connection import PlatformConnection
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.document import Document, DocumentChunk
+from app.models.knowledge import (
+    ChunkCommunity,
+    Community,
+    Concept,
+    ConceptCooccurrence,
+    ProcessDocumentSource,
+)
 from app.models.entity import BusinessEntity
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject, RecordTelemetry
@@ -19,6 +26,10 @@ __all__ = [
     "ChatAction",
     "ChatMessage",
     "ChatThread",
+    "ChunkCommunity",
+    "Community",
+    "Concept",
+    "ConceptCooccurrence",
     "Document",
     "DocumentChunk",
     "DiscoveryRun",
@@ -29,6 +40,7 @@ __all__ = [
     "Organization",
     "OrgLicenseSnapshot",
     "PlatformConnection",
+    "ProcessDocumentSource",
     "ProcessEdge",
     "ProcessHandoff",
     "ProcessNode",

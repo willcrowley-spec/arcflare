@@ -41,6 +41,12 @@ class Document(Base):
     )
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    concept_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    community_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -72,5 +78,9 @@ class DocumentChunk(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    concept_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
