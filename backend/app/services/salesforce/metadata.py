@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections import defaultdict
 import re
 import urllib.parse
 from datetime import UTC, datetime
@@ -651,6 +652,9 @@ def _collect_mdapi_zip_results(
     org_id: UUID,
     files: dict[str, bytes],
     flow_versions: dict[str, dict[str, str | None]],
+    *,
+    cached_metadata_by_key: dict[tuple[str, str, str], dict[str, Any]] | None = None,
+    cached_workflow_bundles: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Parse MDAPI zip into pending ORM rows (not attached to a session)."""
     counts = {
@@ -661,6 +665,7 @@ def _collect_mdapi_zip_results(
         "workflows": 0,
         "approvals": 0,
         "flexi": 0,
+        "cache_hits": 0,
     }
     pending_automations: list[MetadataAutomation] = []
     pending_components: list[MetadataComponent] = []
@@ -669,8 +674,14 @@ def _collect_mdapi_zip_results(
     for path, raw in files.items():
         lower = path.lower()
         if lower.endswith(".flow-meta.xml"):
-            parsed = parse_flow(raw, path)
             dev_name = path.split("/")[-1].replace(".flow-meta.xml", "")
+            file_hash = hashlib.sha256(raw).hexdigest()
+            cache_key = (file_hash, "flow", dev_name)
+            if cached_metadata_by_key and cache_key in cached_metadata_by_key:
+                parsed = {**cached_metadata_by_key[cache_key]}
+                counts["cache_hits"] += 1
+            else:
+                parsed = parse_flow(raw, path)
             fv = flow_versions.get(dev_name, {})
             parsed["flow_definition_view"] = fv
             if fv.get("active_version_id") and fv.get("latest_version_id"):
@@ -693,8 +704,14 @@ def _collect_mdapi_zip_results(
             name = path.split("/")[-1].replace(".cls", "")
             meta_key = path.replace(".cls", ".cls-meta.xml")
             meta_xml = files.get(meta_key)
-            src = raw.decode("utf-8", errors="replace")
-            analyzed = analyze_apex_class(src, meta_xml=meta_xml)
+            file_hash = hashlib.sha256(raw).hexdigest()
+            cls_key = (file_hash, "apex_class", name)
+            if cached_metadata_by_key and cls_key in cached_metadata_by_key:
+                analyzed = {**cached_metadata_by_key[cls_key]}
+                counts["cache_hits"] += 1
+            else:
+                src = raw.decode("utf-8", errors="replace")
+                analyzed = analyze_apex_class(src, meta_xml=meta_xml)
             pending_components.append(
                 MetadataComponent(
                     org_id=org_id,
@@ -711,8 +728,14 @@ def _collect_mdapi_zip_results(
             name = path.split("/")[-1].replace(".trigger", "")
             meta_key = path.replace(".trigger", ".trigger-meta.xml")
             meta_xml = files.get(meta_key)
-            src = raw.decode("utf-8", errors="replace")
-            analyzed = analyze_apex_trigger(src, meta_xml=meta_xml)
+            file_hash = hashlib.sha256(raw).hexdigest()
+            tr_key = (file_hash, "trigger", name)
+            if cached_metadata_by_key and tr_key in cached_metadata_by_key:
+                analyzed = {**cached_metadata_by_key[tr_key]}
+                counts["cache_hits"] += 1
+            else:
+                src = raw.decode("utf-8", errors="replace")
+                analyzed = analyze_apex_trigger(src, meta_xml=meta_xml)
             pending_automations.append(
                 MetadataAutomation(
                     connection_id=connection_id,
@@ -732,22 +755,50 @@ def _collect_mdapi_zip_results(
             pending_objects_patch[api_name] = parsed
             counts["objects"] += 1
         elif lower.endswith(".workflow-meta.xml"):
-            for row in parse_workflow(raw, path):
-                pending_automations.append(
-                    MetadataAutomation(
-                        connection_id=connection_id,
-                        org_id=org_id,
-                        automation_type="workflow_rule",
-                        api_name=row.get("api_name") or "",
-                        label=row.get("api_name"),
-                        status="Active" if row.get("active") else "Inactive",
-                        related_object=row.get("related_object"),
-                        metadata_json=row,
+            file_hash = hashlib.sha256(raw).hexdigest()
+            related_object = path.split("/")[-1].replace(".workflow-meta.xml", "")
+            wb_key = (file_hash, related_object)
+            if cached_workflow_bundles and wb_key in cached_workflow_bundles:
+                counts["cache_hits"] += 1
+                for row in cached_workflow_bundles[wb_key]:
+                    row_c = {**row}
+                    pending_automations.append(
+                        MetadataAutomation(
+                            connection_id=connection_id,
+                            org_id=org_id,
+                            automation_type="workflow_rule",
+                            api_name=row_c.get("api_name") or "",
+                            label=row_c.get("api_name"),
+                            status="Active" if row_c.get("active") else "Inactive",
+                            related_object=row_c.get("related_object"),
+                            metadata_json=row_c,
+                        )
                     )
-                )
-                counts["workflows"] += 1
+                    counts["workflows"] += 1
+            else:
+                for row in parse_workflow(raw, path):
+                    pending_automations.append(
+                        MetadataAutomation(
+                            connection_id=connection_id,
+                            org_id=org_id,
+                            automation_type="workflow_rule",
+                            api_name=row.get("api_name") or "",
+                            label=row.get("api_name"),
+                            status="Active" if row.get("active") else "Inactive",
+                            related_object=row.get("related_object"),
+                            metadata_json=row,
+                        )
+                    )
+                    counts["workflows"] += 1
         elif lower.endswith(".approvalprocess-meta.xml"):
-            parsed = parse_approval_process(raw, path)
+            file_hash = hashlib.sha256(raw).hexdigest()
+            dev_from_path = path.split("/")[-1].replace(".approvalprocess-meta.xml", "")
+            ap_key = (file_hash, "approval_process", dev_from_path)
+            if cached_metadata_by_key and ap_key in cached_metadata_by_key:
+                parsed = {**cached_metadata_by_key[ap_key]}
+                counts["cache_hits"] += 1
+            else:
+                parsed = parse_approval_process(raw, path)
             pending_automations.append(
                 MetadataAutomation(
                     connection_id=connection_id,
@@ -763,6 +814,15 @@ def _collect_mdapi_zip_results(
             counts["approvals"] += 1
         elif lower.endswith(".flexipage-meta.xml"):
             name = path.split("/")[-1].replace(".flexipage-meta.xml", "")
+            file_hash = hashlib.sha256(raw).hexdigest()
+            fp_key = (file_hash, "flexipage", name)
+            if cached_metadata_by_key and fp_key in cached_metadata_by_key:
+                flexi_meta = {**cached_metadata_by_key[fp_key]}
+                flexi_meta["raw_xml_hash"] = file_hash
+                flexi_meta["source_path"] = path
+                counts["cache_hits"] += 1
+            else:
+                flexi_meta = {"raw_xml_hash": file_hash, "source_path": path}
             pending_components.append(
                 MetadataComponent(
                     org_id=org_id,
@@ -770,7 +830,7 @@ def _collect_mdapi_zip_results(
                     component_category="flexipage",
                     api_name=name,
                     label=name,
-                    metadata_json={"raw_xml_hash": hashlib.sha256(raw).hexdigest(), "source_path": path},
+                    metadata_json=flexi_meta,
                 )
             )
             counts["flexi"] += 1
@@ -791,9 +851,18 @@ def _persist_mdapi_zip_results(
     db: AsyncSession,
     *,
     _precomputed: dict[str, Any] | None = None,
+    cached_metadata_by_key: dict[tuple[str, str, str], dict[str, Any]] | None = None,
+    cached_workflow_bundles: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Attach MDAPI-derived rows to the session (optionally using a pre-parsed bundle)."""
-    payload = _precomputed or _collect_mdapi_zip_results(connection_id, org_id, files, flow_versions)
+    payload = _precomputed or _collect_mdapi_zip_results(
+        connection_id,
+        org_id,
+        files,
+        flow_versions,
+        cached_metadata_by_key=cached_metadata_by_key,
+        cached_workflow_bundles=cached_workflow_bundles,
+    )
     for auto in payload["pending_automations"]:
         db.add(auto)
     for comp in payload["pending_components"]:
@@ -863,9 +932,63 @@ async def sync_metadata(
     _progress("mdapi_retrieve", "done", len(mdapi_files))
 
     _progress("mdapi_parse", "pulling", 0)
+    parse_cache_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    wf_groups: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    auto_cache_rows = await db.execute(
+        select(
+            MetadataAutomation.automation_type,
+            MetadataAutomation.api_name,
+            MetadataAutomation.related_object,
+            MetadataAutomation.metadata_json,
+        ).where(MetadataAutomation.connection_id == connection_id)
+    )
+    for at, api_name, rel_obj, mj in auto_cache_rows.all():
+        if not mj or not isinstance(mj, dict):
+            continue
+        h = mj.get("raw_xml_hash")
+        if not isinstance(h, str) or not h:
+            continue
+        if at == "workflow_rule" and rel_obj:
+            wf_groups[(h, rel_obj)].append(mj)
+        else:
+            parse_cache_by_key[(h, str(at), api_name)] = mj
+    parse_cache_workflows = {
+        k: sorted(v, key=lambda d: d.get("api_name") or "") for k, v in wf_groups.items()
+    }
+    comp_cache_rows = await db.execute(
+        select(
+            MetadataComponent.component_category,
+            MetadataComponent.api_name,
+            MetadataComponent.metadata_json,
+        ).where(MetadataComponent.connection_id == connection_id)
+    )
+    for cat, api_name, mj in comp_cache_rows.all():
+        if not mj or not isinstance(mj, dict):
+            continue
+        h = mj.get("raw_xml_hash")
+        if not isinstance(h, str) or not h:
+            continue
+        parse_cache_by_key[(h, str(cat), api_name)] = mj
+    logger.info(
+        "mdapi_parse_cache_loaded connection=%s triples=%d workflow_bundles=%d",
+        connection_id,
+        len(parse_cache_by_key),
+        len(parse_cache_workflows),
+    )
+
     flow_versions = _query_flow_definition_versions(sf)
     mdapi_bundle: dict[str, Any] = _collect_mdapi_zip_results(
-        connection_id, org_id, mdapi_files, flow_versions
+        connection_id,
+        org_id,
+        mdapi_files,
+        flow_versions,
+        cached_metadata_by_key=parse_cache_by_key or None,
+        cached_workflow_bundles=parse_cache_workflows or None,
+    )
+    logger.info(
+        "mdapi_parse_complete connection=%s cache_hits=%s",
+        connection_id,
+        mdapi_bundle["counts"].get("cache_hits", 0),
     )
     object_patches: dict[str, dict[str, Any]] = mdapi_bundle["object_patches"]
 
@@ -949,6 +1072,8 @@ async def sync_metadata(
         flow_versions,
         db,
         _precomputed=mdapi_bundle,
+        cached_metadata_by_key=parse_cache_by_key,
+        cached_workflow_bundles=parse_cache_workflows,
     )
     await db.flush()
     _progress("mdapi_parse", "done", sum(mdapi_bundle["counts"].values()))
