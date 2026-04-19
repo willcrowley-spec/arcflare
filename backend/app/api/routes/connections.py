@@ -225,8 +225,10 @@ async def sync_event_stream(
                 for e in backfill_events
             )
             if is_done:
-                yield "event: done\ndata: {}\n\n"
-                return
+                await db.refresh(conn)
+                if conn.status != "syncing":
+                    yield "event: done\ndata: {}\n\n"
+                    return
 
         pubsub = r.pubsub()
         pubsub.subscribe(channel)
@@ -264,7 +266,9 @@ async def sync_event_stream(
                 return et == "error" and parsed.get("severity") == "error"
 
             while True:
-                msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                msg = await asyncio.to_thread(
+                    pubsub.get_message, ignore_subscribe_messages=True, timeout=1.0
+                )
                 if msg and msg["type"] == "message":
                     data = msg["data"]
                     if isinstance(data, bytes):

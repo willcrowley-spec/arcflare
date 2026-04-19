@@ -4,7 +4,7 @@ import { fetchWithAuth } from '@/api/client'
 
 export type SyncStreamStatus = 'idle' | 'connecting' | 'running' | 'completed' | 'failed'
 
-export function useSyncEventStream(connectionId: string | null) {
+export function useSyncEventStream(connectionId: string | null, key = 0) {
   const [events, setEvents] = useState<SyncEvent[]>([])
   const [status, setStatus] = useState<SyncStreamStatus>('idle')
   const abortRef = useRef<AbortController | null>(null)
@@ -24,6 +24,7 @@ export function useSyncEventStream(connectionId: string | null) {
     const controller = new AbortController()
     abortRef.current = controller
 
+    setEvents([])
     setStatus('connecting')
 
     ;(async () => {
@@ -95,7 +96,7 @@ export function useSyncEventStream(connectionId: string | null) {
       controller.abort()
       abortRef.current = null
     }
-  }, [connectionId])
+  }, [connectionId, key])
 
   const reset = useCallback(() => {
     close()

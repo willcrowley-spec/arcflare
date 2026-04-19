@@ -76,9 +76,10 @@ export default function AnalysisPage() {
   const navigate = useNavigate()
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
+  const [syncKey, setSyncKey] = useState(0)
   const [showSyncModal, setShowSyncModal] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
-  const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
+  const { events: syncEvents, status: syncStreamStatus } = useSyncEventStream(activeSyncId, syncKey)
   const qc = useQueryClient()
 
   const connectionsQuery = useConnections()
@@ -134,15 +135,15 @@ export default function AnalysisPage() {
 
   const onSync = useCallback(
     (id: string) => {
-      resetSyncStream()
       setSyncingId(id)
       setActiveSyncId(id)
+      setSyncKey((k) => k + 1)
       setShowSyncModal(true)
       syncConnection.mutate(id, {
         onSettled: () => setSyncingId(null),
       })
     },
-    [syncConnection, resetSyncStream],
+    [syncConnection],
   )
 
   const onDelete = useCallback(

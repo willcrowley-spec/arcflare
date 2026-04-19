@@ -148,7 +148,8 @@ export default function PlatformDetailPage() {
   const navigate = useNavigate()
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
-  const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
+  const [syncKey, setSyncKey] = useState(0)
+  const { events: syncEvents, status: syncStreamStatus } = useSyncEventStream(activeSyncId, syncKey)
   const qc = useQueryClient()
 
   const connectionsQuery = useConnections()
@@ -251,14 +252,14 @@ export default function PlatformDetailPage() {
 
   const onSync = useCallback(() => {
     if (!connection) return
-    resetSyncStream()
     const cid = String(connection.id)
     setSyncingId(cid)
     setActiveSyncId(cid)
+    setSyncKey((k) => k + 1)
     syncConnection.mutate(cid, {
       onSettled: () => setSyncingId(null),
     })
-  }, [syncConnection, connection, resetSyncStream])
+  }, [syncConnection, connection])
 
   const platformLabel = connection ? platformTypeToLabel(connection.platform_type ?? connection.platform) : 'Platform'
   const instanceUrl = connection?.instance_url?.trim() || '—'
