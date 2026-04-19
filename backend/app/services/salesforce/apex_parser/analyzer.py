@@ -19,6 +19,25 @@ from app.services.salesforce.apex_parser.ApexParser import ApexParser
 
 MD_NS = {"md": "http://soap.sforce.com/2006/04/metadata"}
 
+_OBFUSCATED_PATTERNS = (
+    "(hidden)",
+    "//This class is",
+    "//This trigger is",
+)
+
+
+def _is_obfuscated(source: str) -> bool:
+    """Detect managed-package obfuscated Apex bodies."""
+    stripped = source.strip()
+    if not stripped or stripped == "(hidden)":
+        return True
+    if len(stripped) < 20:
+        return True
+    for pattern in _OBFUSCATED_PATTERNS:
+        if stripped.startswith(pattern):
+            return True
+    return False
+
 
 class _SilentErrorListener(ErrorListener):
     def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
@@ -171,7 +190,24 @@ def _collect_dml_soql(
     return dml_snippets, soql_literals
 
 
-def analyze_apex_class(source: str, meta_xml: bytes | None = None) -> dict[str, Any]:
+def analyze_apex_class(source: str | None, meta_xml: bytes | None = None) -> dict[str, Any]:
+    if source is None:
+        source = ""
+    if _is_obfuscated(source):
+        return {
+            "source_body": source,
+            "methods": [],
+            "class_annotations": [],
+            "dml_objects": [],
+            "soql_objects": [],
+            "callout_detected": False,
+            "api_version": _api_version_from_meta(meta_xml),
+            "line_count": source.count("\n") + 1,
+            "raw_xml_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "parse_error": False,
+            "skipped": True,
+            "skip_reason": "obfuscated_managed_package",
+        }
     parser, tree = _parse_tree(source, "class")
     type_map = _build_variable_type_map(parser, tree, source)
 
@@ -231,7 +267,26 @@ def analyze_apex_class(source: str, meta_xml: bytes | None = None) -> dict[str, 
     }
 
 
-def analyze_apex_trigger(source: str, meta_xml: bytes | None = None) -> dict[str, Any]:
+def analyze_apex_trigger(source: str | None, meta_xml: bytes | None = None) -> dict[str, Any]:
+    if source is None:
+        source = ""
+    if _is_obfuscated(source):
+        return {
+            "source_body": source,
+            "methods": [],
+            "class_annotations": [],
+            "dml_objects": [],
+            "soql_objects": [],
+            "callout_detected": False,
+            "api_version": _api_version_from_meta(meta_xml),
+            "line_count": source.count("\n") + 1,
+            "raw_xml_hash": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "parse_error": False,
+            "skipped": True,
+            "skip_reason": "obfuscated_managed_package",
+            "trigger_object": None,
+            "trigger_events": [],
+        }
     parser, tree = _parse_tree(source, "trigger")
     type_map = _build_variable_type_map(parser, tree, source)
     dml_snippets, soql_literals = _collect_dml_soql(parser, tree, source)

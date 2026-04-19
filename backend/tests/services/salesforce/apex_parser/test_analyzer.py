@@ -23,3 +23,15 @@ def test_analyze_apex_trigger_fixture():
     out = analyze_apex_trigger(path.read_text(encoding="utf-8"), None)
     assert out["trigger_object"] == "Account"
     assert any("update" in e.lower() for e in out["trigger_events"])
+
+
+def test_obfuscated_class_skipped():
+    out = analyze_apex_class("(hidden)", None)
+    assert out["skipped"] is True
+    assert out["methods"] == []
+    assert out["dml_objects"] == []
+
+
+def test_very_short_class_skipped():
+    out = analyze_apex_class("", None)
+    assert out["skipped"] is True
