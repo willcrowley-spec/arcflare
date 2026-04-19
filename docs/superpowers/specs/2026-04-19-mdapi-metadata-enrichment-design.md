@@ -43,7 +43,7 @@ No Metadata API (`sf.mdapi`) calls exist in the codebase. A repo-wide search for
 |---------|--------|--------|
 | Deterministic AST-derived graphs achieve 0.902 corpus coverage vs 0.641 for LLM-extracted, at 2.25x cost of vector-only (vs 19.75x for LLM-extracted) | arxiv 2601.08773 | Validates deterministic parsing over LLM extraction for metadata graph |
 | Vector-only search fails on multi-hop architectural queries (controller→service→repository chains) | arxiv 2601.08773 | Process discovery asks inherently multi-hop questions; graph traversal required |
-| Structured AST path representations outperform raw token sequences for code understanding | Meta FAIR code2seq, AST-T5 | Method-boundary chunking for Apex, not raw source embedding. ANTLR4 Apex grammar (`apex-dev-tools/apex-parser`) available with Python target for full AST-based static analysis |
+| Structured AST path representations outperform raw token sequences for code understanding | Meta FAIR code2seq, AST-T5 | Method-boundary chunking for Apex, not raw source embedding. `apex-dev-tools/apex-parser` provides action-free ANTLR4 grammars for Apex+SOQL+SOSL that compile cleanly with the Python3 target for full AST-based static analysis |
 | KG-based RAG achieves 0.95 triple recall with compact subgraphs, sub-second inference on million-edge graphs | MIT SPIRAL (2025) | Dependency graph is viable at our scale |
 | RAG with structured output + reasoning significantly outperforms long-context approaches on multi-document questions | Google DeepMind QUEST-LOFT | Supports "parse into structure, describe as text, embed" pattern |
 | Hybrid retrieval fusing vector similarity + graph traversal via Reciprocal Rank Fusion achieves best results | Practical GraphRAG at Scale | Extend existing community-filtered vector search to metadata |
@@ -58,7 +58,7 @@ No Metadata API (`sf.mdapi`) calls exist in the codebase. A repo-wide search for
 - **Primary retrieval**: Salesforce Metadata API `retrieve()` for all logic-bearing types
 - **Keep REST/SOQL for**: record counts, velocity, licensing, limits, global object list, permission sets, profiles
 - **Standard object standard fields**: rely on LLM native knowledge (defer shared platform knowledge base to a separate spec)
-- **Parsing**: deterministic XML parsing into structured JSONB (no LLM enrichment at parse time). Apex source parsed via ANTLR4 AST for accurate DML/SOQL/method extraction.
+- **Parsing**: deterministic XML parsing into structured JSONB (no LLM enrichment at parse time). Apex source parsed via ANTLR4 AST (`apex-dev-tools/apex-parser` grammars, Python3 target) for accurate DML/SOQL/method extraction.
 - **Graph**: deterministic dependency graph extracted from parsed JSONB, with Leiden community detection
 - **No pre-embed LLM enrichment**: the discovery pipeline's LLM stages handle business-intent interpretation at query time
 - **Vectorization**: same pipeline as today (`vectorize_chunks` → Gemini embedding → pgvector), but with dramatically richer `_describe_*` templates consuming the MDAPI-parsed JSONB
@@ -79,7 +79,7 @@ Salesforce Org
        │        ┌────────────────────────────────────────────────┐   │
        │        │              MDAPI Retrieve                    │   │
        │        │  1. Build package.xml                          │   │
-       │        │  2. sf.mdapi.retrieve() (async)                │   │
+       │        │  2. SOAP retrieve (zeep ServiceProxy)          │   │
        │        │  3. Poll check_retrieve_status()               │   │
        │        │  4. Download + extract zip                     │   │
        │        └──────────────┬─────────────────────────────────┘   │
@@ -178,6 +178,10 @@ Salesforce Org
 
 The `Workflow` type bundles WorkflowRule, WorkflowFieldUpdate, WorkflowAlert, WorkflowOutboundMessage, and WorkflowTask under a single per-object XML file. This is more efficient than pulling each sub-type separately.
 
+**Important: Flow version behavior.** Since Metadata API v44 (Winter '19), retrieve returns only the **latest** version of a Flow, not the active version ([Gearset analysis](https://gearset.com/blog/flows-and-flow-definitions)). If a developer has version 5 in Draft while version 3 is Active, the retrieve gives version 5 (the Draft). For process discovery, we want the Active version. **Mitigation**: before parsing retrieved Flows, query Tooling API `FlowDefinitionView` (`SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView`) to identify which flows have active≠latest. For those, either (a) use Tooling API to fetch the active version's body, or (b) flag the retrieved Flow as "latest draft, not active" in the JSONB so downstream consumers know.
+
+**Retrieve size constraints.** The MDAPI retrieve zip is capped at **39 MB compressed** and **10,000 files** ([Salesforce docs](https://developer.salesforce.com/blogs/2025/10/master-metadata-api-deployments-with-best-practices)). Large orgs with many Apex classes (source bodies inflate the zip) may exceed these limits. **Mitigation**: if a single wildcard retrieve fails with `LIMIT_EXCEEDED`, fall back to per-type sequential retrieves (Flow first, then ApexClass, then CustomObject, etc.). This adds latency but stays within limits.
+
 ### Retrieve Pattern
 
 New module: `backend/app/services/salesforce/mdapi_retrieve.py`
@@ -187,21 +191,29 @@ async def retrieve_metadata(sf: Salesforce, api_version: str = "62.0") -> dict[s
     """Retrieve metadata via MDAPI, return mapping of relative_path -> file_bytes."""
 ```
 
+**Critical implementation note**: `simple_salesforce`'s `SfdcMetadataApi.retrieve()` method has a known bug (issues [#538](https://github.com/simple-salesforce/simple-salesforce/issues/538), [#620](https://github.com/simple-salesforce/simple-salesforce/issues/620)) — it requires an `async_process_id` parameter that doesn't exist before the request, and POSTs to a `deployRequest/` URL path (copy-paste from the deploy method). **Do not use `sf.mdapi.retrieve()` directly.**
+
+Instead, construct the SOAP retrieve request manually using the `RETRIEVE_MSG` template and `call_salesforce()` helper from `simple_salesforce.util`, or use zeep's `ServiceProxy.retrieve()` directly via `sf.mdapi._service.retrieve(...)`. The `check_retrieve_status` and `retrieve_zip` methods on `SfdcMetadataApi` work correctly — only `retrieve()` is broken.
+
 Steps:
-1. Build `package.xml` string with the types above
-2. Call `sf.mdapi.retrieve(package_xml)` — returns an async job ID
-3. Poll `sf.mdapi.check_retrieve_status(job_id)` with exponential backoff (1s, 2s, 4s, max 8s intervals, timeout 300s)
-4. On completion, the response includes a base64-encoded zip
-5. Decode and extract the zip in memory using `zipfile.ZipFile(io.BytesIO(...))`
-6. Return a dict mapping relative path (e.g., `flows/Update_Account_Rating.flow-meta.xml`) to raw bytes
+1. Build `package.xml` as an `unpackaged` dict of `{type_name: ['*']}` pairs
+2. Construct SOAP retrieve request XML with the unpackaged manifest and submit via `call_salesforce()` to the metadata SOAP endpoint
+3. Parse the response to extract the `async_process_id` from `retrieveResponse`
+4. Poll `sf.mdapi.check_retrieve_status(async_process_id)` with exponential backoff (1s, 2s, 4s, max 8s intervals, timeout 300s)
+5. On completion, call `sf.mdapi.retrieve_zip(async_process_id)` to get the base64-decoded zip bytes
+6. Extract the zip in memory using `zipfile.ZipFile(io.BytesIO(zip_bytes))`
+7. Return a dict mapping relative path (e.g., `flows/Update_Account_Rating.flow-meta.xml`) to raw bytes
 
 Error handling:
-- If retrieve fails (insufficient permissions, timeout), fall back to the existing Tooling SOQL approach for that sync run and log a warning. This preserves backward compatibility during rollout.
+- If retrieve fails due to `INSUFFICIENT_ACCESS`, log a clear error explaining the user needs "Modify All Data" permission (see below), and fall back to the existing Tooling SOQL approach for that sync run.
+- If retrieve times out (>300s), fall back to Tooling SOQL and log a warning.
 - Rate limit: MDAPI retrieve counts against org limits. One retrieve per sync is well within bounds.
 
-### OAuth Scope
+### OAuth Scope and Permission Requirements
 
-Current scope is `api refresh_token` (line 35 of `oauth.py`). The `api` scope grants access to the Metadata API — no scope change required.
+Current OAuth scope is `api refresh_token` (line 35 of `oauth.py`). The `api` scope allows API access, but **the Metadata API additionally requires the connected user to have "Modify All Data" permission** on their profile. This is a Salesforce platform requirement confirmed in the [Metadata API Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/) and [multiple](https://github.com/financialforcedev/apex-mdapi/issues/44) [community](https://salesforce.stackexchange.com/questions/195140/apex-metadata-api-security) sources. Without ModifyAllData, the retrieve returns `INSUFFICIENT_ACCESS: use of the Metadata API requires a user with the ModifyAllData permission`.
+
+**Impact on customer onboarding**: The OAuth connection flow should validate that the connected user has ModifyAllData before attempting MDAPI retrieve. If not, surface a clear message explaining the requirement and fall back to Tooling SOQL (with reduced data quality). This check can be done at connect time by attempting `sf.mdapi.describe_metadata()` — if it throws, the user lacks the permission.
 
 ### Functions Removed from metadata.py
 
@@ -227,8 +239,9 @@ Current scope is `api refresh_token` (line 35 of `oauth.py`). The `api` scope gr
 | `pull_permission_sets()` | SOQL-based, not logic-bearing for process discovery |
 | `pull_profiles()` | SOQL-based, lightweight |
 | `pull_installed_packages()` | Keep via Tooling SOQL — `InstalledSubscriberPackage` has no MDAPI equivalent (platform limitation confirmed by SFDX, Gearset, Salesforce Inspector all using Tooling for this) |
+| `pull_custom_metadata_types()` | **New.** SOQL `FIELDS(ALL)` per `__mdt` object. Custom Metadata Types reveal org configuration patterns (territory rules, routing configs, feature flags) that inform process discovery. Stored as `MetadataComponent` rows with `component_category="custom_metadata_type"`. |
 | `_tooling_query_all()` | Still needed for `pull_installed_packages` |
-| `_rest_query_all()` | Still needed for permission sets, profiles, usage data |
+| `_rest_query_all()` | Still needed for permission sets, profiles, usage data, custom metadata types |
 | `get_sf_client()` | Unchanged |
 
 ---
@@ -333,29 +346,45 @@ Output JSONB shape:
 
 Input: `.cls` files (classes) and `.trigger` files (triggers)
 
-Uses the ANTLR4 Apex grammar from `apex-dev-tools/apex-parser` (`BaseApexParser.g4`, `BaseApexLexer.g4`) compiled with the Python3 target (`antlr4 -Dlanguage=Python3`). This generates a real parser that builds a full AST from Apex source, enabling accurate static analysis rather than regex heuristics.
+Uses the ANTLR4 grammars from `apex-dev-tools/apex-parser` (`BaseApexParser.g4` / `BaseApexLexer.g4`) compiled with the Python3 target. These grammars are **action-free** — verified by reading both files line-by-line; the Java/TS-specific code lives only in the wrapper classes (ApexParserFactory, etc.), not in the grammar files. They compile cleanly with `antlr4 -Dlanguage=Python3`.
 
-**New dependency**: `antlr4-python3-runtime` (pip package). The generated parser files are committed to the repo (no ANTLR4 tool needed at runtime).
+**Why ANTLR4 apex-dev-tools over alternatives**:
+- `antlr/grammars-v4/apex/apex.g4`: target-independent but **has NO trigger support** (no `triggerUnit` rule), making it unsuitable.
+- `aheber/tree-sitter-sfapex`: excellent grammar quality but **has no Python bindings** — no PyPI package, no `bindings/python/` directory, no `pyproject.toml`. Using it from Python requires compiling the grammar to a shared library and loading via ctypes, which is fragile. Only Node.js, Rust, and Web bindings exist.
+- `apex-dev-tools/apex-parser` grammars: full Apex support (classes + triggers + SOQL + SOSL + DML), action-free, actively maintained (v5.0.0-beta.5, March 2026), used by the `apex-ls` language server.
 
-Extracts via AST traversal:
+**New dependency**: `antlr4-python3-runtime` (pip). Parser files are generated once with the ANTLR4 tool and committed to the repo (no ANTLR4 tool at runtime).
+
+**Setup steps** (one-time, at development time):
+1. Copy `BaseApexLexer.g4` → `ApexLexer.g4`, `BaseApexParser.g4` → `ApexParser.g4` (ANTLR4 expects filename = grammar name)
+2. Add `options { tokenVocab=ApexLexer; }` to the parser grammar (links parser to lexer tokens)
+3. Run `antlr4 -Dlanguage=Python3 ApexLexer.g4` then `antlr4 -Dlanguage=Python3 ApexParser.g4`
+4. Implement a `CaseInsensitiveInputStream` (~10 lines) that lowercases input for the lexer (Apex is case-insensitive)
+5. Commit all generated `.py` files to `backend/app/services/salesforce/apex_parser/`
+
+**Entry points**: `compilationUnit()` for class files, `triggerUnit()` for trigger files, `query()` for standalone SOQL.
+
+Extracts via AST visitor pattern:
 - `source_body`: full source code (stored in JSONB for re-assessment without re-pulling)
 - `methods`: list of `{name, return_type, parameters, annotations, line_range, has_dml, has_soql, has_callout}`
-  - AST: `MethodDeclaration` nodes provide name, return type, formal parameters, modifiers
-  - AST: `Annotation` nodes preceding method/class declarations give `@InvocableMethod`, `@AuraEnabled`, etc.
+  - AST: `methodDeclaration` nodes provide name, return type, formal parameters, modifiers
+  - AST: `annotation` nodes preceding method/class declarations give `@InvocableMethod`, `@AuraEnabled`, etc.
 - `annotations`: class-level annotations (`@IsTest`, `@RestResource`, etc.)
 - `dml_objects`: resolved from AST with full accuracy:
-  - DML statement nodes (`insert`, `update`, `delete`, `upsert`, `merge`, `undelete`) identify the variable operand
-  - Variable declaration nodes provide type bindings (`List<Account> accts` → `insert accts` resolves to Account)
-  - Handles `new Account(...)` expressions, typed collection declarations, and SObject type references
+  - DML expression nodes (`INSERT`, `UPDATE`, `DELETE`, `UPSERT`, `MERGE`, `UNDELETE` keywords in the grammar) identify the variable operand
+  - Variable declaration nodes (`localVariableDeclaration`) provide type bindings (`List<Account> accts` → `insert accts` resolves to Account)
+  - Handles `new Account(...)` expressions (`creator` rule), typed collection declarations, and SObject type references
   - The only unresolvable case is runtime polymorphism (method call on an interface variable where the implementing class is unknown at compile time) — this is an inherent limitation of all static analysis, not a parsing gap
-- `soql_objects`: extracted from inline SOQL nodes (`[SELECT ... FROM ObjectName ...]`) — the AST parses SOQL as a sub-grammar and the FROM clause is a typed node
+- `soql_objects`: the lexer captures SOQL as structured tokens with full keyword support (SELECT, FROM, WHERE, etc.); the `query()` entry point can parse standalone SOQL, and inline `[SELECT ...]` expressions are captured in the expression grammar. FROM clause object names are extracted from the parsed SOQL structure.
 - `callout_detected`: boolean, true if `HttpRequest`, `Http.send`, or `@HttpCallout` / `callout=true` annotations found in AST
 - `api_version`: from the corresponding `.cls-meta.xml`
 - `line_count`: total lines of source
 
 For triggers specifically:
-- `trigger_object`: from `TriggerDeclaration` AST node — the object name is a direct child
-- `trigger_events`: from the trigger event list node — `before insert`, `after update`, etc. are typed tokens
+- `trigger_object`: from `triggerUnit` AST node — `TRIGGER id ON id` where the second `id` is the object name
+- `trigger_events`: from `triggerCase` nodes — `(BEFORE|AFTER) (INSERT|UPDATE|DELETE|UNDELETE)` are typed tokens
+
+**Error handling**: ANTLR4 is strict — malformed Apex will produce parse errors. Since we're parsing MDAPI-retrieved source (which compiled and deployed successfully in the org), this is acceptable. For managed packages with obfuscated/missing source bodies, skip parsing entirely (see AP-10). Wrap all parsing in try/except; on failure, store `parse_error: true` in JSONB with the raw source for manual inspection.
 
 Output JSONB shape:
 ```json
@@ -559,7 +588,7 @@ class MetadataDependency(Base):
 | apex_trigger | `triggers_on` | object | Trigger source: `trigger Name on ObjectName` |
 | apex_class | `reads` | object | SOQL: `FROM ObjectName` in inline queries |
 | apex_class | `writes` | object | DML: `insert/update/delete/upsert` targets |
-| apex_class | `calls` | apex_class | Best-effort: class name references in source (limited without full AST) |
+| apex_class | `calls` | apex_class | AST: static method call targets (`expression.methodCall` with explicit class qualifier, e.g., `AccountService.doWork()`) — covers most cross-class calls but cannot resolve dynamic dispatch or interface polymorphism |
 | validation_rule | `validates` | object | Parent object from CustomObject XML path |
 | workflow_rule | `triggers_on` | object | Parent object from Workflow XML path |
 | workflow_rule | `updates_field` | object | Field update action target |
@@ -787,18 +816,111 @@ If MDAPI approach causes issues in production:
 - **Pre-embed LLM enrichment** — the discovery pipeline's LLM stages handle business-intent interpretation at query time. No LLM pass during metadata sync.
 - **FlexiPage deep parsing** — FlexiPage XML is now retrieved via MDAPI but full region/component parsing is deferred. The current implementation stores the raw metadata; deep parsing of FlexiPage regions and component configurations can be added later.
 - **Named Credentials / External Services / Platform Events** — not logic-bearing for process discovery. Can be added later.
-- **Report / Dashboard metadata** — potentially valuable for understanding business KPIs but requires Report type in MDAPI. Deferred.
+- **Report / Dashboard metadata** — low value for process discovery; deferred indefinitely.
+
+---
+
+## 8. Anti-Patterns & Implementation Guardrails
+
+These are patterns that have caused real problems in similar metadata extraction systems. Flag any PR that introduces one.
+
+### AP-1: Using `sf.mdapi.retrieve()` directly
+
+**What**: Calling `simple_salesforce`'s `SfdcMetadataApi.retrieve()` method.
+**Why it breaks**: The method has a broken signature requiring `async_process_id` as a positional arg and POSTs to the wrong URL path (`deployRequest/`). Issues [#538](https://github.com/simple-salesforce/simple-salesforce/issues/538), [#620](https://github.com/simple-salesforce/simple-salesforce/issues/620).
+**Instead**: Use zeep `ServiceProxy.retrieve()` directly or construct the SOAP XML manually.
+
+### AP-2: Assuming the retrieved Flow is the active version
+
+**What**: Parsing all `.flow-meta.xml` files from the retrieve zip as "the current production logic."
+**Why it breaks**: Since Metadata API v44, retrieve returns the **latest** version, which may be an unreleased Draft. Active version 3 is invisible if latest version 5 exists as Draft.
+**Instead**: Cross-reference with `FlowDefinitionView` Tooling query to verify active vs. latest. Flag or skip Draft-only flows.
+
+### AP-3: Single wildcard retrieve on enterprise-scale orgs
+
+**What**: One `package.xml` with `*` for all types in a single retrieve call.
+**Why it breaks**: 39 MB zip limit + 10,000 file limit. A large org with 800+ Apex classes and 500+ Flows will exceed this.
+**Instead**: Implement a fallback to per-type sequential retrieves if the single retrieve returns `LIMIT_EXCEEDED`. Monitor zip size and log it.
+
+### AP-4: Regex for Apex DML/SOQL extraction
+
+**What**: Using `re.findall(r'insert\s+(\w+)', source)` or similar patterns instead of the ANTLR4 parser.
+**Why it breaks**: Misses DML in comments, matches DML in string literals, can't resolve variable types (`insert accounts` → what type is `accounts`?), breaks on multi-line statements.
+**Instead**: Always use the ANTLR4 AST parser. If ANTLR4 fails on malformed Apex, store the source body with `parse_error: true` in JSONB — don't fall back to regex.
+
+### AP-5: Storing raw Apex source in the embedding
+
+**What**: Vectorizing Apex source code directly (e.g., `"public class AccountService { public void updateRatings(List<Account> accts) { ... }"}`).
+**Why it breaks**: Embeddings of raw code are noisy — variable names, syntax, and formatting dominate the vector space. Semantic similarity between "this class updates accounts" and the raw code is low.
+**Instead**: Generate structured natural-language descriptions via `_describe_component` and embed those. The raw source stays in JSONB for re-analysis.
+
+### AP-6: Embedding validation rule formulas verbatim
+
+**What**: Putting `AND(ISPICKVAL(StageName, 'Closed Won'), ISBLANK(CloseDate))` directly into the vector text.
+**Why it breaks**: Formula syntax is opaque to embedding models. The text "checks if Stage is Closed Won and Close Date is blank" retrieves much better.
+**Instead**: The vectorizer should describe what the formula DOES in natural language, then optionally include the formula as a secondary detail.
+
+### AP-7: Re-parsing unchanged metadata on every sync
+
+**What**: Running the full XML → JSONB parse pipeline even when the source XML hasn't changed since last sync.
+**Why it breaks**: Wasted compute. On a 500-class org, Apex parsing takes significant time.
+**Instead**: Compare `raw_xml_hash` (SHA-256 of source XML) with the stored hash. Skip parsing if unchanged. The JSONB shape includes `raw_xml_hash` for exactly this purpose.
+
+### AP-8: Silent fallback to Tooling SOQL
+
+**What**: MDAPI fails (permissions, timeout), pipeline silently switches to Tooling SOQL, user sees thin metadata without knowing why.
+**Why it breaks**: User blames data quality without knowing the root cause. Discovery pipeline quality degrades without explanation.
+**Instead**: Set `mdapi_fallback: true` in connection metadata. Surface in UI: "Metadata sync used limited data — your connected user may need 'Modify All Data' permission for full analysis."
+
+### AP-9: Leiden resolution parameter hardcoded without validation
+
+**What**: Using `resolution_parameter=1.0` (or whatever default) without checking the output community structure.
+**Why it breaks**: On sparse graphs, you get one giant community. On dense graphs, you get hundreds of single-node communities. Neither is useful for filtering.
+**Instead**: Use CPMVertexPartition (no resolution-limit problem). Run with `n_iterations=-1` (until convergence). Log community count and average community size. If community count < 3 or > org_metadata_count / 2, flag for review.
+
+### AP-10: Parsing managed package Apex bodies
+
+**What**: Attempting to parse Apex classes from managed packages (e.g., `npe01__ContactMerge__c`).
+**Why it breaks**: Managed packages have protected source. The MDAPI retrieve includes the `.cls-meta.xml` but NOT the `.cls` body (or returns an obfuscated body). The ANTLR4 parser will fail or produce garbage.
+**Instead**: Check if the class belongs to a managed namespace (prefix before `__`). If so, skip source parsing and store only the metadata from the `-meta.xml` (name, apiVersion, status). Record `managed_package: true` in JSONB.
+
+### AP-11: Building dependency edges from unvalidated metadata
+
+**What**: Extracting edges like `flow → writes → Account` without verifying that `Account` actually exists in the org's object list.
+**Why it breaks**: Stale metadata, typos in flow configurations, or references to deleted objects create phantom nodes in the graph. Leiden then creates communities around phantom objects.
+**Instead**: Validate all target nodes against the global object list and known automation/component API names. Log orphaned references but don't create edges for them.
+
+### AP-12: Loading all JSONB into memory for graph building
+
+**What**: `SELECT metadata_json FROM metadata_automations WHERE connection_id = ?` loading 500+ automation JSONB blobs into Python memory simultaneously.
+**Why it breaks**: Large Apex `source_body` fields (60KB+) × hundreds of classes = OOM risk in the worker.
+**Instead**: Stream with server-side cursor (`yield_per(100)`) or load only the graph-relevant JSONB keys via Postgres JSON path extraction (`metadata_json->'dml_objects'`, `metadata_json->'soql_objects'`).
 
 ---
 
 ## References
 
+### Research Papers
 - arxiv 2601.08773 — Reliable Graph-RAG for Codebases: AST-Derived Graphs vs LLM-Extracted Knowledge Graphs (Jan 2026)
 - Meta FAIR code2seq — Generating Sequences from Structured Representations of Code
 - Meta FAIR AST-T5 — Structure-Aware Pretraining for Code Generation and Understanding (2024)
 - MIT SPIRAL — Iterative Subgraph Expansion for Knowledge-Graph Based RAG (2025)
 - Google DeepMind QUEST-LOFT — Structured output improves multi-document RAG quality
 - Practical GraphRAG at Scale (arxiv 2507.03226) — Hybrid retrieval with Reciprocal Rank Fusion
+- ServiceNow DeepCodeSeek (2025) — Platform metadata + multi-stage retrieval, 87.86% top-40 accuracy
+
+### Salesforce Platform Documentation & Community
+- [Salesforce Metadata API Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/) — retrieve permissions, type definitions, API limits
+- [Gearset: How Flows and Flow Definitions changed with MDAPI v44](https://gearset.com/blog/flows-and-flow-definitions) — Flow versioning behavior, active vs latest version
+- [SF StackExchange #108451](https://salesforce.stackexchange.com/questions/108451/) — Standard object standard fields not returned by MDAPI
+- [SF StackExchange #297807](https://salesforce.stackexchange.com/questions/297807/) — Workflow sub-types bundled under Workflow metadata type
+- [Salesforce Master Metadata API Deployments Best Practices (Oct 2025)](https://developer.salesforce.com/blogs/2025/10/master-metadata-api-deployments-with-best-practices) — 39 MB zip limit, 10K file limit
 - TrailMeta — 7-tier Salesforce metadata extraction with two-pass Gemini analysis
 - Salesforce DescribeFlow — Flow XML to human-readable documentation
-- ServiceNow DeepCodeSeek (2025) — Platform metadata + multi-stage retrieval, 87.86% top-40 accuracy
+
+### Tools & Libraries
+- [simple-salesforce v1.12.9](https://github.com/simple-salesforce/simple-salesforce) — Python Salesforce client. Retrieve method broken: [PR #623](https://github.com/simple-salesforce/simple-salesforce/pull/623) (fix) is still OPEN with dirty merge state as of Apr 2026; not merged in any release through v1.12.9. Workaround: use zeep `ServiceProxy.retrieve()` directly.
+- [apex-dev-tools/apex-parser](https://github.com/apex-dev-tools/apex-parser) — ANTLR4 Apex/SOQL/SOSL grammar, action-free, Python3 target compatible (v5.0.0-beta.5, actively maintained)
+- [aheber/tree-sitter-sfapex](https://github.com/aheber/tree-sitter-sfapex) — tree-sitter grammar for Apex/SOQL/SOSL (85 stars, Node.js/Rust/Web bindings only — no Python PyPI package; evaluated but not chosen)
+- [Google flow-lens](https://github.com/google/flow-lens) — TypeScript tool for Flow XML → UML/Mermaid diagrams (reference for Flow XML parsing approach)
+- [leidenalg](https://leidenalg.readthedocs.io/en/stable/) — Python Leiden community detection (CPMVertexPartition recommended for metadata graphs)
