@@ -279,7 +279,7 @@ export default function AnalysisPage() {
             {connections.map((c: PlatformConnection) => {
               const label = platformLabelFromType(c.platform_type ?? (c.platform as string | undefined))
               const badge = connectionBadgeStatus(String(c.status))
-              const syncingThis = syncingId === String(c.id) && syncConnection.isPending
+              const syncingThis = syncingId === String(c.id) || c.status === 'syncing' || (activeSyncId === String(c.id) && (syncStreamStatus === 'running' || syncStreamStatus === 'connecting'))
               return (
                 <div
                   key={String(c.id)}
@@ -315,7 +315,7 @@ export default function AnalysisPage() {
                   <div className="mt-4 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
-                      disabled={syncConnection.isPending}
+                      disabled={syncingThis || syncConnection.isPending}
                       onClick={() => onSync(String(c.id))}
                       className="inline-flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-navy-800 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50"
                     >

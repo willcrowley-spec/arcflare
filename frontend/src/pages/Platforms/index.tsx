@@ -261,6 +261,8 @@ export default function PlatformDetailPage() {
     })
   }, [syncConnection, connection])
 
+  const isSyncing = syncConnection.isPending || syncingId === String(connection?.id) || connection?.status === 'syncing' || syncStreamStatus === 'running' || syncStreamStatus === 'connecting'
+
   const platformLabel = connection ? platformTypeToLabel(connection.platform_type ?? connection.platform) : 'Platform'
   const instanceUrl = connection?.instance_url?.trim() || '—'
   const lastSync = connection?.last_sync_at ?? summary?.last_sync_at ?? null
@@ -359,10 +361,10 @@ export default function PlatformDetailPage() {
             <button
               type="button"
               onClick={onSync}
-              disabled={syncConnection.isPending || syncingId === String(connection.id)}
+              disabled={isSyncing}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:opacity-50"
             >
-              <RefreshCw className={clsx('h-4 w-4', (syncConnection.isPending || syncingId === String(connection.id)) && 'animate-spin')} />
+              <RefreshCw className={clsx('h-4 w-4', isSyncing && 'animate-spin')} />
               Sync now
             </button>
             <button

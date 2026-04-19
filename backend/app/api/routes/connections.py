@@ -158,6 +158,8 @@ async def sync_connection(
     conn = await db.get(PlatformConnection, connection_id)
     if conn is None or conn.org_id != org.id:
         raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.status == "syncing":
+        raise HTTPException(status_code=409, detail="Sync already in progress")
     conn.status = "syncing"
     await db.commit()
     sync_metadata_task.delay(str(conn.id))
