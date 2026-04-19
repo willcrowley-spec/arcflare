@@ -63,12 +63,92 @@ def _soql_objects(soql_text: str) -> list[str]:
     return out
 
 
-def _dml_objects_from_snippets(snippets: list[str]) -> list[str]:
+def _extract_sobject_from_type(type_text: str) -> str | None:
+    """Extract SObject type from type declarations like List<Account>, Account[], Account."""
+    m = re.match(
+        r"(?:List|Set)\s*<\s*([A-Za-z][A-Za-z0-9_]*)\s*>",
+        type_text.strip(),
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    m = re.match(r"([A-Za-z][A-Za-z0-9_]*)\s*\[\s*\]", type_text.strip())
+    if m:
+        return m.group(1)
+    m = re.match(r"^([A-Za-z][A-Za-z0-9_]*)$", type_text.strip())
+    if m:
+        candidate = m.group(1)
+        primitives = {
+            "string",
+            "integer",
+            "long",
+            "double",
+            "decimal",
+            "boolean",
+            "date",
+            "datetime",
+            "time",
+            "id",
+            "blob",
+            "object",
+            "void",
+        }
+        if candidate.lower() not in primitives:
+            return candidate
+    return None
+
+
+def _build_variable_type_map(parser: ApexParser, tree: ParseTree, source: str) -> dict[str, str]:
+    """Map variable names to their SObject types from declarations and parameters."""
+    type_map: dict[str, str] = {}
+
+    for decl in XPath.findAll(tree, "//localVariableDeclaration", parser):
+        type_ref = decl.typeRef() if decl.typeRef() else None
+        if type_ref is None:
+            continue
+        type_text = _original_text(source, type_ref)
+        sobject_type = _extract_sobject_from_type(type_text)
+        if not sobject_type:
+            continue
+        vds = decl.variableDeclarators()
+        if not vds:
+            continue
+        for vd in vds.variableDeclarator():
+            vid = vd.id_() if vd.id_() else None
+            if vid:
+                type_map[_original_text(source, vid)] = sobject_type
+
+    for param in XPath.findAll(tree, "//formalParameter", parser):
+        type_ref = param.typeRef() if param.typeRef() else None
+        if type_ref is None:
+            continue
+        type_text = _original_text(source, type_ref)
+        sobject_type = _extract_sobject_from_type(type_text)
+        if not sobject_type:
+            continue
+        pid = param.id_() if param.id_() else None
+        if pid:
+            type_map[_original_text(source, pid)] = sobject_type
+
+    return type_map
+
+
+def _resolve_dml_objects(snippets: list[str], type_map: dict[str, str]) -> list[str]:
+    """Resolve DML statement targets to SObject types using the variable type map."""
     objs: set[str] = set()
     for sn in snippets:
-        m = re.search(r"(insert|update|delete|undelete|upsert)\s*([a-zA-Z0-9_]+)", sn, re.IGNORECASE)
+        m = re.search(
+            r"(insert|update|delete|undelete|upsert)\s+([a-zA-Z0-9_]+)",
+            sn,
+            re.IGNORECASE,
+        )
         if m:
-            objs.add(m.group(2))
+            var_name = m.group(2)
+            resolved = type_map.get(var_name) or type_map.get(var_name.lower())
+            if resolved:
+                objs.add(resolved)
+            else:
+                objs.add(var_name)
     return sorted(objs)
 
 
@@ -93,7 +173,9 @@ def _collect_dml_soql(
 
 def analyze_apex_class(source: str, meta_xml: bytes | None = None) -> dict[str, Any]:
     parser, tree = _parse_tree(source, "class")
-    dml_snippets, soql_literals = _collect_dml_soql(parser, tree, source)
+    type_map = _build_variable_type_map(parser, tree, source)
+
+    all_dml, all_soql = _collect_dml_soql(parser, tree, source)
 
     methods: list[dict[str, Any]] = []
     for md in XPath.findAll(tree, "//methodDeclaration", parser):
@@ -102,37 +184,44 @@ def analyze_apex_class(source: str, meta_xml: bytes | None = None) -> dict[str, 
         params = (
             _original_text(source, md.formalParameters()) if md.formalParameters() else "()"
         )
+
+        method_dml, method_soql = _collect_dml_soql(parser, md, source)
+
         methods.append(
             {
                 "name": name,
                 "return_type": ret,
                 "parameters": params,
                 "annotations": [],
-                "has_dml": bool(dml_snippets),
-                "has_soql": bool(soql_literals),
+                "has_dml": bool(method_dml),
+                "has_soql": bool(method_soql),
                 "has_callout": bool(
                     re.search(r"\bHttpRequest\b|\bHttp\.send\b", source)
-                    or re.search(r"@future\s*\([^)]*callout\s*=\s*true", source, re.IGNORECASE)
+                    or re.search(
+                        r"@future\s*\([^)]*callout\s*=\s*true",
+                        source,
+                        re.IGNORECASE,
+                    )
                 ),
+                "dml_objects": _resolve_dml_objects(method_dml, type_map),
+                "soql_objects": [o for lit in method_soql for o in _soql_objects(lit)],
             }
         )
 
-    callout_detected = any(m["has_callout"] for m in methods) or bool(
+    callout_detected = bool(
         re.search(r"\bHttpRequest\b|\bHttp\.send\b", source)
         or re.search(r"@future\s*\([^)]*callout\s*=\s*true", source, re.IGNORECASE)
     )
-    for m in methods:
-        m["has_callout"] = callout_detected
 
     soql_objs: list[str] = []
-    for lit in soql_literals:
+    for lit in all_soql:
         soql_objs.extend(_soql_objects(lit))
 
     return {
         "source_body": source,
         "methods": methods,
         "class_annotations": [],
-        "dml_objects": _dml_objects_from_snippets(dml_snippets),
+        "dml_objects": _resolve_dml_objects(all_dml, type_map),
         "soql_objects": sorted(set(soql_objs)),
         "callout_detected": callout_detected,
         "api_version": _api_version_from_meta(meta_xml),
@@ -144,6 +233,7 @@ def analyze_apex_class(source: str, meta_xml: bytes | None = None) -> dict[str, 
 
 def analyze_apex_trigger(source: str, meta_xml: bytes | None = None) -> dict[str, Any]:
     parser, tree = _parse_tree(source, "trigger")
+    type_map = _build_variable_type_map(parser, tree, source)
     dml_snippets, soql_literals = _collect_dml_soql(parser, tree, source)
     m = re.search(r"trigger\s+\w+\s+on\s+([a-zA-Z0-9_]+)\s*\(([^)]+)\)", source, re.IGNORECASE)
     trigger_object = m.group(1) if m else None
@@ -159,7 +249,7 @@ def analyze_apex_trigger(source: str, meta_xml: bytes | None = None) -> dict[str
         "source_body": source,
         "methods": [],
         "class_annotations": [],
-        "dml_objects": _dml_objects_from_snippets(dml_snippets),
+        "dml_objects": _resolve_dml_objects(dml_snippets, type_map),
         "soql_objects": sorted(set(soql_objs)),
         "callout_detected": callout_detected,
         "api_version": _api_version_from_meta(meta_xml),
