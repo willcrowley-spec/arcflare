@@ -110,7 +110,7 @@ async def extract_and_store_concepts(
 
         chunk_db_id = chunk["chunk_db_id"]
         await db.execute(
-            text("UPDATE document_chunks SET concept_ids = :ids::jsonb, content_hash = :hash WHERE id = :cid"),
+            text("UPDATE document_chunks SET concept_ids = CAST(:ids AS jsonb), content_hash = :hash WHERE id = :cid"),
             {
                 "ids": json.dumps(chunk_concept_ids),
                 "hash": hashlib.sha256((chunk.get("content") or "").encode()).hexdigest(),
