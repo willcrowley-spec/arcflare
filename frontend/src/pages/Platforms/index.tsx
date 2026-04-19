@@ -27,6 +27,7 @@ import {
   useOrgLicensing,
   useReauthConnection,
   useSyncConnection,
+  useSyncEvents,
   useUserVelocity,
 } from '@/hooks/useApi'
 import { useSyncEventStream } from '@/hooks/useSyncEventStream'
@@ -155,12 +156,24 @@ export default function PlatformDetailPage() {
   const connectionsQuery = useConnections()
   const syncConnection = useSyncConnection()
   const reauthConnection = useReauthConnection()
+  const lastRunQuery = useSyncEvents(connectionId)
 
   const connections = connectionsQuery.data?.items ?? []
   const connection = useMemo(
     () => connections.find((c) => String(c.id) === String(connectionId)),
     [connections, connectionId],
   )
+
+  const isLiveStream = syncStreamStatus !== 'idle'
+  const historicalEvents = lastRunQuery.data ?? []
+  const panelEvents = isLiveStream ? syncEvents : historicalEvents
+  const panelStatus = isLiveStream
+    ? syncStreamStatus
+    : historicalEvents.some((e) => e.event_type === 'error' && e.severity === 'error')
+      ? 'failed'
+      : historicalEvents.length > 0
+        ? 'completed'
+        : 'idle'
 
   useEffect(() => {
     setActiveSyncId(null)
@@ -169,6 +182,7 @@ export default function PlatformDetailPage() {
   useEffect(() => {
     if (connection?.status === 'syncing' && connectionId && !activeSyncId) {
       setActiveSyncId(connectionId)
+      setSyncKey((k) => k + 1)
     }
   }, [connection?.status, connectionId, activeSyncId])
 
@@ -177,8 +191,9 @@ export default function PlatformDetailPage() {
       void qc.invalidateQueries({ queryKey: ['connections'] })
       void qc.invalidateQueries({ queryKey: ['metadata'] })
       void qc.invalidateQueries({ queryKey: ['organization'] })
+      void qc.invalidateQueries({ queryKey: ['sync-events', connectionId] })
     }
-  }, [syncStreamStatus, qc])
+  }, [syncStreamStatus, qc, connectionId])
 
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''
@@ -380,12 +395,12 @@ export default function PlatformDetailPage() {
         </div>
       </div>
 
-      {activeSyncId && (
+      {panelEvents.length > 0 || isLiveStream ? (
         <SyncEventLogPanel
-          events={syncEvents}
-          status={syncStreamStatus}
+          events={panelEvents}
+          status={panelStatus}
         />
-      )}
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard

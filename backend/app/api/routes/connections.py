@@ -206,29 +206,33 @@ async def sync_event_stream(
             )
             backfill_events = list(backfill_q.scalars().all())
             last_seq = max((e.sequence for e in backfill_events), default=0)
-            backfill_data = [
-                {
-                    "run_id": str(e.run_id),
-                    "sequence": e.sequence,
-                    "event_type": e.event_type,
-                    "phase": e.phase,
-                    "message": e.message,
-                    "detail": e.detail_json,
-                    "severity": e.severity,
-                    "created_at": e.created_at.isoformat() if e.created_at else None,
-                }
-                for e in backfill_events
-            ]
-            yield f"event: backfill\ndata: {json_mod.dumps(backfill_data)}\n\n"
 
             is_done = any(
                 e.event_type == "run_complete"
                 or (e.event_type == "error" and e.severity == "error")
                 for e in backfill_events
             )
-            if is_done:
-                await db.refresh(conn)
-                if conn.status != "syncing":
+
+            await db.refresh(conn)
+            if is_done and conn.status == "syncing":
+                pass
+            else:
+                backfill_data = [
+                    {
+                        "run_id": str(e.run_id),
+                        "sequence": e.sequence,
+                        "event_type": e.event_type,
+                        "phase": e.phase,
+                        "message": e.message,
+                        "detail": e.detail_json,
+                        "severity": e.severity,
+                        "created_at": e.created_at.isoformat() if e.created_at else None,
+                    }
+                    for e in backfill_events
+                ]
+                yield f"event: backfill\ndata: {json_mod.dumps(backfill_data)}\n\n"
+
+                if is_done:
                     yield "event: done\ndata: {}\n\n"
                     return
 

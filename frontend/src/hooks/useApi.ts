@@ -37,6 +37,15 @@ export function useDeleteConnection() {
   })
 }
 
+export function useSyncEvents(connectionId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['sync-events', connectionId],
+    queryFn: () => api.connections.syncEvents(connectionId!),
+    enabled: !!connectionId,
+    staleTime: 30_000,
+  })
+}
+
 export function useReauthConnection() {
   return useMutation({
     mutationFn: (id: string) => api.connections.reauth(id),
