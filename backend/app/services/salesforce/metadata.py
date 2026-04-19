@@ -4,6 +4,8 @@ Pulls object describes, fields, flows, apex classes/triggers, validation rules,
 workflow rules, approval processes, page layouts, flexipages, profiles, and permission
 sets using the Metadata and Tooling APIs.
 """
+import asyncio
+import hashlib
 import json
 import logging
 import urllib.parse
@@ -19,7 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import decrypt_tokens
 from app.models.connection import PlatformConnection
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
-from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject
+from app.models.metadata import (
+    MetadataAutomation,
+    MetadataComponent,
+    MetadataDependency,
+    MetadataField,
+    MetadataObject,
+)
 from app.models.organization import Organization
 from app.services.connectors.base import (
     AutomationMeta,
@@ -28,7 +36,19 @@ from app.services.connectors.base import (
     UIComponentMeta,
     UsageData,
 )
+from app.services.salesforce.apex_parser.analyzer import analyze_apex_class, analyze_apex_trigger
 from app.services.salesforce.licensing import snapshot_licensing
+from app.services.salesforce.mdapi_parser import (
+    parse_approval_process,
+    parse_custom_object,
+    parse_flow,
+    parse_workflow,
+)
+from app.services.salesforce.mdapi_retrieve import (
+    MDAPIInsufficientAccessError,
+    MDAPIRetrieveError,
+    retrieve_metadata,
+)
 from app.services.salesforce.user_velocity import snapshot_user_velocity
 
 logger = logging.getLogger(__name__)
@@ -180,7 +200,7 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
     return results
 
 
-def pull_flows(sf: Salesforce) -> list[AutomationMeta]:
+def _legacy_pull_flows(sf: Salesforce) -> list[AutomationMeta]:
     try:
         raw = _tooling_query_all(sf, "SELECT Id,MasterLabel,ProcessType,Status,Description FROM Flow")
         results = []
@@ -204,7 +224,7 @@ def pull_flows(sf: Salesforce) -> list[AutomationMeta]:
         return []
 
 
-def pull_apex_triggers(sf: Salesforce) -> list[AutomationMeta]:
+def _legacy_pull_apex_triggers(sf: Salesforce) -> list[AutomationMeta]:
     try:
         soql = (
             "SELECT Id,Name,ApiVersion,Status,"
@@ -248,7 +268,7 @@ def pull_apex_triggers(sf: Salesforce) -> list[AutomationMeta]:
         return []
 
 
-def pull_apex_classes(sf: Salesforce) -> list[dict]:
+def _legacy_pull_apex_classes(sf: Salesforce) -> list[dict]:
     try:
         soql = (
             "SELECT Id,Name,ApiVersion,Status,LengthWithoutComments "
@@ -260,7 +280,7 @@ def pull_apex_classes(sf: Salesforce) -> list[dict]:
         return []
 
 
-def pull_validation_rules_bulk(sf: Salesforce, object_names: list[str]) -> dict[str, list[dict]]:
+def _legacy_pull_validation_rules_bulk(sf: Salesforce, object_names: list[str]) -> dict[str, list[dict]]:
     """Pull all validation rules in a single Tooling API query, grouped by object."""
     result_map: dict[str, list[dict]] = {name: [] for name in object_names}
     try:
@@ -280,7 +300,7 @@ def pull_validation_rules_bulk(sf: Salesforce, object_names: list[str]) -> dict[
     return result_map
 
 
-def pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
+def _legacy_pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
     try:
         raw = _tooling_query_all(sf, "SELECT Id,Name,TableEnumOrId FROM WorkflowRule")
         results = []
@@ -302,7 +322,7 @@ def pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
         return []
 
 
-def pull_approval_processes(sf: Salesforce) -> list[AutomationMeta]:
+def _legacy_pull_approval_processes(sf: Salesforce) -> list[AutomationMeta]:
     try:
         result = sf.restful("process/approvals")
         approvals = result.get("approvals", {})
@@ -327,7 +347,7 @@ def pull_approval_processes(sf: Salesforce) -> list[AutomationMeta]:
         return []
 
 
-def pull_business_processes(sf: Salesforce) -> list[dict]:
+def _legacy_pull_business_processes(sf: Salesforce) -> list[dict]:
     """Pull BusinessProcess metadata (SalesProcess, SupportProcess, LeadProcess)."""
     try:
         raw = _tooling_query_all(
@@ -418,7 +438,7 @@ def pull_profiles(sf: Salesforce) -> list[PermissionMeta]:
         return []
 
 
-def pull_page_layouts(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
+def _legacy_pull_page_layouts(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
     results: list[UIComponentMeta] = []
     for obj_name in object_names:
         try:
@@ -438,7 +458,7 @@ def pull_page_layouts(sf: Salesforce, object_names: list[str]) -> list[UICompone
     return results
 
 
-def pull_flexipages(sf: Salesforce) -> list[UIComponentMeta]:
+def _legacy_pull_flexipages(sf: Salesforce) -> list[UIComponentMeta]:
     try:
         raw = _tooling_query_all(
             sf,
@@ -545,12 +565,12 @@ def pull_usage_data(
     )
 
 
-def pull_all_automations(sf: Salesforce) -> list[AutomationMeta]:
+def _legacy_pull_all_automations(sf: Salesforce) -> list[AutomationMeta]:
     automations: list[AutomationMeta] = []
-    automations.extend(pull_flows(sf))
-    automations.extend(pull_apex_triggers(sf))
-    automations.extend(pull_workflow_rules(sf))
-    automations.extend(pull_approval_processes(sf))
+    automations.extend(_legacy_pull_flows(sf))
+    automations.extend(_legacy_pull_apex_triggers(sf))
+    automations.extend(_legacy_pull_workflow_rules(sf))
+    automations.extend(_legacy_pull_approval_processes(sf))
     logger.info("sf_all_automations_complete total=%d", len(automations))
     return automations
 
@@ -563,12 +583,186 @@ def pull_all_permissions(sf: Salesforce) -> list[PermissionMeta]:
     return permissions
 
 
-def pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
+def _legacy_pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
     components: list[UIComponentMeta] = []
-    components.extend(pull_page_layouts(sf, object_names))
-    components.extend(pull_flexipages(sf))
+    components.extend(_legacy_pull_page_layouts(sf, object_names))
+    components.extend(_legacy_pull_flexipages(sf))
     logger.info("sf_all_ui_components_complete total=%d", len(components))
     return components
+
+
+def _query_flow_definition_versions(sf: Salesforce) -> dict[str, dict[str, str | None]]:
+    rows = _tooling_query_all(
+        sf,
+        "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
+    )
+    out: dict[str, dict[str, str | None]] = {}
+    for row in rows:
+        name = row.get("DeveloperName") or ""
+        out[name] = {
+            "active_version_id": row.get("ActiveVersionId"),
+            "latest_version_id": row.get("LatestVersionId"),
+        }
+    return out
+
+
+async def _mdapi_retrieve_files(sf: Salesforce) -> dict[str, bytes]:
+    return await asyncio.to_thread(retrieve_metadata, sf)
+
+
+def _collect_mdapi_zip_results(
+    connection_id: UUID,
+    org_id: UUID,
+    files: dict[str, bytes],
+    flow_versions: dict[str, dict[str, str | None]],
+) -> dict[str, Any]:
+    """Parse MDAPI zip into pending ORM rows (not attached to a session)."""
+    counts = {
+        "flows": 0,
+        "apex_classes": 0,
+        "apex_triggers": 0,
+        "objects": 0,
+        "workflows": 0,
+        "approvals": 0,
+        "flexi": 0,
+    }
+    pending_automations: list[MetadataAutomation] = []
+    pending_components: list[MetadataComponent] = []
+    pending_objects_patch: dict[str, dict[str, Any]] = {}
+
+    for path, raw in files.items():
+        lower = path.lower()
+        if lower.endswith(".flow-meta.xml"):
+            parsed = parse_flow(raw, path)
+            dev_name = path.split("/")[-1].replace(".flow-meta.xml", "")
+            fv = flow_versions.get(dev_name, {})
+            parsed["flow_definition_view"] = fv
+            if fv.get("active_version_id") and fv.get("latest_version_id"):
+                parsed["active_matches_latest"] = fv["active_version_id"] == fv["latest_version_id"]
+            pending_automations.append(
+                MetadataAutomation(
+                    connection_id=connection_id,
+                    org_id=org_id,
+                    automation_type="flow",
+                    api_name=dev_name,
+                    label=dev_name,
+                    status=parsed.get("status"),
+                    related_object=parsed.get("trigger_object"),
+                    complexity_score=parsed.get("complexity_score"),
+                    metadata_json=parsed,
+                )
+            )
+            counts["flows"] += 1
+        elif lower.endswith(".cls") and not lower.endswith("-meta.xml"):
+            name = path.split("/")[-1].replace(".cls", "")
+            meta_key = path.replace(".cls", ".cls-meta.xml")
+            meta_xml = files.get(meta_key)
+            src = raw.decode("utf-8", errors="replace")
+            analyzed = analyze_apex_class(src, meta_xml=meta_xml)
+            pending_components.append(
+                MetadataComponent(
+                    org_id=org_id,
+                    connection_id=connection_id,
+                    component_category="apex_class",
+                    api_name=name,
+                    label=name,
+                    status="Active",
+                    metadata_json=analyzed,
+                )
+            )
+            counts["apex_classes"] += 1
+        elif lower.endswith(".trigger") and not lower.endswith("-meta.xml"):
+            name = path.split("/")[-1].replace(".trigger", "")
+            meta_key = path.replace(".trigger", ".trigger-meta.xml")
+            meta_xml = files.get(meta_key)
+            src = raw.decode("utf-8", errors="replace")
+            analyzed = analyze_apex_trigger(src, meta_xml=meta_xml)
+            pending_automations.append(
+                MetadataAutomation(
+                    connection_id=connection_id,
+                    org_id=org_id,
+                    automation_type="trigger",
+                    api_name=name,
+                    label=name,
+                    status="Active",
+                    related_object=analyzed.get("trigger_object"),
+                    metadata_json=analyzed,
+                )
+            )
+            counts["apex_triggers"] += 1
+        elif lower.endswith(".object-meta.xml"):
+            parsed = parse_custom_object(raw, path)
+            api_name = path.split("/")[-1].replace(".object-meta.xml", "")
+            pending_objects_patch[api_name] = parsed
+            counts["objects"] += 1
+        elif lower.endswith(".workflow-meta.xml"):
+            for row in parse_workflow(raw, path):
+                pending_automations.append(
+                    MetadataAutomation(
+                        connection_id=connection_id,
+                        org_id=org_id,
+                        automation_type="workflow_rule",
+                        api_name=row.get("api_name") or "",
+                        label=row.get("api_name"),
+                        status="Active" if row.get("active") else "Inactive",
+                        related_object=row.get("related_object"),
+                        metadata_json=row,
+                    )
+                )
+                counts["workflows"] += 1
+        elif lower.endswith(".approvalprocess-meta.xml"):
+            parsed = parse_approval_process(raw, path)
+            pending_automations.append(
+                MetadataAutomation(
+                    connection_id=connection_id,
+                    org_id=org_id,
+                    automation_type="approval_process",
+                    api_name=parsed.get("api_name") or "",
+                    label=parsed.get("api_name"),
+                    status="Active" if parsed.get("active") else "Inactive",
+                    related_object=parsed.get("related_object"),
+                    metadata_json=parsed,
+                )
+            )
+            counts["approvals"] += 1
+        elif lower.endswith(".flexipage-meta.xml"):
+            name = path.split("/")[-1].replace(".flexipage-meta.xml", "")
+            pending_components.append(
+                MetadataComponent(
+                    org_id=org_id,
+                    connection_id=connection_id,
+                    component_category="flexipage",
+                    api_name=name,
+                    label=name,
+                    metadata_json={"raw_xml_hash": hashlib.sha256(raw).hexdigest(), "source_path": path},
+                )
+            )
+            counts["flexi"] += 1
+
+    return {
+        "counts": counts,
+        "object_patches": pending_objects_patch,
+        "pending_automations": pending_automations,
+        "pending_components": pending_components,
+    }
+
+
+def _persist_mdapi_zip_results(
+    connection_id: UUID,
+    org_id: UUID,
+    files: dict[str, bytes],
+    flow_versions: dict[str, dict[str, str | None]],
+    db: AsyncSession,
+    *,
+    _precomputed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Attach MDAPI-derived rows to the session (optionally using a pre-parsed bundle)."""
+    payload = _precomputed or _collect_mdapi_zip_results(connection_id, org_id, files, flow_versions)
+    for auto in payload["pending_automations"]:
+        db.add(auto)
+    for comp in payload["pending_components"]:
+        db.add(comp)
+    return {"counts": payload["counts"], "object_patches": payload["object_patches"]}
 
 
 async def sync_metadata(
@@ -614,22 +808,53 @@ async def sync_metadata(
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
+    mdapi_files: dict[str, bytes] | None = None
+    flow_versions: dict[str, dict[str, str | None]] = {}
+    _progress("mdapi_retrieve", "pulling", 0)
+    try:
+        mdapi_files = await _mdapi_retrieve_files(sf)
+        _progress("mdapi_retrieve", "done", len(mdapi_files))
+    except (MDAPIInsufficientAccessError, MDAPIRetrieveError, Exception) as exc:
+        logger.warning("mdapi_retrieve_failed falling_back_to_legacy error=%s", exc)
+        mdapi_files = None
+        _progress("mdapi_retrieve", "done", 0)
+
+    mdapi_bundle: dict[str, Any] | None = None
+    object_patches: dict[str, dict[str, Any]] = {}
+    if mdapi_files is not None:
+        _progress("mdapi_parse", "pulling", 0)
+        flow_versions = _query_flow_definition_versions(sf)
+        mdapi_bundle = _collect_mdapi_zip_results(connection_id, org_id, mdapi_files, flow_versions)
+        object_patches = mdapi_bundle["object_patches"]
+
     _progress("automations", "pulling", 0)
-    automations = pull_all_automations(sf)
-    vr_by_object = pull_validation_rules_bulk(sf, object_names)
+    if mdapi_files is None:
+        automations = _legacy_pull_all_automations(sf)
+    else:
+        automations = []
+    vr_by_object = _legacy_pull_validation_rules_bulk(sf, object_names)
     all_validation_rules: list[dict] = []
     for obj_name, vrs in vr_by_object.items():
         all_validation_rules.extend({**vr, "_related_object": obj_name} for vr in vrs)
-    active_automation_count = sum(1 for a in automations if a.is_active)
-    _progress("automations", "done", active_automation_count + len(all_validation_rules))
+    if mdapi_files is None:
+        active_automation_count = sum(1 for a in automations if a.is_active)
+        _progress("automations", "done", active_automation_count + len(all_validation_rules))
+    else:
+        assert mdapi_bundle is not None
+        _progress("automations", "done", len(mdapi_bundle["pending_automations"]) + len(all_validation_rules))
 
     _progress("permissions", "pulling", 0)
     permissions = pull_all_permissions(sf)
     _progress("permissions", "done", len(permissions))
 
     _progress("ui_components", "pulling", 0)
-    ui_components = pull_all_ui_components(sf, object_names)
-    _progress("ui_components", "done", len(ui_components))
+    if mdapi_files is None:
+        ui_components = _legacy_pull_all_ui_components(sf, object_names)
+        _progress("ui_components", "done", len(ui_components))
+    else:
+        assert mdapi_bundle is not None
+        ui_components = []
+        _progress("ui_components", "done", mdapi_bundle["counts"]["flexi"])
 
     mo_subq = select(MetadataObject.id).where(MetadataObject.connection_id == connection_id)
 
@@ -637,8 +862,19 @@ async def sync_metadata(
     await db.execute(delete(MetadataAutomation).where(MetadataAutomation.connection_id == connection_id))
     await db.execute(delete(MetadataObject).where(MetadataObject.connection_id == connection_id))
     await db.execute(delete(MetadataComponent).where(MetadataComponent.connection_id == connection_id))
+    await db.execute(delete(MetadataDependency).where(MetadataDependency.connection_id == connection_id))
 
     for obj in objects:
+        metadata_json: dict[str, Any] = {
+            "relationships": obj.relationships,
+            "is_managed_package": obj.is_managed_package,
+            "namespace_prefix": obj.namespace_prefix,
+            "recent_record_count": obj.recent_record_count,
+            "record_types": obj.record_types,
+        }
+        patch = object_patches.get(obj.api_name) if object_patches else None
+        if patch:
+            metadata_json = {**metadata_json, **patch}
         meta_obj = MetadataObject(
             connection_id=connection_id,
             org_id=org_id,
@@ -650,13 +886,7 @@ async def sync_metadata(
             is_custom=obj.is_custom,
             managed_package_namespace=obj.namespace_prefix,
             velocity_score=float(usage.velocity_counts.get(obj.api_name, 0)),
-            metadata_json={
-                "relationships": obj.relationships,
-                "is_managed_package": obj.is_managed_package,
-                "namespace_prefix": obj.namespace_prefix,
-                "recent_record_count": obj.recent_record_count,
-                "record_types": obj.record_types,
-            },
+            metadata_json=metadata_json,
         )
         db.add(meta_obj)
         await db.flush()
@@ -677,6 +907,18 @@ async def sync_metadata(
                     },
                 )
             )
+
+    if mdapi_bundle is not None:
+        _persist_mdapi_zip_results(
+            connection_id,
+            org_id,
+            mdapi_files,
+            flow_versions,
+            db,
+            _precomputed=mdapi_bundle,
+        )
+        await db.flush()
+        _progress("mdapi_parse", "done", sum(mdapi_bundle["counts"].values()))
 
     for auto in automations:
         if not auto.is_active:
@@ -718,24 +960,29 @@ async def sync_metadata(
         )
 
     _progress("code", "pulling", 0)
-    apex_classes = pull_apex_classes(sf)
-    apex_classes = [ac for ac in apex_classes if ac.get("Status") != "Deleted"]
-    for ac in apex_classes:
-        db.add(
-            MetadataComponent(
-                org_id=org_id,
-                connection_id=connection_id,
-                component_category="apex_class",
-                api_name=ac.get("Name", ac.get("Id", "")),
-                label=ac.get("Name", ""),
-                status=ac.get("Status", "Active"),
-                metadata_json={
-                    "api_version": ac.get("ApiVersion"),
-                    "length_without_comments": ac.get("LengthWithoutComments"),
-                },
+    if mdapi_files is None:
+        apex_classes = _legacy_pull_apex_classes(sf)
+        apex_classes = [ac for ac in apex_classes if ac.get("Status") != "Deleted"]
+        for ac in apex_classes:
+            db.add(
+                MetadataComponent(
+                    org_id=org_id,
+                    connection_id=connection_id,
+                    component_category="apex_class",
+                    api_name=ac.get("Name", ac.get("Id", "")),
+                    label=ac.get("Name", ""),
+                    status=ac.get("Status", "Active"),
+                    metadata_json={
+                        "api_version": ac.get("ApiVersion"),
+                        "length_without_comments": ac.get("LengthWithoutComments"),
+                    },
+                )
             )
-        )
-    _progress("code", "done", len(apex_classes))
+        apex_class_count = len(apex_classes)
+    else:
+        assert mdapi_bundle is not None
+        apex_class_count = mdapi_bundle["counts"]["apex_classes"]
+    _progress("code", "done", apex_class_count)
 
     for perm in permissions:
         db.add(
@@ -785,7 +1032,7 @@ async def sync_metadata(
         )
     _progress("installed_packages", "done", len(packages))
 
-    business_processes = pull_business_processes(sf)
+    business_processes = _legacy_pull_business_processes(sf)
     for bp in business_processes:
         db.add(
             MetadataComponent(
@@ -910,7 +1157,7 @@ async def sync_metadata(
         len(automations),
         len(permissions),
         len(ui_components),
-        len(apex_classes),
+        apex_class_count,
         len(packages),
     )
     return len(objects)
