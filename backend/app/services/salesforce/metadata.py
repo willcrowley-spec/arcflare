@@ -73,13 +73,24 @@ DEFAULT_OBJECTS = [
 _SAFE_CMDT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*__mdt$")
 
 
-SF_API_VERSION = "62.0"
+def _get_latest_api_version(instance_url: str, access_token: str) -> str:
+    """Query the org's /services/data/ endpoint to get the latest supported API version."""
+    import requests
+
+    url = f"{instance_url}/services/data/"
+    resp = requests.get(url, headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+    resp.raise_for_status()
+    versions = resp.json()
+    latest = max(versions, key=lambda v: float(v["version"]))
+    logger.info("sf_api_version_resolved version=%s", latest["version"])
+    return latest["version"]
 
 
 def get_sf_client(instance_url: str, access_token: str) -> Salesforce:
-    """Create a Salesforce client from stored credentials."""
+    """Create a Salesforce client using the org's latest API version."""
     instance = instance_url.replace("https://", "").replace("http://", "")
-    return Salesforce(instance=instance, session_id=access_token, version=SF_API_VERSION)
+    version = _get_latest_api_version(instance_url, access_token)
+    return Salesforce(instance=instance, session_id=access_token, version=version)
 
 
 def _tooling_query_all(sf: Salesforce, soql: str) -> list[dict]:
@@ -632,14 +643,10 @@ def _legacy_pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> l
 
 
 def _query_flow_definition_versions(sf: Salesforce) -> dict[str, dict[str, str | None]]:
-    try:
-        rows = _tooling_query_all(
-            sf,
-            "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
-        )
-    except Exception as exc:
-        logger.warning("flow_definition_view_unavailable error=%s", exc)
-        return {}
+    rows = _tooling_query_all(
+        sf,
+        "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
+    )
     out: dict[str, dict[str, str | None]] = {}
     for row in rows:
         name = row.get("DeveloperName") or ""
