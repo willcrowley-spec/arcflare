@@ -646,20 +646,6 @@ def _legacy_pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> l
     return components
 
 
-def _query_flow_definition_versions(sf: Salesforce) -> dict[str, dict[str, str | None]]:
-    rows = _tooling_query_all(
-        sf,
-        "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
-    )
-    out: dict[str, dict[str, str | None]] = {}
-    for row in rows:
-        name = row.get("DeveloperName") or ""
-        out[name] = {
-            "active_version_id": row.get("ActiveVersionId"),
-            "latest_version_id": row.get("LatestVersionId"),
-        }
-    return out
-
 
 async def _mdapi_retrieve_files(sf: Salesforce) -> dict[str, bytes]:
     return await asyncio.to_thread(retrieve_metadata, sf)
@@ -669,7 +655,6 @@ def _collect_mdapi_zip_results(
     connection_id: UUID,
     org_id: UUID,
     files: dict[str, bytes],
-    flow_versions: dict[str, dict[str, str | None]],
     *,
     cached_metadata_by_key: dict[tuple[str, str, str], dict[str, Any]] | None = None,
     cached_workflow_bundles: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
@@ -700,10 +685,8 @@ def _collect_mdapi_zip_results(
                 counts["cache_hits"] += 1
             else:
                 parsed = parse_flow(raw, path)
-            fv = flow_versions.get(dev_name, {})
-            parsed["flow_definition_view"] = fv
-            if fv.get("active_version_id") and fv.get("latest_version_id"):
-                parsed["active_matches_latest"] = fv["active_version_id"] == fv["latest_version_id"]
+            status = parsed.get("status")
+            parsed["active_matches_latest"] = status == "Active"
             pending_automations.append(
                 MetadataAutomation(
                     connection_id=connection_id,
@@ -865,7 +848,6 @@ def _persist_mdapi_zip_results(
     connection_id: UUID,
     org_id: UUID,
     files: dict[str, bytes],
-    flow_versions: dict[str, dict[str, str | None]],
     db: AsyncSession,
     *,
     _precomputed: dict[str, Any] | None = None,
@@ -877,7 +859,6 @@ def _persist_mdapi_zip_results(
         connection_id,
         org_id,
         files,
-        flow_versions,
         cached_metadata_by_key=cached_metadata_by_key,
         cached_workflow_bundles=cached_workflow_bundles,
     )
@@ -960,7 +941,6 @@ async def sync_metadata(
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
-    flow_versions: dict[str, dict[str, str | None]] = {}
     await _emit("phase_start", "Retrieving metadata via MDAPI...", phase="mdapi_retrieve")
     mdapi_files = await _mdapi_retrieve_files(sf)
     await _emit(
@@ -1015,12 +995,10 @@ async def sync_metadata(
         len(parse_cache_workflows),
     )
 
-    flow_versions = _query_flow_definition_versions(sf)
     mdapi_bundle: dict[str, Any] = _collect_mdapi_zip_results(
         connection_id,
         org_id,
         mdapi_files,
-        flow_versions,
         cached_metadata_by_key=parse_cache_by_key or None,
         cached_workflow_bundles=parse_cache_workflows or None,
     )
@@ -1119,7 +1097,6 @@ async def sync_metadata(
         connection_id,
         org_id,
         mdapi_files,
-        flow_versions,
         db,
         _precomputed=mdapi_bundle,
         cached_metadata_by_key=parse_cache_by_key,

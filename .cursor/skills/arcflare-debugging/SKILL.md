@@ -69,8 +69,7 @@ Order within `sync_metadata_task._pipeline()`:
    - `pull_object_describes()` — REST describe for all objects
    - `pull_usage_data()` — record counts + velocity
    - `_mdapi_retrieve_files()` — MDAPI `retrieve()` via zeep
-   - `_query_flow_definition_versions()` — Tooling API FlowDefinitionView
-   - `_collect_mdapi_zip_results()` — parse XML/Apex from zip
+   - `_collect_mdapi_zip_results()` — parse XML/Apex from zip (flow active status derived from MDAPI `<status>` field)
    - Delete old rows → insert new rows
    - `pull_custom_metadata_types()` — CMDT records
 4. **`build_dependency_graph()`** — edge extraction + bulk insert
@@ -95,12 +94,8 @@ MDAPIInsufficientAccessError: Metadata API retrieve failed with INSUFFICIENT_ACC
 **Cause**: Connected SF user lacks "Modify All Data" permission.
 **Fix**: Re-auth with an admin user. `check_mdapi_access()` runs at sync start and fails fast.
 
-### 3. FlowDefinitionView Not Supported
-```
-SalesforceMalformedRequest: sObject type 'FlowDefinitionView' is not supported
-```
-**Cause**: API version too old. `FlowDefinitionView` requires v43.0+.
-**Fix**: `get_sf_client()` dynamically queries `GET /services/data/` for the org's latest version. If this error appears, the version resolution failed — check `_get_latest_api_version()`.
+### 3. FlowDefinitionView (RESOLVED — Removed)
+`FlowDefinitionView` Tooling API usage has been completely removed. Flow active/draft status is now derived from the MDAPI Flow XML `<status>` field (`Active` / `Draft` / `Obsolete`), which is already in the retrieved zip. No Tooling API dependency for flows.
 
 ### 4. Salesforce API Version Stale
 The SF client resolves the org's latest API version at connect time via `_get_latest_api_version()`. No hardcoded version. If `simple_salesforce` is upgraded and changes its default, ours still overrides it.
