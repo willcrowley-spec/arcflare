@@ -871,10 +871,11 @@ async def sync_metadata(
 
     _progress("automations", "pulling", 0)
     automations: list[AutomationMeta] = []
-    vr_by_object = _legacy_pull_validation_rules_bulk(sf, object_names)
+    # Extract VRs from MDAPI-parsed CustomObject data instead of Tooling API
     all_validation_rules: list[dict] = []
-    for obj_name, vrs in vr_by_object.items():
-        all_validation_rules.extend({**vr, "_related_object": obj_name} for vr in vrs)
+    for obj_api_name, patch in mdapi_bundle["object_patches"].items():
+        for vr in patch.get("validation_rules", []):
+            all_validation_rules.append({**vr, "_related_object": obj_api_name})
     _progress(
         "automations",
         "done",
@@ -978,15 +979,17 @@ async def sync_metadata(
             MetadataAutomation(
                 connection_id=connection_id,
                 org_id=org_id,
-                api_name=vr.get("ValidationName", vr.get("Id", "")),
-                label=vr.get("ValidationName", ""),
+                api_name=vr.get("name", ""),
+                label=vr.get("name", ""),
                 automation_type="validation_rule",
-                status="Active" if vr.get("Active") else "Inactive",
+                status="Active" if vr.get("active") else "Inactive",
                 related_object=vr.get("_related_object"),
                 metadata_json={
-                    "description": vr.get("Description"),
-                    "error_message": vr.get("ErrorMessage"),
-                    "is_active": vr.get("Active", False),
+                    "description": vr.get("description"),
+                    "error_condition_formula": vr.get("error_condition_formula"),
+                    "error_message": vr.get("error_message"),
+                    "error_display_field": vr.get("error_display_field"),
+                    "is_active": vr.get("active", False),
                 },
             )
         )
