@@ -446,8 +446,8 @@ def _approval_actions(container: ET.Element | None) -> list[dict[str, str | None
 
 def parse_approval_process(xml_bytes: bytes, filename: str) -> dict[str, Any]:
     root = ET.fromstring(xml_bytes)
-    parts = filename.replace(".approvalProcess-meta.xml", "").split("/")
-    related_object = parts[-2] if len(parts) >= 2 else parts[-1]
+    basename = filename.split("/")[-1].replace(".approvalProcess-meta.xml", "")
+    related_object = basename.split(".")[0] if "." in basename else basename
 
     entry = root.find("md:entryCriteria", NS)
     entry_formula = _text(entry, "md:formula") if entry is not None else None

@@ -9,6 +9,7 @@ def test_parse_approval_process_fixture():
         path.read_bytes(),
         "approvalProcesses/Opportunity.Deal_Approval.approvalProcess-meta.xml",
     )
+    assert out["related_object"] == "Opportunity"
     assert out["entry_criteria_formula"] == "Amount > 50000"
     assert out["record_editability"] == "AdminOnly"
     assert out["steps"][0]["assignee_type"] == "relatedUserField"
