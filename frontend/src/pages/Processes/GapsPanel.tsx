@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { ArrowRight, ChevronDown, Loader2, MessageSquareText, Undo2 } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronUp, Loader2, MessageSquareText, Undo2 } from 'lucide-react'
 import clsx from 'clsx'
 import { useGaps, useUpdateGap } from '@/hooks/useChat'
 import { usePromptTemplate } from '@/hooks/useApi'
@@ -75,18 +75,20 @@ function ExpandableText({ text }: { text: string }) {
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
-          className="mt-1 text-xs font-medium text-navy-700 hover:text-navy-900"
+          className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-orange-600 transition hover:text-orange-700"
         >
           Show more
+          <ChevronDown className="h-3 w-3" />
         </button>
       ) : null}
       {expanded ? (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setExpanded(false) }}
-          className="mt-1 text-xs font-medium text-navy-700 hover:text-navy-900"
+          className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-orange-600 transition hover:text-orange-700"
         >
           Show less
+          <ChevronUp className="h-3 w-3" />
         </button>
       ) : null}
     </div>
