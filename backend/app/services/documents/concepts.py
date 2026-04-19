@@ -134,7 +134,7 @@ async def extract_and_store_concepts(
                 set_={
                     "raw_weight": ConceptCooccurrence.__table__.c.raw_weight + 1,
                     "document_ids": text(
-                        "concept_cooccurrences.document_ids || :new_doc_id::jsonb"
+                        "concept_cooccurrences.document_ids || CAST(:new_doc_id AS jsonb)"
                     ),
                 },
             )
