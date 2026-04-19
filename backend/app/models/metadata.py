@@ -215,3 +215,38 @@ class MetadataComponent(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     connection: Mapped["PlatformConnection"] = relationship("PlatformConnection")
+
+
+class MetadataDependency(Base):
+    __tablename__ = "metadata_dependencies"
+    __table_args__ = (
+        Index("ix_metadata_deps_source", "connection_id", "source_type", "source_api_name"),
+        Index("ix_metadata_deps_target", "connection_id", "target_type", "target_api_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    org_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    connection_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("platform_connections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_api_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_api_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    connection: Mapped["PlatformConnection"] = relationship("PlatformConnection")
