@@ -4,6 +4,8 @@ Pulls object describes, fields, flows, apex classes/triggers, validation rules,
 workflow rules, approval processes, page layouts, flexipages, profiles, and permission
 sets using the Metadata and Tooling APIs.
 """
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -12,8 +14,7 @@ from collections import defaultdict
 import re
 import urllib.parse
 from datetime import UTC, datetime
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from simple_salesforce import Salesforce
@@ -52,6 +53,9 @@ from app.services.salesforce.mdapi_retrieve import (
     retrieve_metadata,
 )
 from app.services.salesforce.user_velocity import snapshot_user_velocity
+
+if TYPE_CHECKING:
+    from app.services.sync_event_log import SyncEventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -887,7 +891,7 @@ def _persist_mdapi_zip_results(
 async def sync_metadata(
     connection_id: UUID,
     db: AsyncSession,
-    progress_callback: Callable | None = None,
+    event_emitter: "SyncEventEmitter | None" = None,
 ) -> int:
     """Full metadata sync for a Salesforce connection.
 
@@ -895,12 +899,23 @@ async def sync_metadata(
     metadata objects, fields, and automations. Returns the number of objects synced.
     """
 
-    def _progress(phase: str, status: str, count: int = 0) -> None:
-        if progress_callback:
+    async def _emit(
+        event_type: str,
+        message: str,
+        *,
+        phase: str | None = None,
+        detail: dict | None = None,
+        severity: str = "info",
+    ) -> None:
+        if event_emitter:
             try:
-                progress_callback(str(connection_id), phase, status, count)
+                await event_emitter.emit(event_type, message, phase=phase, detail=detail, severity=severity)
             except Exception:
-                pass
+                logger.exception(
+                    "sync_event_emit_failed event_type=%s connection_phase=%s",
+                    event_type,
+                    phase,
+                )
 
     stmt = select(PlatformConnection).where(PlatformConnection.id == connection_id)
     result = await db.execute(stmt)
@@ -928,7 +943,12 @@ async def sync_metadata(
 
     objects = pull_object_describes(sf)
     object_names = [o.api_name for o in objects]
-    _progress("objects", "done", len(objects))
+    await _emit(
+        "phase_complete",
+        f"Object describes complete — {len(objects)} objects",
+        phase="objects",
+        detail={"count": len(objects)},
+    )
 
     org = await db.get(Organization, org_id)
     velocity_window_days = 30
@@ -941,11 +961,16 @@ async def sync_metadata(
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
     flow_versions: dict[str, dict[str, str | None]] = {}
-    _progress("mdapi_retrieve", "pulling", 0)
+    await _emit("phase_start", "Retrieving metadata via MDAPI...", phase="mdapi_retrieve")
     mdapi_files = await _mdapi_retrieve_files(sf)
-    _progress("mdapi_retrieve", "done", len(mdapi_files))
+    await _emit(
+        "phase_complete",
+        f"MDAPI retrieve complete — {len(mdapi_files)} files",
+        phase="mdapi_retrieve",
+        detail={"file_count": len(mdapi_files)},
+    )
 
-    _progress("mdapi_parse", "pulling", 0)
+    await _emit("phase_start", "Parsing MDAPI metadata...", phase="mdapi_parse")
     parse_cache_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     wf_groups: defaultdict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     auto_cache_rows = await db.execute(
@@ -1006,26 +1031,37 @@ async def sync_metadata(
     )
     object_patches: dict[str, dict[str, Any]] = mdapi_bundle["object_patches"]
 
-    _progress("automations", "pulling", 0)
+    await _emit("phase_start", "Processing automations...", phase="automations")
     automations: list[AutomationMeta] = []
     # Extract VRs from MDAPI-parsed CustomObject data instead of Tooling API
     all_validation_rules: list[dict] = []
     for obj_api_name, patch in mdapi_bundle["object_patches"].items():
         for vr in patch.get("validation_rules", []):
             all_validation_rules.append({**vr, "_related_object": obj_api_name})
-    _progress(
-        "automations",
-        "done",
-        len(mdapi_bundle["pending_automations"]) + len(all_validation_rules),
+    await _emit(
+        "phase_complete",
+        f"Automations complete — {len(mdapi_bundle['pending_automations']) + len(all_validation_rules)} items",
+        phase="automations",
+        detail={"count": len(mdapi_bundle["pending_automations"]) + len(all_validation_rules)},
     )
 
-    _progress("permissions", "pulling", 0)
+    await _emit("phase_start", "Processing permissions...", phase="permissions")
     permissions = pull_all_permissions(sf)
-    _progress("permissions", "done", len(permissions))
+    await _emit(
+        "phase_complete",
+        f"Permissions complete — {len(permissions)} items",
+        phase="permissions",
+        detail={"count": len(permissions)},
+    )
 
-    _progress("ui_components", "pulling", 0)
+    await _emit("phase_start", "Processing UI components...", phase="ui_components")
     ui_components: list[UIComponentMeta] = []
-    _progress("ui_components", "done", mdapi_bundle["counts"]["flexi"])
+    await _emit(
+        "phase_complete",
+        f"UI components complete — {mdapi_bundle['counts']['flexi']} items",
+        phase="ui_components",
+        detail={"count": mdapi_bundle["counts"]["flexi"]},
+    )
 
     mo_subq = select(MetadataObject.id).where(MetadataObject.connection_id == connection_id)
 
@@ -1090,7 +1126,12 @@ async def sync_metadata(
         cached_workflow_bundles=parse_cache_workflows,
     )
     await db.flush()
-    _progress("mdapi_parse", "done", sum(mdapi_bundle["counts"].values()))
+    await _emit(
+        "phase_complete",
+        f"MDAPI parse complete — {sum(mdapi_bundle['counts'].values())} items",
+        phase="mdapi_parse",
+        detail=mdapi_bundle["counts"],
+    )
 
     for auto in automations:
         if not auto.is_active:
@@ -1133,9 +1174,14 @@ async def sync_metadata(
             )
         )
 
-    _progress("code", "pulling", 0)
+    await _emit("phase_start", "Processing code assets...", phase="code")
     apex_class_count = mdapi_bundle["counts"]["apex_classes"]
-    _progress("code", "done", apex_class_count)
+    await _emit(
+        "phase_complete",
+        f"Code assets complete — {apex_class_count} classes",
+        phase="code",
+        detail={"count": apex_class_count},
+    )
 
     for perm in permissions:
         db.add(
@@ -1167,7 +1213,7 @@ async def sync_metadata(
             )
         )
 
-    _progress("installed_packages", "pulling", 0)
+    await _emit("phase_start", "Processing installed packages...", phase="installed_packages")
     packages = pull_installed_packages(sf)
     for pkg in packages:
         db.add(
@@ -1183,9 +1229,14 @@ async def sync_metadata(
                 },
             )
         )
-    _progress("installed_packages", "done", len(packages))
+    await _emit(
+        "phase_complete",
+        f"Installed packages complete — {len(packages)} packages",
+        phase="installed_packages",
+        detail={"count": len(packages)},
+    )
 
-    _progress("custom_metadata_types", "pulling", 0)
+    await _emit("phase_start", "Processing custom metadata types...", phase="custom_metadata_types")
     objects_list_raw = pull_object_list(sf)
     cmdts = pull_custom_metadata_types(sf, objects_list_raw)
     for cmdt in cmdts:
@@ -1203,7 +1254,12 @@ async def sync_metadata(
                 },
             )
         )
-    _progress("custom_metadata_types", "done", len(cmdts))
+    await _emit(
+        "phase_complete",
+        f"Custom metadata types complete — {len(cmdts)} types",
+        phase="custom_metadata_types",
+        detail={"count": len(cmdts)},
+    )
 
     business_processes = _legacy_pull_business_processes(sf)
     for bp in business_processes:
@@ -1224,28 +1280,36 @@ async def sync_metadata(
             )
         )
 
-    _progress("licensing", "pulling", 0)
+    await _emit("phase_start", "Capturing licensing snapshot...", phase="licensing")
     try:
         await snapshot_licensing(connection_id, org_id, sf, db)
     except Exception as e:
         logger.warning("licensing_snapshot_failed connection=%s error=%s", connection_id, e)
-    _progress("licensing", "done", 1)
+        await _emit("warning", f"Licensing snapshot failed: {e}", phase="licensing", severity="warning")
+    await _emit("phase_complete", "Licensing snapshot complete", phase="licensing")
 
-    _progress("user_velocity", "pulling", 0)
+    await _emit("phase_start", "Capturing user velocity...", phase="user_velocity")
     try:
         await snapshot_user_velocity(connection_id, org_id, sf, db)
     except Exception as e:
         logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, e)
-    _progress("user_velocity", "done", 1)
+        await _emit("warning", f"User velocity snapshot failed: {e}", phase="user_velocity", severity="warning")
+    await _emit("phase_complete", "User velocity complete", phase="user_velocity")
 
-    _progress("entities", "pulling", 0)
+    await _emit("phase_start", "Syncing org hierarchy...", phase="entities")
     try:
         from app.services.entities.profiler import sync_from_salesforce
         entity_count = await sync_from_salesforce(org_id, connection_id, db)
     except Exception as e:
         logger.warning("entity_sync_failed connection=%s error=%s", connection_id, e)
+        await _emit("warning", f"Entity sync failed: {e}", phase="entities", severity="warning")
         entity_count = 0
-    _progress("entities", "done", entity_count)
+    await _emit(
+        "phase_complete",
+        f"Org hierarchy complete — {entity_count} entities",
+        phase="entities",
+        detail={"count": entity_count},
+    )
 
     try:
         org = await db.get(Organization, org_id)
