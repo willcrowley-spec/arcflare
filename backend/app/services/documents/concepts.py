@@ -22,10 +22,20 @@ _nlp = None
 STOPWORD_CONCEPTS = frozenset({
     "thing", "things", "way", "ways", "time", "times", "example",
     "part", "parts", "number", "lot", "kind", "type", "case",
-    "point", "fact", "result", "end", "use",
+    "point", "fact", "result", "end", "use", "order", "place",
+    "area", "group", "level", "step", "item", "note", "section",
+    "information", "process", "document", "page", "table", "list",
+    "value", "field", "data", "form", "date", "status", "set",
+    "purpose", "overview", "description", "summary", "detail",
 })
-MIN_CONCEPT_LEN = 2
-MAX_CONCEPT_LEN = 100
+_LEADING_DETERMINERS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those",
+    "no", "some", "any", "each", "every", "our", "your",
+    "their", "its", "my", "his", "her",
+})
+_JUNK_PATTERN = None
+MIN_CONCEPT_LEN = 3
+MAX_CONCEPT_LEN = 80
 MIN_COOCCURRENCE_FOR_PMI = 2
 
 
@@ -36,25 +46,53 @@ def _get_nlp():
     return _nlp
 
 
+def _get_junk_pattern():
+    import re
+    global _JUNK_PATTERN
+    if _JUNK_PATTERN is None:
+        _JUNK_PATTERN = re.compile(r"[^a-zA-Z\s]")
+    return _JUNK_PATTERN
+
+
+def _clean_noun_phrase(text: str) -> str:
+    """Strip leading determiners/articles and trailing whitespace."""
+    words = text.split()
+    while words and words[0].lower() in _LEADING_DETERMINERS:
+        words.pop(0)
+    return " ".join(words).strip()
+
+
 def extract_noun_phrases(text_content: str) -> list[tuple[str, str]]:
     """Extract noun phrases from text. Returns list of (canonical_name, display_name)."""
     nlp = _get_nlp()
+    junk_re = _get_junk_pattern()
     doc = nlp(text_content[:100_000])
 
     ent_spans = list(doc.ents)
     chunk_spans = list(doc.noun_chunks)
     merged = filter_spans(ent_spans + chunk_spans)
 
+    seen: set[str] = set()
     results: list[tuple[str, str]] = []
     for span in merged:
-        display = span.text.strip()
+        raw = span.text.strip()
+        display = _clean_noun_phrase(raw)
+
         if len(display) < MIN_CONCEPT_LEN or len(display) > MAX_CONCEPT_LEN:
             continue
         if not any(t.pos_ in ("NOUN", "PROPN") for t in span):
             continue
+
+        alpha_only = junk_re.sub("", display).strip()
+        if len(alpha_only) < MIN_CONCEPT_LEN:
+            continue
+
         canonical = display.upper()
         if canonical.lower() in STOPWORD_CONCEPTS:
             continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
         results.append((canonical, display))
 
     return results

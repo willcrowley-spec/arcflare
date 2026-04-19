@@ -21,6 +21,7 @@ LEIDEN_RESOLUTION = 1.0
 LEIDEN_SEED = 42
 LEIDEN_MAX_COMM_SIZE = 10
 LEIDEN_N_ITERATIONS = -1
+MIN_COMMUNITY_SIZE = 2
 
 
 async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
@@ -52,7 +53,7 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
     edges_q = await db.execute(
         select(ConceptCooccurrence).where(
             ConceptCooccurrence.org_id == org_id,
-            ConceptCooccurrence.raw_weight >= 2,
+            ConceptCooccurrence.raw_weight >= 1,
         )
     )
     edges = edges_q.scalars().all()
@@ -91,7 +92,7 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
 
     new_community_ids = []
     for comm_idx, members in enumerate(partition):
-        if not members:
+        if len(members) < MIN_COMMUNITY_SIZE:
             continue
 
         member_concept_ids = [idx_to_concept[m] for m in members]
