@@ -73,10 +73,13 @@ DEFAULT_OBJECTS = [
 _SAFE_CMDT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*__mdt$")
 
 
+SF_API_VERSION = "62.0"
+
+
 def get_sf_client(instance_url: str, access_token: str) -> Salesforce:
     """Create a Salesforce client from stored credentials."""
     instance = instance_url.replace("https://", "").replace("http://", "")
-    return Salesforce(instance=instance, session_id=access_token)
+    return Salesforce(instance=instance, session_id=access_token, version=SF_API_VERSION)
 
 
 def _tooling_query_all(sf: Salesforce, soql: str) -> list[dict]:
@@ -629,10 +632,14 @@ def _legacy_pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> l
 
 
 def _query_flow_definition_versions(sf: Salesforce) -> dict[str, dict[str, str | None]]:
-    rows = _tooling_query_all(
-        sf,
-        "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
-    )
+    try:
+        rows = _tooling_query_all(
+            sf,
+            "SELECT DeveloperName, ActiveVersionId, LatestVersionId FROM FlowDefinitionView",
+        )
+    except Exception as exc:
+        logger.warning("flow_definition_view_unavailable error=%s", exc)
+        return {}
     out: dict[str, dict[str, str | None]] = {}
     for row in rows:
         name = row.get("DeveloperName") or ""
