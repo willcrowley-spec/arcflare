@@ -428,3 +428,54 @@ def parse_workflow(xml_bytes: bytes, filename: str) -> list[dict[str, Any]]:
             }
         )
     return results
+
+
+def _approval_actions(container: ET.Element | None) -> list[dict[str, str | None]]:
+    if container is None:
+        return []
+    out: list[dict[str, str | None]] = []
+    for act in container.findall(".//md:action", NS):
+        out.append(
+            {
+                "type": (_text(act, "md:type") or "").lower(),
+                "name": _text(act, "md:name"),
+            }
+        )
+    return out
+
+
+def parse_approval_process(xml_bytes: bytes, filename: str) -> dict[str, Any]:
+    root = ET.fromstring(xml_bytes)
+    parts = filename.replace(".approvalProcess-meta.xml", "").split("/")
+    related_object = parts[-2] if len(parts) >= 2 else parts[-1]
+
+    entry = root.find("md:entryCriteria", NS)
+    entry_formula = _text(entry, "md:formula") if entry is not None else None
+
+    steps: list[dict[str, Any]] = []
+    for idx, st in enumerate(root.findall("md:approvalStep", NS), start=1):
+        assignee_type = _text(st, "md:assignedApprover/md:approver/md:type")
+        assignee = _text(st, "md:assignedApprover/md:approver/md:relatedUserField")
+        steps.append(
+            {
+                "number": idx,
+                "assignee_type": assignee_type,
+                "assignee": assignee,
+                "approval_actions": _approval_actions(st.find("md:approvalActions", NS)),
+                "rejection_actions": _approval_actions(st.find("md:rejectionActions", NS)),
+            }
+        )
+
+    return {
+        "api_name": _text(root, "md:fullName"),
+        "active": (_text(root, "md:active") or "").lower() == "true",
+        "entry_criteria_formula": entry_formula,
+        "record_editability": _text(root, "md:recordEditability"),
+        "steps": steps,
+        "final_approval_actions": _approval_actions(root.find("md:finalApprovalActions", NS)),
+        "final_rejection_actions": _approval_actions(root.find("md:finalRejectionActions", NS)),
+        "initial_submission_actions": _approval_actions(root.find("md:initialSubmissionActions", NS)),
+        "related_object": related_object,
+        "raw_xml_hash": hashlib.sha256(xml_bytes).hexdigest(),
+        "source_filename": filename,
+    }
