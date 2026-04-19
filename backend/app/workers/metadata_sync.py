@@ -1,5 +1,5 @@
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.workers.celery_app import celery_app
 
@@ -10,19 +10,6 @@ logger = logging.getLogger(__name__)
 def sync_metadata_task(connection_id: str) -> str:
     import asyncio
 
-    from app.services.sync_progress import (
-        complete_progress,
-        get_redis_client,
-        init_progress,
-        update_phase,
-    )
-
-    r = get_redis_client()
-    init_progress(connection_id, r)
-
-    def progress_cb(conn_id: str, phase: str, status: str, count: int = 0) -> None:
-        update_phase(conn_id, phase, status, count, r)
-
     async def _pipeline() -> tuple[str, str | None]:
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine as _create_engine
 
@@ -32,6 +19,7 @@ def sync_metadata_task(connection_id: str) -> str:
         from app.services.metadata_graph import build_dependency_graph, detect_metadata_communities
         from app.services.metadata_vectorizer import vectorize_org_metadata
         from app.services.salesforce.metadata import sync_metadata
+        from app.services.sync_event_log import SyncEventEmitter
 
         _settings = get_settings()
         _engine = _create_engine(
@@ -39,6 +27,8 @@ def sync_metadata_task(connection_id: str) -> str:
             pool_pre_ping=True,
         )
         factory = async_sessionmaker(_engine, expire_on_commit=False)
+        run_id = uuid4()
+        org_id: UUID | None = None
 
         async def _set_status(status: str) -> None:
             async with factory() as s:
@@ -51,60 +41,106 @@ def sync_metadata_task(connection_id: str) -> str:
             async with factory() as session:
                 conn = await session.get(PlatformConnection, UUID(connection_id))
                 org_id_str = str(conn.org_id) if conn else None
+                org_id = conn.org_id if conn else None
+
+            if not org_id:
+                raise ValueError(f"Connection {connection_id} not found")
 
             await _set_status("syncing")
 
             async with factory() as session:
-                await sync_metadata(UUID(connection_id), session, progress_callback=progress_cb)
+                emitter = SyncEventEmitter(
+                    UUID(connection_id), org_id, run_id, session,
+                )
+                await emitter.purge_old_runs()
+                await emitter.emit("run_start", "Metadata sync started")
+                await sync_metadata(
+                    UUID(connection_id), session,
+                    event_emitter=emitter,
+                )
+                await session.commit()
 
-            update_phase(connection_id, "graph_build", "pulling", 0, r)
             try:
                 async with factory() as session:
-                    conn = await session.get(PlatformConnection, UUID(connection_id))
-                    if conn:
-                        edge_count = await build_dependency_graph(UUID(connection_id), conn.org_id, session)
-                        await detect_metadata_communities(UUID(connection_id), conn.org_id, session)
-                        await session.commit()
+                    emitter = SyncEventEmitter(UUID(connection_id), org_id, run_id, session)
+                    await emitter.emit("phase_start", "Building dependency graph...", phase="graph_build")
+                    conn_obj = await session.get(PlatformConnection, UUID(connection_id))
+                    if conn_obj:
+                        edge_count = await build_dependency_graph(UUID(connection_id), conn_obj.org_id, session)
+                        await detect_metadata_communities(UUID(connection_id), conn_obj.org_id, session)
                     else:
                         edge_count = 0
-                update_phase(connection_id, "graph_build", "done", edge_count, r)
+                    await emitter.emit(
+                        "phase_complete",
+                        f"Dependency graph complete — {edge_count} edges",
+                        phase="graph_build",
+                        detail={"edge_count": edge_count},
+                    )
+                    await session.commit()
             except Exception:
                 logger.exception("graph_build_failed connection=%s", connection_id)
-                update_phase(connection_id, "graph_build", "done", 0, r)
 
-            update_phase(connection_id, "classification", "pulling", 0, r)
             try:
                 async with factory() as session:
-                    conn = await session.get(PlatformConnection, UUID(connection_id))
-                    if conn:
-                        count = await run_classification(conn.org_id, session, connection_id=UUID(connection_id))
-                        await session.commit()
+                    emitter = SyncEventEmitter(UUID(connection_id), org_id, run_id, session)
+                    await emitter.emit("phase_start", "Classifying metadata...", phase="classification")
+                    conn_obj = await session.get(PlatformConnection, UUID(connection_id))
+                    if conn_obj:
+                        count = await run_classification(conn_obj.org_id, session, connection_id=UUID(connection_id))
                     else:
                         count = 0
-                update_phase(connection_id, "classification", "done", count, r)
+                    await emitter.emit(
+                        "phase_complete",
+                        f"Classification complete — {count} objects classified",
+                        phase="classification",
+                        detail={"classified_count": count},
+                    )
+                    await session.commit()
             except Exception:
                 logger.exception("classification_failed connection=%s", connection_id)
-                update_phase(connection_id, "classification", "done", 0, r)
 
-            update_phase(connection_id, "vectorization", "pulling", 0, r)
             try:
                 async with factory() as session:
-                    conn = await session.get(PlatformConnection, UUID(connection_id))
-                    if conn:
-                        count = await vectorize_org_metadata(UUID(connection_id), conn.org_id, session)
+                    emitter = SyncEventEmitter(UUID(connection_id), org_id, run_id, session)
+                    await emitter.emit("phase_start", "Vectorizing metadata...", phase="vectorization")
+                    conn_obj = await session.get(PlatformConnection, UUID(connection_id))
+                    if conn_obj:
+                        count = await vectorize_org_metadata(UUID(connection_id), conn_obj.org_id, session)
                     else:
                         count = 0
-                update_phase(connection_id, "vectorization", "done", count, r)
+                    await emitter.emit(
+                        "phase_complete",
+                        f"Vectorization complete — {count} chunks",
+                        phase="vectorization",
+                        detail={"chunk_count": count},
+                    )
+                    await session.commit()
             except Exception:
                 logger.exception("vectorization_failed connection=%s", connection_id)
-                update_phase(connection_id, "vectorization", "done", 0, r)
 
-            complete_progress(connection_id, r=r)
+            async with factory() as session:
+                emitter = SyncEventEmitter(UUID(connection_id), org_id, run_id, session)
+                await emitter.emit("run_complete", "Sync complete")
+                await session.commit()
+
             await _set_status("connected")
             return connection_id, org_id_str
+
         except Exception as exc:
             logger.exception("sync_task_failed connection=%s", connection_id)
-            complete_progress(connection_id, error=str(exc), r=r)
+            try:
+                if org_id is not None:
+                    async with factory() as session:
+                        emitter = SyncEventEmitter(UUID(connection_id), org_id, run_id, session)
+                        await emitter.emit("error", f"Sync failed: {exc}", severity="error")
+                        await session.commit()
+                else:
+                    logger.error(
+                        "cannot_emit_sync_error_event_missing_org connection=%s",
+                        connection_id,
+                    )
+            except Exception:
+                logger.exception("failed_to_emit_error_event connection=%s", connection_id)
             try:
                 await _set_status("error")
             except Exception:
