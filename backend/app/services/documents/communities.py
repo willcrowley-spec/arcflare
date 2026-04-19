@@ -18,7 +18,7 @@ from app.models.knowledge import (
 logger = logging.getLogger(__name__)
 
 LEIDEN_RESOLUTION = 1.0
-LEIDEN_SEED = 0xDEADBEEF
+LEIDEN_SEED = 42
 LEIDEN_MAX_COMM_SIZE = 10
 LEIDEN_N_ITERATIONS = -1
 
