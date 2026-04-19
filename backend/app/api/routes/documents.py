@@ -6,7 +6,9 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
 from app.models.document import Document
+from app.models.knowledge import Community, ProcessDocumentSource
 from app.models.organization import User
+from app.schemas.knowledge import CommunityResponse, ProvenanceResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.document import (
     DocumentResponse,
@@ -133,3 +135,34 @@ async def delete_document(
 
     await db.delete(doc)
     await db.commit()
+
+
+@router.get("/{document_id}/communities", response_model=list[CommunityResponse])
+async def get_document_communities(
+    document_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> list[CommunityResponse]:
+    doc = await db.get(Document, document_id)
+    if doc is None or doc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.community_ids:
+        return []
+    comm_ids = [UUID(cid) for cid in doc.community_ids]
+    q = await db.execute(select(Community).where(Community.id.in_(comm_ids)))
+    return [CommunityResponse.model_validate(c) for c in q.scalars().all()]
+
+
+@router.get("/{document_id}/provenance", response_model=list[ProvenanceResponse])
+async def get_document_provenance(
+    document_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> list[ProvenanceResponse]:
+    doc = await db.get(Document, document_id)
+    if doc is None or doc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    q = await db.execute(
+        select(ProcessDocumentSource).where(ProcessDocumentSource.document_id == document_id)
+    )
+    return [ProvenanceResponse.model_validate(p) for p in q.scalars().all()]
