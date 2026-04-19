@@ -124,5 +124,12 @@ async def delete_document(
     doc = await db.get(Document, document_id)
     if doc is None or doc.org_id != org.id:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.storage_path:
+        from pathlib import Path
+
+        path = Path(doc.storage_path)
+        path.unlink(missing_ok=True)
+
     await db.delete(doc)
     await db.commit()
