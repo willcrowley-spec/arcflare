@@ -218,7 +218,7 @@ async def semantic_document_search(
     query_text: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Find document chunks semantically similar to query_text using pgvector."""
+    """Find document chunks via community-filtered vector search, with global fallback."""
     from app.services.ai.router import get_embedding_provider
     from app.services.documents.vectorizer import _embed
 
@@ -240,23 +240,75 @@ async def semantic_document_search(
     if not doc_ids:
         return []
 
-    chunks_q = await db.execute(
+    base_query = (
         select(DocumentChunk)
         .where(
             DocumentChunk.document_id.in_(doc_ids),
             DocumentChunk.embedding.isnot(None),
         )
         .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
-        .limit(limit)
     )
-    chunks = chunks_q.scalars().all()
+
+    community_chunk_ids: set | None = None
+    try:
+        from app.services.documents.concepts import extract_noun_phrases
+        from app.models.knowledge import Concept, Community, ChunkCommunity
+
+        query_phrases = extract_noun_phrases(query_text)
+        query_concepts = {canonical for canonical, _ in query_phrases}
+
+        if query_concepts:
+            communities_q = await db.execute(
+                select(Community).where(Community.org_id == org_id)
+            )
+            relevant_comm_ids = []
+            for comm in communities_q.scalars().all():
+                if not comm.member_concept_ids:
+                    continue
+                concept_names_q = await db.execute(
+                    select(Concept.name).where(
+                        Concept.id.in_([UUID(c) for c in comm.member_concept_ids if c])
+                    )
+                )
+                comm_names = {r[0] for r in concept_names_q.all()}
+                if query_concepts & comm_names:
+                    relevant_comm_ids.append(comm.id)
+
+            if relevant_comm_ids:
+                cc_q = await db.execute(
+                    select(ChunkCommunity.chunk_id).where(
+                        ChunkCommunity.community_id.in_(relevant_comm_ids)
+                    )
+                )
+                community_chunk_ids = {row[0] for row in cc_q.all()}
+    except Exception:
+        logger.warning("community_filter_failed, falling back to global", exc_info=True)
+
+    if community_chunk_ids:
+        comm_q = await db.execute(
+            base_query.where(DocumentChunk.id.in_(community_chunk_ids)).limit(limit)
+        )
+        community_chunks = list(comm_q.scalars().all())
+        remaining = limit - len(community_chunks)
+        if remaining > 0:
+            seen = {c.id for c in community_chunks}
+            global_q = await db.execute(base_query.limit(limit + len(seen)))
+            extras = [c for c in global_q.scalars().all() if c.id not in seen][:remaining]
+            all_chunks = community_chunks + extras
+        else:
+            all_chunks = community_chunks
+    else:
+        q = await db.execute(base_query.limit(limit))
+        all_chunks = list(q.scalars().all())
+
     return [
         {
             "content": c.content or "",
             "document_id": str(c.document_id),
             "section_title": c.section_title,
+            "chunk_id": str(c.id),
         }
-        for c in chunks
+        for c in all_chunks
     ]
 
 
