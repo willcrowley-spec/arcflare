@@ -595,3 +595,16 @@ export interface ProvenanceLink {
   relevance_score: number | null
   created_at: string
 }
+
+/** Structured sync event from the backend event log */
+export interface SyncEvent {
+  id?: string
+  run_id?: string
+  sequence: number
+  event_type: 'run_start' | 'phase_start' | 'phase_complete' | 'item' | 'warning' | 'error' | 'run_complete'
+  phase: string | null
+  message: string
+  detail: Record<string, unknown>
+  severity: 'info' | 'warning' | 'error'
+  created_at: string | null
+}
