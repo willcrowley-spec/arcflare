@@ -1,6 +1,7 @@
 """NLP concept extraction following GraphRAG's SyntacticNounPhraseExtractor pattern."""
 
 import hashlib
+import json
 import logging
 import math
 from itertools import combinations
@@ -109,9 +110,9 @@ async def extract_and_store_concepts(
 
         chunk_db_id = chunk["chunk_db_id"]
         await db.execute(
-            text("UPDATE document_chunks SET concept_ids = :ids, content_hash = :hash WHERE id = :cid"),
+            text("UPDATE document_chunks SET concept_ids = :ids::jsonb, content_hash = :hash WHERE id = :cid"),
             {
-                "ids": chunk_concept_ids,
+                "ids": json.dumps(chunk_concept_ids),
                 "hash": hashlib.sha256((chunk.get("content") or "").encode()).hexdigest(),
                 "cid": str(chunk_db_id),
             },
