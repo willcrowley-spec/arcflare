@@ -324,3 +324,107 @@ def parse_custom_object(xml_bytes: bytes, filename: str) -> dict[str, Any]:
         "raw_xml_hash": hashlib.sha256(xml_bytes).hexdigest(),
         "source_filename": filename,
     }
+
+
+def parse_workflow(xml_bytes: bytes, filename: str) -> list[dict[str, Any]]:
+    """Return one dict per workflow rule (automation row shape)."""
+    root = ET.fromstring(xml_bytes)
+    related_object = filename.split("/")[-1].replace(".workflow-meta.xml", "")
+
+    field_updates_by_name: dict[str, dict[str, Any]] = {}
+    for fu in root.findall("md:fieldUpdates", NS):
+        name = _text(fu, "md:fullName")
+        if name:
+            field_updates_by_name[name] = {
+                "name": name,
+                "field": _text(fu, "md:field"),
+                "value": _text(fu, "md:literalValue"),
+                "formula": _text(fu, "md:formula"),
+                "target_object": related_object,
+            }
+
+    email_alerts: dict[str, dict[str, Any]] = {}
+    for al in root.findall("md:alerts", NS):
+        name = _text(al, "md:fullName")
+        if name:
+            email_alerts[name] = {
+                "name": name,
+                "template": _text(al, "md:template"),
+                "recipients": [],
+            }
+
+    outbound_messages: dict[str, dict[str, Any]] = {}
+    for om in root.findall("md:outboundMessages", NS):
+        name = _text(om, "md:fullName")
+        if name:
+            fields = [_text(f, "md:field") for f in om.findall("md:fields", NS)]
+            fields = [f for f in fields if f]
+            outbound_messages[name] = {
+                "name": name,
+                "endpoint_url": _text(om, "md:endpointUrl"),
+                "fields": fields,
+            }
+
+    tasks: dict[str, dict[str, Any]] = {}
+    for tk in root.findall("md:tasks", NS):
+        name = _text(tk, "md:fullName")
+        if name:
+            tasks[name] = {
+                "name": name,
+                "subject": _text(tk, "md:subject"),
+                "assignee": _text(tk, "md:assignedToType"),
+                "due_date_offset": _text(tk, "md:offsetFromField"),
+            }
+
+    results: list[dict[str, Any]] = []
+    for rule in root.findall("md:rules", NS):
+        rule_name = _text(rule, "md:fullName")
+        actions_out: dict[str, list[dict[str, str | None]]] = {
+            "field_updates": [],
+            "email_alerts": [],
+            "outbound_messages": [],
+            "tasks": [],
+        }
+        linkages: list[dict[str, str | None]] = []
+        for act in rule.findall("md:actions", NS):
+            an = _text(act, "md:name")
+            at = _text(act, "md:type")
+            linkages.append({"name": an, "type": at})
+            if at == "FieldUpdate" and an in field_updates_by_name:
+                actions_out["field_updates"].append(field_updates_by_name[an])
+            elif at in ("Alert", "EmailAlert") and an in email_alerts:
+                actions_out["email_alerts"].append(email_alerts[an])
+            elif at == "OutboundMessage" and an in outbound_messages:
+                actions_out["outbound_messages"].append(outbound_messages[an])
+            elif at == "Task" and an in tasks:
+                actions_out["tasks"].append(tasks[an])
+
+        criteria_items: list[dict[str, str | None]] = []
+        for crit in rule.findall("md:criteriaItems", NS):
+            criteria_items.append(
+                {
+                    "field": _text(crit, "md:field"),
+                    "operation": _text(crit, "md:operation"),
+                    "value": _text(crit, "md:value"),
+                }
+            )
+
+        results.append(
+            {
+                "automation_subtype": "workflow_rule",
+                "api_name": rule_name,
+                "active": (_text(rule, "md:active") or "").lower() == "true",
+                "description": _text(rule, "md:description"),
+                "criteria": {
+                    "formula": _text(rule, "md:formula"),
+                    "trigger_type": _text(rule, "md:triggerType"),
+                    "criteria_items": criteria_items,
+                },
+                "actions": actions_out,
+                "rule_action_linkages": linkages,
+                "related_object": related_object,
+                "raw_xml_hash": hashlib.sha256(xml_bytes).hexdigest(),
+                "source_filename": filename,
+            }
+        )
+    return results
