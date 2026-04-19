@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import urllib.parse
 from datetime import UTC, datetime
 from collections.abc import Callable
@@ -44,11 +45,7 @@ from app.services.salesforce.mdapi_parser import (
     parse_flow,
     parse_workflow,
 )
-from app.services.salesforce.mdapi_retrieve import (
-    MDAPIInsufficientAccessError,
-    MDAPIRetrieveError,
-    retrieve_metadata,
-)
+from app.services.salesforce.mdapi_retrieve import retrieve_metadata
 from app.services.salesforce.user_velocity import snapshot_user_velocity
 
 logger = logging.getLogger(__name__)
@@ -67,6 +64,8 @@ DEFAULT_OBJECTS = [
     "Campaign",
     "CampaignMember",
 ]
+
+_SAFE_CMDT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*__mdt$")
 
 
 def get_sf_client(instance_url: str, access_token: str) -> Salesforce:
@@ -518,6 +517,9 @@ def pull_custom_metadata_types(sf: Salesforce, objects_list: list[dict]) -> list
 
     results = []
     for cmdt_name in cmdt_objects:
+        if not _SAFE_CMDT_NAME.match(cmdt_name):
+            logger.warning("cmdt_name_rejected name=%s", cmdt_name)
+            continue
         try:
             result = sf.query_all(f"SELECT FIELDS(ALL) FROM {cmdt_name} LIMIT 200")
             records = result.get("records", [])
@@ -838,53 +840,37 @@ async def sync_metadata(
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
 
-    mdapi_files: dict[str, bytes] | None = None
     flow_versions: dict[str, dict[str, str | None]] = {}
     _progress("mdapi_retrieve", "pulling", 0)
-    try:
-        mdapi_files = await _mdapi_retrieve_files(sf)
-        _progress("mdapi_retrieve", "done", len(mdapi_files))
-    except (MDAPIInsufficientAccessError, MDAPIRetrieveError, Exception) as exc:
-        logger.warning("mdapi_retrieve_failed falling_back_to_legacy error=%s", exc)
-        mdapi_files = None
-        _progress("mdapi_retrieve", "done", 0)
+    mdapi_files = await _mdapi_retrieve_files(sf)
+    _progress("mdapi_retrieve", "done", len(mdapi_files))
 
-    mdapi_bundle: dict[str, Any] | None = None
-    object_patches: dict[str, dict[str, Any]] = {}
-    if mdapi_files is not None:
-        _progress("mdapi_parse", "pulling", 0)
-        flow_versions = _query_flow_definition_versions(sf)
-        mdapi_bundle = _collect_mdapi_zip_results(connection_id, org_id, mdapi_files, flow_versions)
-        object_patches = mdapi_bundle["object_patches"]
+    _progress("mdapi_parse", "pulling", 0)
+    flow_versions = _query_flow_definition_versions(sf)
+    mdapi_bundle: dict[str, Any] = _collect_mdapi_zip_results(
+        connection_id, org_id, mdapi_files, flow_versions
+    )
+    object_patches: dict[str, dict[str, Any]] = mdapi_bundle["object_patches"]
 
     _progress("automations", "pulling", 0)
-    if mdapi_files is None:
-        automations = _legacy_pull_all_automations(sf)
-    else:
-        automations = []
+    automations: list[AutomationMeta] = []
     vr_by_object = _legacy_pull_validation_rules_bulk(sf, object_names)
     all_validation_rules: list[dict] = []
     for obj_name, vrs in vr_by_object.items():
         all_validation_rules.extend({**vr, "_related_object": obj_name} for vr in vrs)
-    if mdapi_files is None:
-        active_automation_count = sum(1 for a in automations if a.is_active)
-        _progress("automations", "done", active_automation_count + len(all_validation_rules))
-    else:
-        assert mdapi_bundle is not None
-        _progress("automations", "done", len(mdapi_bundle["pending_automations"]) + len(all_validation_rules))
+    _progress(
+        "automations",
+        "done",
+        len(mdapi_bundle["pending_automations"]) + len(all_validation_rules),
+    )
 
     _progress("permissions", "pulling", 0)
     permissions = pull_all_permissions(sf)
     _progress("permissions", "done", len(permissions))
 
     _progress("ui_components", "pulling", 0)
-    if mdapi_files is None:
-        ui_components = _legacy_pull_all_ui_components(sf, object_names)
-        _progress("ui_components", "done", len(ui_components))
-    else:
-        assert mdapi_bundle is not None
-        ui_components = []
-        _progress("ui_components", "done", mdapi_bundle["counts"]["flexi"])
+    ui_components: list[UIComponentMeta] = []
+    _progress("ui_components", "done", mdapi_bundle["counts"]["flexi"])
 
     mo_subq = select(MetadataObject.id).where(MetadataObject.connection_id == connection_id)
 
@@ -938,17 +924,16 @@ async def sync_metadata(
                 )
             )
 
-    if mdapi_bundle is not None:
-        _persist_mdapi_zip_results(
-            connection_id,
-            org_id,
-            mdapi_files,
-            flow_versions,
-            db,
-            _precomputed=mdapi_bundle,
-        )
-        await db.flush()
-        _progress("mdapi_parse", "done", sum(mdapi_bundle["counts"].values()))
+    _persist_mdapi_zip_results(
+        connection_id,
+        org_id,
+        mdapi_files,
+        flow_versions,
+        db,
+        _precomputed=mdapi_bundle,
+    )
+    await db.flush()
+    _progress("mdapi_parse", "done", sum(mdapi_bundle["counts"].values()))
 
     for auto in automations:
         if not auto.is_active:
@@ -990,28 +975,7 @@ async def sync_metadata(
         )
 
     _progress("code", "pulling", 0)
-    if mdapi_files is None:
-        apex_classes = _legacy_pull_apex_classes(sf)
-        apex_classes = [ac for ac in apex_classes if ac.get("Status") != "Deleted"]
-        for ac in apex_classes:
-            db.add(
-                MetadataComponent(
-                    org_id=org_id,
-                    connection_id=connection_id,
-                    component_category="apex_class",
-                    api_name=ac.get("Name", ac.get("Id", "")),
-                    label=ac.get("Name", ""),
-                    status=ac.get("Status", "Active"),
-                    metadata_json={
-                        "api_version": ac.get("ApiVersion"),
-                        "length_without_comments": ac.get("LengthWithoutComments"),
-                    },
-                )
-            )
-        apex_class_count = len(apex_classes)
-    else:
-        assert mdapi_bundle is not None
-        apex_class_count = mdapi_bundle["counts"]["apex_classes"]
+    apex_class_count = mdapi_bundle["counts"]["apex_classes"]
     _progress("code", "done", apex_class_count)
 
     for perm in permissions:
