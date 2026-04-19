@@ -23,17 +23,22 @@ def sync_metadata_task(connection_id: str) -> str:
     def progress_cb(conn_id: str, phase: str, status: str, count: int = 0) -> None:
         update_phase(conn_id, phase, status, count, r)
 
-    async def _pipeline() -> str:
-        from sqlalchemy.ext.asyncio import async_sessionmaker
+    async def _pipeline() -> tuple[str, str | None]:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine as _create_engine
 
-        from app.core.database import engine
+        from app.core.config import get_settings
         from app.models.connection import PlatformConnection
         from app.services.classification import run_classification
         from app.services.metadata_graph import build_dependency_graph, detect_metadata_communities
         from app.services.metadata_vectorizer import vectorize_org_metadata
         from app.services.salesforce.metadata import sync_metadata
 
-        factory = async_sessionmaker(engine, expire_on_commit=False)
+        _settings = get_settings()
+        _engine = _create_engine(
+            _settings.DATABASE_URL,
+            pool_pre_ping=True,
+        )
+        factory = async_sessionmaker(_engine, expire_on_commit=False)
 
         async def _set_status(status: str) -> None:
             async with factory() as s:
@@ -43,6 +48,10 @@ def sync_metadata_task(connection_id: str) -> str:
                     await s.commit()
 
         try:
+            async with factory() as session:
+                conn = await session.get(PlatformConnection, UUID(connection_id))
+                org_id_str = str(conn.org_id) if conn else None
+
             await _set_status("syncing")
 
             async with factory() as session:
@@ -92,7 +101,7 @@ def sync_metadata_task(connection_id: str) -> str:
 
             complete_progress(connection_id, r=r)
             await _set_status("connected")
-            return connection_id
+            return connection_id, org_id_str
         except Exception as exc:
             logger.exception("sync_task_failed connection=%s", connection_id)
             complete_progress(connection_id, error=str(exc), r=r)
@@ -101,27 +110,15 @@ def sync_metadata_task(connection_id: str) -> str:
             except Exception:
                 logger.exception("failed_to_set_error_status connection=%s", connection_id)
             raise
-
-    async def _resolve_org_id() -> str | None:
-        from sqlalchemy.ext.asyncio import async_sessionmaker
-
-        from app.core.database import engine
-        from app.models.connection import PlatformConnection
-
-        factory = async_sessionmaker(engine, expire_on_commit=False)
-        async with factory() as session:
-            conn = await session.get(PlatformConnection, UUID(connection_id))
-            if conn is None:
-                return None
-            return str(conn.org_id)
-
-    org_id_str = asyncio.run(_resolve_org_id())
+        finally:
+            await _engine.dispose()
 
     from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
     try:
-        with langfuse_context(org_id=org_id_str):
+        with langfuse_context(org_id=connection_id):
             with langfuse_span("metadata_sync", metadata={"connection_id": connection_id}):
-                return asyncio.run(_pipeline())
+                result_id, org_id_str = asyncio.run(_pipeline())
+        return result_id
     finally:
         flush_langfuse()
