@@ -17,6 +17,7 @@ const nav = [
   { to: '/analysis', label: 'Analysis' },
   { to: '/organization', label: 'Organization' },
   { to: '/processes', label: 'Processes' },
+  { to: '/documents', label: 'Documents' },
   { to: '/recommendations', label: 'Recommendations' },
   { to: '/agents', label: 'Agents' },
 ]

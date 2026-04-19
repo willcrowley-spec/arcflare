@@ -210,24 +210,35 @@ export interface DocumentChunk {
   created_at: string
 }
 
+/** Row from document library APIs (`GET /documents`, upload, detail). */
 export interface Document {
   id: string
-  title: string
-  mime_type: string
-  platform: PlatformType
-  status: RecordStatus
+  org_id: string
+  filename: string
+  mime_type: string | null
+  file_size_bytes: number | null
+  storage_path: string | null
+  status: string
+  error_message: string | null
+  uploaded_by: string | null
   tags: string[]
-  chunks?: DocumentChunk[]
-  uploaded_at: string
-  updated_at: string
+  chunk_count: number
+  content_hash: string | null
+  concept_count: number
+  community_ids: string[]
+  embedding_model: string | null
+  created_at: string
 }
 
+/** Row from `POST /documents/search`. */
 export interface DocumentSearchResult {
+  chunk_id: string
   document_id: string
-  title: string
-  snippet: string
+  chunk_index: number
+  content: string | null
   score: number
-  tags: string[]
+  page_number: number | null
+  section_title: string | null
 }
 
 export interface ProcessNode {
