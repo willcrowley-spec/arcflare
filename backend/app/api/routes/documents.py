@@ -149,7 +149,7 @@ async def get_document_communities(
     if not doc.community_ids:
         return []
     comm_ids = [UUID(cid) for cid in doc.community_ids]
-    q = await db.execute(select(Community).where(Community.id.in_(comm_ids)))
+    q = await db.execute(select(Community).where(Community.id.in_(comm_ids), Community.org_id == org.id))
     return [CommunityResponse.model_validate(c) for c in q.scalars().all()]
 
 

@@ -29,11 +29,21 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
     Replaces all existing communities for the org.
     Returns list of new community IDs.
     """
+    async def _clear_existing() -> None:
+        await db.execute(delete(ChunkCommunity).where(
+            ChunkCommunity.community_id.in_(
+                select(Community.id).where(Community.org_id == org_id)
+            )
+        ))
+        await db.execute(delete(Community).where(Community.org_id == org_id))
+        await db.flush()
+
     concepts_q = await db.execute(
         select(Concept).where(Concept.org_id == org_id)
     )
     concepts = concepts_q.scalars().all()
     if len(concepts) < 2:
+        await _clear_existing()
         return []
 
     concept_idx = {c.id: i for i, c in enumerate(concepts)}
@@ -58,6 +68,7 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
             weights.append(e.pmi_weight if e.pmi_weight and e.pmi_weight > 0 else 1.0)
 
     if not edge_list:
+        await _clear_existing()
         return []
 
     g.add_edges(edge_list)
@@ -73,13 +84,7 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
         max_comm_size=LEIDEN_MAX_COMM_SIZE,
     )
 
-    await db.execute(delete(ChunkCommunity).where(
-        ChunkCommunity.community_id.in_(
-            select(Community.id).where(Community.org_id == org_id)
-        )
-    ))
-    await db.execute(delete(Community).where(Community.org_id == org_id))
-    await db.flush()
+    await _clear_existing()
 
     concept_names = {c.id: c.display_name or c.name for c in concepts}
     concept_freqs = {c.id: c.frequency for c in concepts}
