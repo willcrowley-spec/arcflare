@@ -5,10 +5,9 @@ from app.workers.celery_app import celery_app
 
 @celery_app.task(name="documents.vectorize_document")
 def vectorize_document_task(document_id: str) -> str:
-    """Parse document on disk, chunk, embed, and persist DocumentChunk rows."""
+    """Parse document on disk, chunk, embed, extract concepts, detect communities."""
     import asyncio
 
-    from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.core.database import engine
@@ -16,6 +15,8 @@ def vectorize_document_task(document_id: str) -> str:
     from app.services.documents.parser import parse_file
     from app.services.extraction.chunker import chunk_document
     from app.services.documents.vectorizer import vectorize_chunks
+    from app.services.documents.concepts import extract_and_store_concepts, compute_pmi_weights
+    from app.services.documents.communities import detect_communities, link_chunks_to_communities
 
     from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
@@ -38,8 +39,25 @@ def vectorize_document_task(document_id: str) -> str:
                 }
                 for c in text_chunks
             ]
-            await vectorize_chunks(chunks, doc.id, session)
+
+            db_chunks = await vectorize_chunks(chunks, doc.id, session)
+
+            chunk_dicts = [
+                {"content": c.get("content") or "", "chunk_db_id": db_chunks[i].id}
+                for i, c in enumerate(chunks)
+            ]
+            concept_count = await extract_and_store_concepts(
+                chunk_dicts, doc.id, doc.org_id, session
+            )
+            await compute_pmi_weights(doc.org_id, session)
+
+            community_ids = await detect_communities(doc.org_id, session)
+            if community_ids:
+                await link_chunks_to_communities(doc.org_id, session)
+
             doc.chunk_count = len(chunks)
+            doc.concept_count = concept_count
+            doc.community_ids = [str(cid) for cid in community_ids]
             doc.status = "indexed"
             await session.commit()
 
