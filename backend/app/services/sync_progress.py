@@ -9,14 +9,18 @@ logger = logging.getLogger(__name__)
 
 PHASES = [
     "objects",
+    "mdapi_retrieve",
+    "mdapi_parse",
     "automations",
     "code",
     "permissions",
     "ui_components",
     "installed_packages",
+    "custom_metadata_types",
     "licensing",
     "user_velocity",
     "entities",
+    "graph_build",
     "classification",
     "vectorization",
 ]
