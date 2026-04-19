@@ -1,7 +1,58 @@
 import { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { ProcessMapSettings } from '@/types'
+import type { ProcessMapSettings, SyncEvent } from '@/types'
+
+const LEGACY_SYNC_PHASES = [
+  'objects',
+  'automations',
+  'code',
+  'permissions',
+  'ui_components',
+  'installed_packages',
+  'licensing',
+  'user_velocity',
+  'entities',
+  'classification',
+  'vectorization',
+] as const
+
+/** Bridge sync event log to legacy `SyncProgressPanel` shape until the UI is migrated. */
+function syncEventsToProgressData(events: SyncEvent[]): {
+  status: string
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+  phases?: Record<string, { status: string; count: number }>
+} {
+  if (!events.length) {
+    return { status: 'idle', started_at: null, completed_at: null, error: null }
+  }
+  const sorted = [...events].sort((a, b) => a.sequence - b.sequence)
+  const last = sorted[sorted.length - 1]!
+
+  const terminalError = sorted
+    .slice()
+    .reverse()
+    .find((e) => e.event_type === 'error' && e.severity === 'error')
+
+  let status = 'running'
+  if (last.event_type === 'run_complete') status = 'completed'
+  else if (terminalError) status = 'failed'
+
+  const started_at = sorted.find((e) => e.event_type === 'run_start')?.created_at ?? sorted[0]!.created_at
+  const completed_at = last.event_type === 'run_complete' ? last.created_at : null
+  const error = status === 'failed' ? (terminalError?.message ?? 'Sync failed') : null
+
+  const phases: Record<string, { status: string; count: number }> = {}
+  if (status === 'completed') {
+    for (const p of LEGACY_SYNC_PHASES) {
+      phases[p] = { status: 'done', count: 0 }
+    }
+  }
+
+  return { status, started_at, completed_at, error, phases: Object.keys(phases).length ? phases : undefined }
+}
 
 export function useConnections() {
   return useQuery({
@@ -275,7 +326,10 @@ export function useSyncProgress(connectionId: string | null) {
   const qc = useQueryClient()
   const query = useQuery({
     queryKey: ['sync-progress', connectionId],
-    queryFn: () => api.connections.syncStatus(connectionId!),
+    queryFn: async () => {
+      const events = await api.connections.syncEvents(connectionId!)
+      return syncEventsToProgressData(events)
+    },
     enabled: !!connectionId,
     refetchInterval: (query) => {
       const status = query.state.data?.status

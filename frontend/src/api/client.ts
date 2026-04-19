@@ -28,6 +28,7 @@ import type {
   Recommendation,
   RecordTelemetry,
   SalesforceInitiateResponse,
+  SyncEvent,
   VelocityMetrics,
 } from '@/types'
 
@@ -146,14 +147,10 @@ export const api = {
     reauth: (id: string) =>
       request<SalesforceInitiateResponse>(`/connections/${id}/reauth`, { method: 'POST' }),
     delete: (id: string) => request<void>(`/connections/${id}`, { method: 'DELETE' }),
-    syncStatus: (id: string) =>
-      request<{
-        status: string
-        started_at: string | null
-        completed_at: string | null
-        error: string | null
-        phases?: Record<string, { status: string; count: number }>
-      }>(`/connections/${id}/sync-status`),
+    syncEvents: (id: string, runId?: string) =>
+      request<SyncEvent[]>(
+        withQuery(`/connections/${id}/sync-events`, runId ? { run_id: runId } : undefined),
+      ),
   },
   metadata: {
     listObjects: (params?: { page?: number; page_size?: number; q?: string }) =>
