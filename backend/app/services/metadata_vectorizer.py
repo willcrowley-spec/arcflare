@@ -62,6 +62,36 @@ def _describe_object(obj: MetadataObject, fields: list[MetadataField]) -> str:
                 parts.append(f"-> {f.relationship_to}")
             lines.append(", ".join(parts))
 
+    meta = obj.metadata_json or {}
+    vrs = meta.get("validation_rules", [])
+    if vrs:
+        lines.append(f"Validation Rules ({len(vrs)}):")
+        for vr in vrs[:10]:
+            status = "Active" if vr.get("active") else "Inactive"
+            lines.append(f"  - {vr.get('name', '?')} [{status}]: {vr.get('error_condition_formula', '?')}")
+
+    ffs = meta.get("formula_fields", [])
+    if ffs:
+        lines.append(f"Formula Fields ({len(ffs)}):")
+        for ff in ffs[:10]:
+            lines.append(f"  - {ff.get('api_name', '?')}: {ff.get('formula', '?')}")
+
+    rts = meta.get("record_types", [])
+    if rts:
+        lines.append(f"Record Types ({len(rts)}):")
+        for rt in rts:
+            lines.append(f"  - {rt.get('developer_name', '?')} ({rt.get('label', '?')})")
+
+    fsets = meta.get("field_sets", [])
+    if fsets:
+        lines.append(f"Field Sets ({len(fsets)}):")
+        for fs in fsets:
+            lines.append(f"  - {fs.get('label', '?')}: {', '.join(str(f) for f in fs.get('fields', []))}")
+
+    sm = meta.get("sharing_model")
+    if sm:
+        lines.append(f"Sharing Model: {sm}")
+
     return "\n".join(lines)
 
 
