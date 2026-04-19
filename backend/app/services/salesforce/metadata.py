@@ -45,7 +45,11 @@ from app.services.salesforce.mdapi_parser import (
     parse_flow,
     parse_workflow,
 )
-from app.services.salesforce.mdapi_retrieve import retrieve_metadata
+from app.services.salesforce.mdapi_retrieve import (
+    MDAPIInsufficientAccessError,
+    check_mdapi_access,
+    retrieve_metadata,
+)
 from app.services.salesforce.user_velocity import snapshot_user_velocity
 
 logger = logging.getLogger(__name__)
@@ -825,6 +829,19 @@ async def sync_metadata(
     org_id = connection.org_id
     tokens = json.loads(decrypt_tokens(connection.oauth_tokens_encrypted))
     sf = get_sf_client(tokens["instance_url"], tokens["access_token"])
+
+    if not check_mdapi_access(sf):
+        logger.error(
+            "mdapi_access_denied connection_id=%s — connected user lacks Modify All Data permission",
+            connection_id,
+        )
+        raise MDAPIInsufficientAccessError()
+
+    connection.sync_config_json = {
+        **connection.sync_config_json,
+        "mdapi_capable": True,
+        "last_mdapi_check": datetime.now(UTC).isoformat(),
+    }
 
     objects = pull_object_describes(sf)
     object_names = [o.api_name for o in objects]
