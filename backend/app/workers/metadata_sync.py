@@ -29,6 +29,7 @@ def sync_metadata_task(connection_id: str) -> str:
         from app.core.database import engine
         from app.models.connection import PlatformConnection
         from app.services.classification import run_classification
+        from app.services.metadata_graph import build_dependency_graph, detect_metadata_communities
         from app.services.metadata_vectorizer import vectorize_org_metadata
         from app.services.salesforce.metadata import sync_metadata
 
@@ -46,6 +47,21 @@ def sync_metadata_task(connection_id: str) -> str:
 
             async with factory() as session:
                 await sync_metadata(UUID(connection_id), session, progress_callback=progress_cb)
+
+            update_phase(connection_id, "graph_build", "pulling", 0, r)
+            try:
+                async with factory() as session:
+                    conn = await session.get(PlatformConnection, UUID(connection_id))
+                    if conn:
+                        edge_count = await build_dependency_graph(UUID(connection_id), conn.org_id, session)
+                        await detect_metadata_communities(UUID(connection_id), conn.org_id, session)
+                        await session.commit()
+                    else:
+                        edge_count = 0
+                update_phase(connection_id, "graph_build", "done", edge_count, r)
+            except Exception:
+                logger.exception("graph_build_failed connection=%s", connection_id)
+                update_phase(connection_id, "graph_build", "done", 0, r)
 
             update_phase(connection_id, "classification", "pulling", 0, r)
             try:
