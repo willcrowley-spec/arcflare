@@ -567,3 +567,20 @@ export interface PromptBlock {
   available_vars: string[]
   version: number
 }
+
+export interface Community {
+  id: string
+  label: string | null
+  level: number
+  member_concept_ids: string[]
+  metadata_json: Record<string, unknown>
+}
+
+export interface ProvenanceLink {
+  id: string
+  process_id: string
+  document_id: string
+  chunk_ids: string[]
+  relevance_score: number | null
+  created_at: string
+}

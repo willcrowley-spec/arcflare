@@ -5,6 +5,7 @@ import type {
   ChatAction,
   ChatThread,
   ChatThreadDetail,
+  Community,
   DiscoveryStatus,
   Document,
   DocumentSearchResult,
@@ -23,6 +24,7 @@ import type {
   ProcessMapSettings,
   PromptBlock,
   PromptOperation,
+  ProvenanceLink,
   Recommendation,
   RecordTelemetry,
   SalesforceInitiateResponse,
@@ -182,7 +184,7 @@ export const api = {
     upload: (file: File) => {
       const body = new FormData()
       body.append('file', file)
-      return request<Document>('/documents', { method: 'POST', body })
+      return request<Document>('/documents/upload', { method: 'POST', body })
     },
     get: (id: string) => request<Document>(`/documents/${id}`),
     updateTags: (id: string, tags: string[]) =>
@@ -196,6 +198,10 @@ export const api = {
         body: JSON.stringify({ query }),
       }),
     delete: (id: string) => request<void>(`/documents/${id}`, { method: 'DELETE' }),
+    communities: (documentId: string) =>
+      request<Community[]>(`/documents/${documentId}/communities`),
+    provenance: (documentId: string) =>
+      request<ProvenanceLink[]>(`/documents/${documentId}/provenance`),
   },
   processes: {
     list: () => request<unknown>('/processes'),
