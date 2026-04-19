@@ -73,12 +73,84 @@ def _describe_automation(auto: MetadataAutomation) -> str:
     ]
     if auto.related_object:
         lines.append(f"Related Object: {auto.related_object}")
+
     meta = auto.metadata_json or {}
+
     if meta.get("description"):
         lines.append(f"Description: {meta['description']}")
-    related = meta.get("related_objects", [])
-    if related:
-        lines.append(f"Objects: {', '.join(related)}")
+
+    if auto.automation_type == "flow":
+        pt = meta.get("process_type")
+        if pt:
+            lines.append(f"Process Type: {pt}")
+        tt = meta.get("trigger_type")
+        if tt:
+            lines.append(f"Trigger Type: {tt}")
+        objs = meta.get("objects_touched", [])
+        if objs:
+            lines.append(f"Objects Touched: {', '.join(str(o) for o in objs)}")
+        ec = meta.get("element_count")
+        if ec is not None:
+            lines.append(f"Element Count: {ec}")
+        cs = meta.get("complexity_score")
+        if cs is not None:
+            lines.append(f"Complexity Score: {cs}")
+        elems = meta.get("elements", {})
+        for key in ("decisions", "record_creates", "record_updates", "record_lookups", "record_deletes", "subflows", "action_calls"):
+            items = elems.get(key, [])
+            if items:
+                names = [str(i.get("name", "?")) for i in items if isinstance(i, dict)]
+                if names:
+                    lines.append(f"  {key}: {', '.join(names)}")
+        variables = meta.get("variables", [])
+        if variables:
+            var_names = [str(v.get("name", "")) for v in variables if isinstance(v, dict)]
+            if var_names:
+                lines.append(f"Variables: {', '.join(var_names[:10])}")
+        formulas = meta.get("formulas", [])
+        if formulas:
+            for f in formulas[:5]:
+                lines.append(f"  Formula: {f.get('name', '?')} = {f.get('expression', '?')}")
+
+    elif auto.automation_type == "workflow_rule":
+        criteria = meta.get("criteria", {})
+        if criteria.get("formula"):
+            lines.append(f"Criteria Formula: {criteria['formula']}")
+        if criteria.get("trigger_type"):
+            lines.append(f"Trigger: {criteria['trigger_type']}")
+        actions = meta.get("actions", {})
+        for atype in ("field_updates", "email_alerts", "outbound_messages", "tasks"):
+            alist = actions.get(atype, [])
+            if alist:
+                names = [str(a.get("name", "?")) for a in alist if isinstance(a, dict)]
+                lines.append(f"  {atype}: {', '.join(names)}")
+
+    elif auto.automation_type == "approval_process":
+        if meta.get("entry_criteria_formula"):
+            lines.append(f"Entry Criteria: {meta['entry_criteria_formula']}")
+        steps = meta.get("steps", [])
+        for step in steps:
+            lines.append(f"  Step {step.get('number', '?')}: assignee={step.get('assignee_type', '?')}")
+        fa = meta.get("final_approval_actions", [])
+        if fa:
+            lines.append(f"  Final Approval: {', '.join(a.get('name', '?') for a in fa)}")
+
+    elif auto.automation_type == "trigger":
+        events = meta.get("trigger_events", [])
+        if events:
+            lines.append(f"Events: {', '.join(str(e) for e in events)}")
+        dml = meta.get("dml_objects", [])
+        if dml:
+            lines.append(f"DML Objects: {', '.join(str(o) for o in dml)}")
+        soql = meta.get("soql_objects", [])
+        if soql:
+            lines.append(f"SOQL Objects: {', '.join(str(o) for o in soql)}")
+
+    else:
+        related = meta.get("related_objects", [])
+        if related:
+            lines.append(f"Objects: {', '.join(str(o) for o in related)}")
+
     return "\n".join(lines)
 
 
