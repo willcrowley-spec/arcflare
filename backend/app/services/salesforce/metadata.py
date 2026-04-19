@@ -922,6 +922,7 @@ async def sync_metadata(
         "last_mdapi_check": datetime.now(UTC).isoformat(),
     }
 
+    await _emit("phase_start", "Pulling object describes...", phase="objects")
     objects = pull_object_describes(sf)
     object_names = [o.api_name for o in objects]
     await _emit(
@@ -936,6 +937,7 @@ async def sync_metadata(
     if org and org.analysis_config:
         velocity_window_days = org.analysis_config.get("velocity_window_days", 30)
 
+    await _emit("item", f"Pulling usage data for {len(object_names)} objects...", phase="objects")
     usage = pull_usage_data(sf, object_names, velocity_window_days=velocity_window_days)
     for obj in objects:
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)

@@ -204,7 +204,7 @@ async def build_dependency_graph(connection_id: UUID, org_id: UUID, db: AsyncSes
     auto_stmt = select(MetadataAutomation).where(MetadataAutomation.connection_id == connection_id).execution_options(
         yield_per=YIELD_PER
     )
-    stream = await db.stream(auto_stmt)
+    stream = await db.stream_scalars(auto_stmt)
     async for part in stream.partitions(YIELD_PER):
         for auto in part:
             meta = auto.metadata_json or {}
@@ -262,7 +262,7 @@ async def build_dependency_graph(connection_id: UUID, org_id: UUID, db: AsyncSes
         MetadataComponent.connection_id == connection_id,
         MetadataComponent.component_category == "apex_class",
     ).execution_options(yield_per=YIELD_PER)
-    comp_stream = await db.stream(comp_stmt)
+    comp_stream = await db.stream_scalars(comp_stmt)
     async for part in comp_stream.partitions(YIELD_PER):
         for comp in part:
             all_edges.extend(_edges_from_apex_class(comp.api_name, comp.metadata_json or {}))
@@ -270,7 +270,7 @@ async def build_dependency_graph(connection_id: UUID, org_id: UUID, db: AsyncSes
     obj_stmt = select(MetadataObject).where(MetadataObject.connection_id == connection_id).execution_options(
         yield_per=YIELD_PER
     )
-    obj_stream = await db.stream(obj_stmt)
+    obj_stream = await db.stream_scalars(obj_stmt)
     async for part in obj_stream.partitions(YIELD_PER):
         for obj in part:
             rels = (obj.metadata_json or {}).get("relationships") or []
