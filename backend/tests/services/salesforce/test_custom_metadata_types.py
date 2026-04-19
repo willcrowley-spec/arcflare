@@ -27,3 +27,14 @@ def test_pull_custom_metadata_types_empty_org():
     result = pull_custom_metadata_types(sf, [{"name": "Account", "queryable": True}])
     assert result == []
     sf.query_all.assert_not_called()
+
+
+def test_pull_custom_metadata_types_rejects_injection_like_cmdt_name():
+    """Names that end with __mdt but fail the safe CMDT regex must not reach SOQL."""
+    sf = MagicMock()
+    objects_list = [
+        {"name": "; DROP TABLE --__mdt", "queryable": True},
+    ]
+    result = pull_custom_metadata_types(sf, objects_list)
+    assert result == []
+    sf.query_all.assert_not_called()

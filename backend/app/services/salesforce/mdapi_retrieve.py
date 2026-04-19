@@ -102,6 +102,9 @@ def _extract_zip(zip_bytes: bytes) -> dict[str, bytes]:
         for name in zf.namelist():
             if name.endswith("/"):
                 continue
+            if ".." in name or name.startswith("/") or name.startswith("\\"):
+                logger.warning("zip_entry_rejected path=%s", name)
+                continue
             out[name] = zf.read(name)
     return out
 

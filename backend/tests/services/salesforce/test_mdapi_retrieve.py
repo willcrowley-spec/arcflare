@@ -24,6 +24,18 @@ def test_extract_zip_roundtrip():
     assert "nested/" not in extracted
 
 
+def test_extract_zip_rejects_path_traversal():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("good/file.txt", b"ok")
+        zf.writestr("../evil.txt", b"bad")
+        zf.writestr("/absolute.txt", b"bad")
+    result = _extract_zip(buf.getvalue())
+    assert "good/file.txt" in result
+    assert "../evil.txt" not in result
+    assert "/absolute.txt" not in result
+
+
 def test_check_mdapi_access_true():
     sf = MagicMock()
     sf.mdapi.describe_metadata.return_value = {"metadataObjects": []}
