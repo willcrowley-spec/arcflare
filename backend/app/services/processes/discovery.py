@@ -76,7 +76,7 @@ def _call_with_retry(
     operation: str,
     label: str,
     model_config: dict | None = None,
-    retries: int = 2,
+    retries: int = 4,
     budget_multiplier: float = 1.5,
 ) -> tuple[LLMResult, dict]:
     """LLM call with retry for transient errors and JSON parse failures.

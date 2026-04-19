@@ -55,20 +55,34 @@ class AdaptiveTokenRateLimiter:
         return max(0, self._tpm - self._total())
 
     async def acquire(self, estimated_tokens: int) -> None:
-        """Wait until the sliding window has room for ``estimated_tokens``."""
+        """Wait until the sliding window has room for ``estimated_tokens``.
+
+        If a single request exceeds the per-minute limit but the window
+        is empty, it's allowed through (it'll be the only call that minute).
+        This prevents oversized prompts from deadlocking the pipeline.
+        """
         while True:
             async with self._lock:
-                if estimated_tokens <= self._headroom():
+                current = self._total()
+                fits = estimated_tokens <= (self._tpm - current)
+                window_empty = current == 0
+
+                if fits or window_empty:
                     self._window.append((time.monotonic(), estimated_tokens))
+                    if not fits:
+                        logger.warning(
+                            "rate_limiter_oversized est=%d limit=%d (window empty, allowing)",
+                            estimated_tokens, self._tpm,
+                        )
                     return
 
-            sleep_for = 1.0
+            sleep_for = 2.0
             if self._window:
                 oldest = self._window[0][0]
                 expires_in = (oldest + _WINDOW_SECONDS) - time.monotonic()
-                sleep_for = max(0.5, min(expires_in + 0.1, 15.0))
+                sleep_for = max(1.0, min(expires_in + 0.5, 30.0))
 
-            logger.info(
+            logger.debug(
                 "rate_limiter_waiting est=%d used=%d/%d sleep=%.1fs",
                 estimated_tokens, self._total(), self._tpm, sleep_for,
             )
