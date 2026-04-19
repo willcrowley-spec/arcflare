@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -148,6 +149,7 @@ export default function PlatformDetailPage() {
   const [syncingId, setSyncingId] = useState<string | null>(null)
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null)
   const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
+  const qc = useQueryClient()
 
   const connectionsQuery = useConnections()
   const syncConnection = useSyncConnection()
@@ -168,6 +170,14 @@ export default function PlatformDetailPage() {
       setActiveSyncId(connectionId)
     }
   }, [connection?.status, connectionId, activeSyncId])
+
+  useEffect(() => {
+    if (syncStreamStatus === 'completed' || syncStreamStatus === 'failed') {
+      void qc.invalidateQueries({ queryKey: ['connections'] })
+      void qc.invalidateQueries({ queryKey: ['metadata'] })
+      void qc.invalidateQueries({ queryKey: ['organization'] })
+    }
+  }, [syncStreamStatus, qc])
 
   const hasConnection = !!connection && !!connectionId
   const cid = connectionId ?? ''

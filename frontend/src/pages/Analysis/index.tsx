@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { BarChart3, FileSpreadsheet, KeyRound, Link2, RefreshCw, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
@@ -78,6 +79,7 @@ export default function AnalysisPage() {
   const [showSyncModal, setShowSyncModal] = useState(false)
   const [showConnectModal, setShowConnectModal] = useState(false)
   const { events: syncEvents, status: syncStreamStatus, reset: resetSyncStream } = useSyncEventStream(activeSyncId)
+  const qc = useQueryClient()
 
   const connectionsQuery = useConnections()
   const initiateSalesforce = useInitiateSalesforce()
@@ -98,6 +100,14 @@ export default function AnalysisPage() {
       }
     }
   }, [connections, activeSyncId])
+
+  useEffect(() => {
+    if (syncStreamStatus === 'completed' || syncStreamStatus === 'failed') {
+      void qc.invalidateQueries({ queryKey: ['connections'] })
+      void qc.invalidateQueries({ queryKey: ['metadata'] })
+      void qc.invalidateQueries({ queryKey: ['organization'] })
+    }
+  }, [syncStreamStatus, qc])
 
   const hasConnections = connections.length > 0
 
