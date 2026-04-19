@@ -53,16 +53,21 @@ function HandoffEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
             ) : (
               <ArrowRightLeft className="h-2.5 w-2.5 opacity-50" />
             )}
-            <span className="max-w-[100px] truncate">{label}</span>
+            <span className="max-w-[140px] truncate">{label}</span>
           </div>
 
-          {hovered && description ? (
+          {hovered && (description || label.length > 16) ? (
             <div className="absolute left-1/2 top-full z-50 mt-2 -translate-x-1/2">
               <div className="w-64 rounded-lg border border-slate-200 bg-white p-3 shadow-xl ring-1 ring-slate-900/5">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                   {isGap ? 'Gap identified' : 'Handoff'}
                 </p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-700">{description}</p>
+                {label.length > 16 ? (
+                  <p className="mt-1 text-xs font-semibold text-navy-900">{label}</p>
+                ) : null}
+                {description ? (
+                  <p className={clsx('text-xs leading-relaxed text-slate-700', label.length > 16 ? 'mt-0.5' : 'mt-1')}>{description}</p>
+                ) : null}
               </div>
             </div>
           ) : null}

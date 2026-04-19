@@ -165,7 +165,7 @@ export async function computeElkLayout(
           extent: rfParentId ? 'parent' : undefined,
           data: {
             title: graphNode.name,
-            subtitle: (graphNode.description ?? '').slice(0, 80),
+            subtitle: graphNode.description ?? '',
             variant: 'process',
             processId: graphNode.id,
           } as StepNodeData,

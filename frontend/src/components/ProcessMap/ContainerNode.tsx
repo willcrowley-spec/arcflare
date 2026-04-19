@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import { ChevronDown } from 'lucide-react'
 import clsx from 'clsx'
@@ -25,6 +25,7 @@ function getDepthStyle(depth: number) {
 
 function ContainerNodeComponent({ data }: NodeProps<Node<ContainerNodeData>>) {
   const style = getDepthStyle(data.depth)
+  const [showTooltip, setShowTooltip] = useState(false)
 
   return (
     <div className={clsx('rounded-xl border overflow-hidden', style.border, style.body)} style={{ width: '100%', height: '100%' }}>
@@ -32,13 +33,20 @@ function ContainerNodeComponent({ data }: NodeProps<Node<ContainerNodeData>>) {
       <button
         type="button"
         onClick={() => data.onToggle?.(data.processId)}
-        className={clsx('flex w-full items-center gap-2 px-3 py-2 text-left', style.header)}
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
+        className={clsx('relative flex w-full items-center gap-2 px-3 py-2 text-left', style.header)}
       >
         <ChevronDown className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate text-xs font-semibold">{data.label}</span>
         <span className="ml-auto shrink-0 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-medium">
           {data.leafCount} steps
         </span>
+        {showTooltip && data.label.length > 30 ? (
+          <span className="absolute left-3 top-full z-50 mt-1 max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-navy-900 shadow-xl ring-1 ring-slate-900/5">
+            {data.label}
+          </span>
+        ) : null}
       </button>
       <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-0 !bg-slate-300" />
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ArrowRight, ChevronDown, Loader2, MessageSquareText, Undo2 } from 'lucide-react'
 import clsx from 'clsx'
 import { useGaps, useUpdateGap } from '@/hooks/useChat'
@@ -48,6 +48,49 @@ function interpolateTemplate(template: string, g: GapItem): string {
     .replace(/\{target_domain\}/g, g.target_domain_name ?? 'Unknown domain')
     .replace(/\{confidence\}/g, String(Math.round(g.confidence_score * 100)))
     .replace(/\{description\}/g, desc)
+}
+
+function ExpandableText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const ref = useRef<HTMLParagraphElement>(null)
+  const [clamped, setClamped] = useState(false)
+
+  const checkClamp = useCallback((el: HTMLParagraphElement | null) => {
+    ref.current = el
+    if (el) setClamped(el.scrollHeight > el.clientHeight + 2)
+  }, [])
+
+  return (
+    <div className="mt-2">
+      <p
+        ref={checkClamp}
+        className={clsx(
+          'text-sm leading-relaxed text-slate-600',
+          !expanded && 'line-clamp-3',
+        )}
+      >
+        {text}
+      </p>
+      {clamped && !expanded ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded(true) }}
+          className="mt-1 text-xs font-medium text-navy-700 hover:text-navy-900"
+        >
+          Show more
+        </button>
+      ) : null}
+      {expanded ? (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded(false) }}
+          className="mt-1 text-xs font-medium text-navy-700 hover:text-navy-900"
+        >
+          Show less
+        </button>
+      ) : null}
+    </div>
+  )
 }
 
 export function GapsPanel() {
@@ -218,7 +261,7 @@ export function GapsPanel() {
                     {g.source_process_name} → {g.target_process_name}
                   </p>
                   {g.description ? (
-                    <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">{g.description}</p>
+                    <ExpandableText text={g.description} />
                   ) : (
                     <p className="mt-2 text-sm italic text-slate-400">No description</p>
                   )}

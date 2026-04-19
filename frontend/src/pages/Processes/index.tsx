@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Eye,
   GitBranch,
   Layers,
   Sparkles,
@@ -308,6 +309,12 @@ export default function ProcessesPage() {
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {child.needs_review ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200/80">
+                        <Eye className="h-3 w-3" />
+                        Needs review
+                      </span>
+                    ) : null}
                     {childConf}
                     <StatusBadge status={childHealth} />
                   </div>
@@ -438,19 +445,22 @@ export default function ProcessesPage() {
               icon={Layers}
               label="Domain processes"
               value={String(discoveryKpis.domainCount)}
-              sublabel={`${discoveryKpis.totalProcesses} total in catalog`}
+              sublabel={`${discoveryKpis.totalProcesses} process steps in catalog`}
+              helpText="Domains are the top-level business areas (e.g. Sales, Finance). The step count includes all sub-processes and individual steps discovered within those domains."
             />
             <KpiCard
               icon={Activity}
               label="Needs review"
               value={String(discoveryKpis.needsReviewCount)}
               sublabel="Flagged during discovery"
+              helpText="Steps flagged by AI with low confidence scores or incomplete metadata. Expand a process below and look for amber-highlighted items. Use the Confirm or Reject buttons to review each one."
             />
             <KpiCard
               icon={AlertTriangle}
               label="Handoff gaps"
               value={String(discoveryKpis.gapCount)}
               sublabel="Cross-domain gaps detected"
+              helpText="Points where a process in one domain hands off to another domain but no clear automation or documented procedure exists. Use 'Chat with AI' on each gap to investigate and document the handoff."
             />
           </div>
 
