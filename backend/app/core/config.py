@@ -66,6 +66,12 @@ class Settings(BaseSettings):
 
     ARC_AGENT_NAME: str = Field(default="Arc", description="Display name for the chat agent")
 
+    S3_BUCKET: str = Field(default="", description="Railway Bucket name (S3-compatible)")
+    S3_ACCESS_KEY_ID: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
+    S3_SECRET_ACCESS_KEY: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
+    S3_ENDPOINT: str = Field(default="https://storage.railway.app", description="S3 endpoint URL")
+    S3_REGION: str = Field(default="auto", alias="AWS_DEFAULT_REGION")
+
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",

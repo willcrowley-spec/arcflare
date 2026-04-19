@@ -128,10 +128,9 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found")
 
     if doc.storage_path:
-        from pathlib import Path
+        from app.services.documents.storage import delete_from_bucket
 
-        path = Path(doc.storage_path)
-        path.unlink(missing_ok=True)
+        delete_from_bucket(doc.storage_path)
 
     await db.delete(doc)
     await db.commit()

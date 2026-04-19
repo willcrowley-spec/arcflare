@@ -5,14 +5,17 @@ from app.workers.celery_app import celery_app
 
 @celery_app.task(name="documents.vectorize_document")
 def vectorize_document_task(document_id: str) -> str:
-    """Parse document on disk, chunk, embed, extract concepts, detect communities."""
+    """Download document from S3, parse, chunk, embed, extract concepts, detect communities."""
     import asyncio
+    import tempfile
+    from pathlib import Path
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.core.database import engine
     from app.models.document import Document
     from app.services.documents.parser import parse_file
+    from app.services.documents.storage import download_from_bucket
     from app.services.extraction.chunker import chunk_document
     from app.services.documents.vectorizer import vectorize_chunks
     from app.services.documents.concepts import extract_and_store_concepts, compute_pmi_weights
@@ -26,40 +29,50 @@ def vectorize_document_task(document_id: str) -> str:
             doc = await session.get(Document, UUID(document_id))
             if doc is None or not doc.storage_path:
                 return
-            doc_id_str = str(doc.id)
-            elements = parse_file(doc.storage_path)
-            text_chunks = chunk_document(doc_id_str, elements)
-            chunks = [
-                {
-                    "chunk_index": c.chunk_index,
-                    "content": c.text,
-                    "page_number": c.page_number,
-                    "section_title": c.section_title,
-                    "metadata_json": {"token_count": c.token_count},
-                }
-                for c in text_chunks
-            ]
 
-            db_chunks = await vectorize_chunks(chunks, doc.id, session)
+            file_bytes = download_from_bucket(doc.storage_path)
+            suffix = Path(doc.filename).suffix
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            try:
+                tmp.write(file_bytes)
+                tmp.close()
 
-            chunk_dicts = [
-                {"content": c.get("content") or "", "chunk_db_id": db_chunks[i].id}
-                for i, c in enumerate(chunks)
-            ]
-            concept_count = await extract_and_store_concepts(
-                chunk_dicts, doc.id, doc.org_id, session
-            )
-            await compute_pmi_weights(doc.org_id, session)
+                doc_id_str = str(doc.id)
+                elements = parse_file(tmp.name)
+                text_chunks = chunk_document(doc_id_str, elements)
+                chunks = [
+                    {
+                        "chunk_index": c.chunk_index,
+                        "content": c.text,
+                        "page_number": c.page_number,
+                        "section_title": c.section_title,
+                        "metadata_json": {"token_count": c.token_count},
+                    }
+                    for c in text_chunks
+                ]
 
-            community_ids = await detect_communities(doc.org_id, session)
-            if community_ids:
-                await link_chunks_to_communities(doc.org_id, session)
+                db_chunks = await vectorize_chunks(chunks, doc.id, session)
 
-            doc.chunk_count = len(chunks)
-            doc.concept_count = concept_count
-            doc.community_ids = [str(cid) for cid in community_ids]
-            doc.status = "indexed"
-            await session.commit()
+                chunk_dicts = [
+                    {"content": c.get("content") or "", "chunk_db_id": db_chunks[i].id}
+                    for i, c in enumerate(chunks)
+                ]
+                concept_count = await extract_and_store_concepts(
+                    chunk_dicts, doc.id, doc.org_id, session
+                )
+                await compute_pmi_weights(doc.org_id, session)
+
+                community_ids = await detect_communities(doc.org_id, session)
+                if community_ids:
+                    await link_chunks_to_communities(doc.org_id, session)
+
+                doc.chunk_count = len(chunks)
+                doc.concept_count = concept_count
+                doc.community_ids = [str(cid) for cid in community_ids]
+                doc.status = "indexed"
+                await session.commit()
+            finally:
+                Path(tmp.name).unlink(missing_ok=True)
 
     try:
         with langfuse_context():

@@ -31,3 +31,4 @@ langfuse>=3.0.0,<4.0.0
 litellm>=1.63.0
 leidenalg>=0.10.0
 python-igraph>=0.11.0
+boto3>=1.35.0

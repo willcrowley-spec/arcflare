@@ -1,8 +1,8 @@
-"""Handle multipart uploads with content hashing and dedup."""
+"""Handle multipart uploads with content hashing, dedup, and S3 storage."""
 
 import hashlib
 import uuid
-from pathlib import Path
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from fastapi import UploadFile
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
+from app.services.documents.storage import make_s3_key, upload_to_bucket
 
 
 async def handle_upload(
@@ -17,30 +18,26 @@ async def handle_upload(
     org_id: UUID,
     user_id: UUID | None,
     db: AsyncSession,
-    upload_root: str = "uploads",
 ) -> tuple[Document, bool]:
-    """Stream upload to disk, compute hash, dedup, create Document record.
+    """Read upload into memory, hash, dedup, store in S3 bucket.
 
     Returns (document, is_new). If is_new is False, the returned document
-    is an existing duplicate and no file was written.
+    is an existing duplicate and nothing was uploaded.
     """
-    safe_name = Path(file.filename or "unnamed").name
+    safe_name = PurePosixPath(file.filename or "unnamed").name
     doc_id = uuid.uuid4()
-    dest_dir = Path(upload_root) / str(org_id)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = dest_dir / f"{doc_id}_{safe_name}"
 
     sha256 = hashlib.sha256()
-    size = 0
-    with dest_path.open("wb") as out:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            sha256.update(chunk)
-            out.write(chunk)
+    chunks: list[bytes] = []
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        sha256.update(chunk)
 
+    file_bytes = b"".join(chunks)
+    size = len(file_bytes)
     content_hash = sha256.hexdigest()
 
     existing = await db.scalar(
@@ -51,8 +48,10 @@ async def handle_upload(
         )
     )
     if existing:
-        dest_path.unlink(missing_ok=True)
         return existing, False
+
+    s3_key = make_s3_key(org_id, doc_id, safe_name)
+    upload_to_bucket(s3_key, file_bytes, content_type=file.content_type)
 
     from app.core.config import get_settings
     settings = get_settings()
@@ -63,7 +62,7 @@ async def handle_upload(
         filename=safe_name,
         mime_type=file.content_type,
         file_size_bytes=size,
-        storage_path=str(dest_path.resolve()),
+        storage_path=s3_key,
         status="uploaded",
         uploaded_by=user_id,
         tags=[],

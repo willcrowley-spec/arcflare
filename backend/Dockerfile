@@ -39,8 +39,6 @@ COPY app ./app
 COPY alembic.ini .
 COPY alembic ./alembic
 
-RUN mkdir -p /app/uploads && chown arcflare:arcflare /app/uploads
-
 USER arcflare
 
 EXPOSE 8000
