@@ -507,6 +507,36 @@ def pull_installed_packages(sf: Salesforce) -> list[dict]:
         return []
 
 
+def pull_custom_metadata_types(sf: Salesforce, objects_list: list[dict]) -> list[dict]:
+    """Pull Custom Metadata Type records for all __mdt objects in the org."""
+    cmdt_objects = [
+        o["name"] for o in objects_list
+        if o.get("name", "").endswith("__mdt") and o.get("queryable")
+    ]
+    if not cmdt_objects:
+        return []
+
+    results = []
+    for cmdt_name in cmdt_objects:
+        try:
+            result = sf.query_all(f"SELECT FIELDS(ALL) FROM {cmdt_name} LIMIT 200")
+            records = result.get("records", [])
+            field_names = []
+            if records:
+                field_names = [k for k in records[0].keys()
+                               if k != "attributes" and not k.startswith("_")]
+            results.append({
+                "metadata_type": cmdt_name,
+                "record_count": len(records),
+                "records": records,
+                "fields": field_names,
+            })
+        except Exception:
+            logger.debug("cmdt_query_skipped type=%s", cmdt_name)
+    logger.info("pull_custom_metadata_types count=%d", len(results))
+    return results
+
+
 def pull_usage_data(
     sf: Salesforce,
     object_names: list[str],
@@ -1031,6 +1061,26 @@ async def sync_metadata(
             )
         )
     _progress("installed_packages", "done", len(packages))
+
+    _progress("custom_metadata_types", "pulling", 0)
+    objects_list_raw = pull_object_list(sf)
+    cmdts = pull_custom_metadata_types(sf, objects_list_raw)
+    for cmdt in cmdts:
+        db.add(
+            MetadataComponent(
+                org_id=org_id,
+                connection_id=connection_id,
+                component_category="custom_metadata_type",
+                api_name=cmdt["metadata_type"],
+                label=cmdt["metadata_type"].replace("__mdt", "").replace("_", " "),
+                metadata_json={
+                    "record_count": cmdt["record_count"],
+                    "fields": cmdt["fields"],
+                    "records": cmdt["records"][:50],
+                },
+            )
+        )
+    _progress("custom_metadata_types", "done", len(cmdts))
 
     business_processes = _legacy_pull_business_processes(sf)
     for bp in business_processes:
