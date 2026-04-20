@@ -194,7 +194,7 @@ _COMPOSITE_BATCH_SIZE = 25
 
 def _composite_batch_post(sf: Salesforce, subrequests: list[dict]) -> list[dict]:
     """POST a composite batch and return the list of subrequest results."""
-    url = f"{sf.base_url}/composite/batch"
+    url = f"{sf.base_url.rstrip('/')}/composite/batch"
     payload = {"batchRequests": subrequests}
     resp = _sf_request_with_retry(sf.session.post, url, json=payload, timeout=120)
     resp.raise_for_status()
