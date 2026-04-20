@@ -670,6 +670,251 @@ async def build_stage3_4_prompt(
     )
 
 
+_V2_PHASE1_INSTRUCTIONS = """You are a senior business process analyst. Given the following information about an organization and its technology systems, identify the top-level business process domains.
+
+## Reasoning Instructions
+Before listing domains, reason step by step:
+1. What business capabilities does this organization's metadata reveal?
+2. Which clusters of metadata objects belong together by naming convention, shared relationships, or automation chains?
+3. Which document summaries describe end-to-end workflows?
+4. What are the natural boundaries between different business functions?
+
+## Domain Quality Criteria
+- Each domain should own 3-30 metadata objects. A domain with 1 object is too narrow. A domain with 50+ is too broad.
+- Domains must reflect business capabilities (e.g., "Customer Support Operations"), NOT platform product names (e.g., "Service Cloud").
+- Do NOT create catch-all domains like "General Administration".
+
+## Instructions
+For each domain:
+- Name it clearly (e.g., "Sales Operations", "Claims Processing")
+- Describe what it encompasses
+- List 3-8 key_objects: the Salesforce API names of objects CENTRAL to this domain (these drive retrieval)
+- List 3-6 key_terms: business terms associated with this domain (used for document search)
+- Rate your confidence from 0.0 to 1.0
+- Explain your reasoning briefly"""
+
+_V2_PHASE1_PROTOCOL = """Return a JSON object matching the enforced schema:
+{
+  "domains": [
+    {
+      "name": "string",
+      "description": "string",
+      "confidence": 0.0,
+      "key_objects": ["Lead", "Campaign"],
+      "key_terms": ["lead scoring", "qualification"],
+      "reasoning": "string"
+    }
+  ]
+}"""
+
+_V2_PHASE3_INSTRUCTIONS = """You are a senior business process analyst performing evidence-grounded process extraction. Given an evidence bundle for a single business domain, extract the complete process hierarchy.
+
+## CRITICAL: Citation Requirement
+Every process, step, actor, touchpoint, trigger, and decision MUST cite at least one evidence reference using the tagged IDs (e.g., [OBJ-1], [AUTO-3], [DOC-5]). Claims without citations will be rejected in verification.
+
+## Hierarchy
+- **Process** — a complete business workflow with a clear trigger and outcome. Has 2-8 children.
+- **Subprocess/Step** — atomic units of work or logical groupings within a process.
+
+## Extraction Rules
+1. Derive processes ONLY from the evidence provided. Do not hallucinate processes that have no metadata or document support.
+2. For system_touchpoints, reference SPECIFIC object names from the evidence. Do NOT invent names.
+3. If you cannot find evidence for a claim, do NOT include it. Absence is better than fabrication.
+4. Set needs_review=true for anything with confidence < 0.6.
+5. Value classification: VA = customer-facing value, BVA = business-necessary, NVA = waste/rework."""
+
+_V2_PHASE3_PROTOCOL = """Return a JSON object with "processes" array and optional "intra_domain_handoffs" array. Every item MUST include evidence_refs citing at least one tagged reference from the evidence bundle."""
+
+_V2_PHASE4_INSTRUCTIONS = """You are a verification analyst. Your job is to check whether evidence citations actually support the claims made about business processes.
+
+## Instructions
+For each claim-evidence pair below, determine:
+- CONFIRMED: The evidence directly and clearly supports the claim.
+- WEAK: The evidence is tangentially related but doesn't strongly support the specific claim.
+- UNSUPPORTED: The evidence does not support the claim at all, or the claim extrapolates well beyond what the evidence shows.
+
+Be skeptical. A claim that "Lead scoring happens nightly" requires evidence of a scheduled job, not just the existence of a score field."""
+
+_V2_PHASE4_PROTOCOL = """Return a JSON object with a "verifications" array. Each entry must have: process_name, claim, evidence_ref, verdict (CONFIRMED/WEAK/UNSUPPORTED), and reasoning."""
+
+_V2_PHASE5_INSTRUCTIONS = """You are a senior business process analyst performing cross-domain synthesis. You have verified process trees from multiple domains.
+
+## Instructions
+1. Identify cross-domain handoffs: where Domain A's output feeds Domain B's input. Cite evidence (e.g., shared objects, automations that bridge domains).
+2. Flag gaps: domains that logically should connect but share zero evidence.
+3. Categorize orphaned artifacts that no domain claimed.
+4. Write a 2-3 paragraph executive summary: (1) core value flow, (2) supporting operations, (3) gaps and automation opportunities.
+5. Generate a short narrative per domain."""
+
+_V2_PHASE5_PROTOCOL = """Return a JSON object with: cross_domain_handoffs, orphaned_artifacts, domain_narratives, executive_summary."""
+
+
+def _v2_phase1_dynamic(
+    org_context: dict,
+    object_inventory: list[dict],
+    metadata_community_summaries: list[dict],
+    document_community_summaries: list[dict],
+) -> str:
+    lines = [
+        f"## Organization\nName: {org_context.get('name', 'Unknown')}",
+        f"Industry: {org_context.get('industry', 'Unknown')}",
+        f"Business Model: {org_context.get('business_model', '')}",
+    ]
+    desc = org_context.get("description", "")
+    if desc:
+        lines.append(f"Description: {desc}")
+
+    lines.append(f"\n## Object Inventory ({len(object_inventory)} objects with data)")
+    for obj in object_inventory[:60]:
+        lines.append(f"  {obj['api_name']} — {obj.get('record_count', 0)} records")
+
+    if metadata_community_summaries:
+        lines.append("\n## Metadata Clusters (auto-detected)")
+        for mod in metadata_community_summaries[:10]:
+            label = mod.get("label", "Unnamed")
+            summary = mod.get("summary", "")
+            lines.append(f"  ### {label}")
+            if summary:
+                lines.append(f"  {summary}")
+
+    if document_community_summaries:
+        lines.append("\n## Document Themes")
+        for mod in document_community_summaries[:5]:
+            label = mod.get("label", "Unnamed")
+            summary = mod.get("summary", "")
+            lines.append(f"  ### {label}")
+            if summary:
+                lines.append(f"  {summary}")
+
+    return "\n".join(lines)
+
+
+async def build_v2_phase1_prompt(
+    org_id: UUID,
+    db: AsyncSession,
+    org_context: dict,
+    object_inventory: list[dict],
+    metadata_community_summaries: list[dict],
+    document_community_summaries: list[dict],
+) -> PromptParts:
+    """v2 Phase 1: Domain Discovery with key_objects and key_terms."""
+    blocks = await resolve_prompt_blocks("discovery_v2_domain", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE1_INSTRUCTIONS
+    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE1_PROTOCOL
+    context = _v2_phase1_dynamic(
+        org_context, object_inventory,
+        metadata_community_summaries, document_community_summaries,
+    )
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=context,
+        variable="",
+    )
+
+
+async def build_v2_phase3_prompt(
+    org_id: UUID,
+    db: AsyncSession,
+    domain: dict,
+    evidence_text: str,
+) -> PromptParts:
+    """v2 Phase 3: Per-domain extraction from evidence bundle."""
+    blocks = await resolve_prompt_blocks("discovery_v2_extraction", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE3_INSTRUCTIONS
+    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE3_PROTOCOL
+    task = (
+        f"Extract all business processes for the \"{domain['name']}\" domain. "
+        f"Domain description: {domain.get('description', '')}\n\n"
+        "Every process, step, actor, and touchpoint MUST cite at least one evidence reference."
+    )
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=evidence_text,
+        variable=task,
+    )
+
+
+async def build_v2_phase4_prompt(
+    org_id: UUID,
+    db: AsyncSession,
+    verification_pairs: list[dict],
+) -> PromptParts:
+    """v2 Phase 4: Evidence verification."""
+    blocks = await resolve_prompt_blocks("discovery_v2_verification", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE4_INSTRUCTIONS
+    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE4_PROTOCOL
+    pairs_text = []
+    for i, pair in enumerate(verification_pairs):
+        pairs_text.append(
+            f"--- Pair {i + 1} ---\n"
+            f"Process: {pair['process_name']}\n"
+            f"Claim: {pair['claim']}\n"
+            f"Evidence [{pair['evidence_ref']}]: {pair['evidence_text']}\n"
+        )
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context="",
+        variable="\n".join(pairs_text),
+    )
+
+
+async def build_v2_phase5_prompt(
+    org_id: UUID,
+    db: AsyncSession,
+    org_context: dict,
+    domain_summaries: list[dict],
+    cross_domain_edges: list[dict],
+    orphaned_objects: list[str],
+    orphaned_automations: list[str],
+) -> PromptParts:
+    """v2 Phase 5: Cross-domain synthesis."""
+    blocks = await resolve_prompt_blocks("discovery_v2_synthesis", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE5_INSTRUCTIONS
+    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE5_PROTOCOL
+
+    context_lines = [
+        f"## Organization: {org_context.get('name', 'Unknown')}",
+        f"Industry: {org_context.get('industry', 'Unknown')}",
+    ]
+
+    context_lines.append("\n## Verified Domain Process Trees")
+    for ds in domain_summaries:
+        context_lines.append(f"\n### {ds['domain_name']}")
+        for proc in ds.get("processes", []):
+            context_lines.append(f"  - {proc['name']} (confidence: {proc.get('confidence', 0)})")
+            key_objs = [
+                e.get("api_name", "") for e in proc.get("evidence_sources", [])
+                if e.get("type") == "metadata_object"
+            ]
+            if key_objs:
+                context_lines.append(f"    Objects: {', '.join(key_objs)}")
+
+    if cross_domain_edges:
+        context_lines.append("\n## Cross-Domain Dependency Edges")
+        for e in cross_domain_edges[:20]:
+            context_lines.append(
+                f"  {e['source']} ({e.get('source_domain', '?')}) → "
+                f"{e['target']} ({e.get('target_domain', '?')}) [{e.get('relationship', '')}]"
+            )
+
+    orphaned_section = []
+    if orphaned_objects:
+        orphaned_section.append("Objects: " + ", ".join(orphaned_objects[:30]))
+    if orphaned_automations:
+        orphaned_section.append("Automations: " + ", ".join(orphaned_automations[:30]))
+    if orphaned_section:
+        context_lines.append("\n## Unclaimed Artifacts")
+        context_lines.extend(orphaned_section)
+    else:
+        context_lines.append("\n## Unclaimed Artifacts\nAll artifacts are accounted for.")
+
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context="\n".join(context_lines),
+        variable="",
+    )
+
+
 async def build_pass3_prompt(
     org_id: UUID,
     db: AsyncSession,

@@ -8,12 +8,12 @@ import time
 from typing import Callable
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.observability import langfuse_score, langfuse_span as _lf_span
 from app.models.discovery import DiscoveryRun, ProcessHandoff
-from app.models.metadata import MetadataAutomation, MetadataObject
+from app.models.metadata import MetadataAutomation, MetadataDependency, MetadataObject
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.services.ai.router import LLMResult, PromptParts, llm_call, parse_json_response
 from app.services.processes.context import (
@@ -1554,6 +1554,626 @@ async def run_stage7(
         langfuse_score(name=f"discovery_{metric}", value=value)
 
     return quality_scores
+
+
+async def run_v2_phase1(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+    progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
+) -> tuple[list[dict], dict]:
+    """v2 Phase 1: Domain Discovery with key_objects and key_terms.
+
+    Returns (domain_dicts, org_ctx).
+    """
+    start = time.time()
+
+    with _lf_span("v2_phase1_domain_discovery", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
+        if progress_cb:
+            progress_cb("domain_discovery", "gathering", 0, 1)
+
+        org_ctx = await gather_org_context(org_id, db)
+
+        objects_q = await db.execute(
+            select(MetadataObject).where(
+                MetadataObject.org_id == org_id,
+                MetadataObject.record_count > 0,
+            ).order_by(MetadataObject.record_count.desc())
+        )
+        object_inventory = [
+            {"api_name": o.api_name, "label": o.label, "record_count": o.record_count}
+            for o in objects_q.scalars().all()
+        ]
+
+        org_desc = org_ctx.get("description") or org_ctx.get("name", "")
+        meta_summaries = await get_relevant_metadata_summaries(org_id, db, org_desc, limit=10)
+
+        from app.models.knowledge import Community
+        doc_summaries: list[dict] = []
+        try:
+            async with db.begin_nested():
+                dq = await db.execute(
+                    select(Community).where(
+                        Community.org_id == org_id,
+                        Community.source == "document",
+                        Community.summary.isnot(None),
+                    ).limit(5)
+                )
+                doc_summaries = [
+                    {"label": c.label, "summary": c.summary}
+                    for c in dq.scalars().all()
+                ]
+        except Exception:
+            logger.warning("v2_phase1_doc_community_failed", exc_info=True)
+
+        from app.services.processes.prompts import build_v2_phase1_prompt
+        prompt = await build_v2_phase1_prompt(
+            org_id, db, org_ctx, object_inventory, meta_summaries, doc_summaries,
+        )
+
+        result, parsed = await asyncio.to_thread(
+            _call_with_retry,
+            prompt=prompt, max_tokens=4000, tier="strong",
+            operation="discovery_v2_domain", label="v2_phase1",
+            model_config=model_config,
+        )
+
+        domains = parsed.get("domains", [])
+        if not isinstance(domains, list):
+            domains = []
+
+        logger.info(
+            "v2_phase1_complete org_id=%s run_id=%s domains=%d tokens_in=%d tokens_out=%d dur_ms=%d",
+            org_id, run_id, len(domains),
+            result.input_tokens, result.output_tokens,
+            int((time.time() - start) * 1000),
+        )
+
+        for domain in domains:
+            if not isinstance(domain, dict):
+                continue
+            confidence = float(domain.get("confidence", 0.5))
+            proc = BusinessProcess(
+                org_id=org_id,
+                name=str(domain.get("name", "Unnamed Domain"))[:255],
+                description=domain.get("description"),
+                level="domain",
+                parent_id=None,
+                confidence_score=confidence,
+                needs_review=confidence < NEEDS_REVIEW_CONFIDENCE,
+                narrative=domain.get("reasoning"),
+                status="discovered",
+                source="discovery",
+                discovery_run_id=run_id,
+                metadata_json={
+                    "key_objects": _as_list(domain.get("key_objects")),
+                    "key_terms": _as_list(domain.get("key_terms")),
+                },
+            )
+            db.add(proc)
+
+        await db.flush()
+
+        if progress_cb:
+            progress_cb("domain_discovery", "done", 1, 1)
+
+        return domains, org_ctx
+
+
+async def run_v2_phase2(
+    org_id: UUID,
+    db: AsyncSession,
+    domains: list[dict],
+    progress_cb: ProgressCallback = None,
+) -> list:
+    """v2 Phase 2: Evidence Assembly (no LLM). Returns list of EvidenceBundles."""
+    from app.services.processes.evidence import assemble_evidence_bundle, EvidenceBundle
+
+    if progress_cb:
+        progress_cb("evidence_assembly", "gathering", 0, len(domains))
+
+    bundles: list[EvidenceBundle] = []
+    for i, domain in enumerate(domains):
+        bundle = await assemble_evidence_bundle(org_id, db, domain)
+        bundles.append(bundle)
+        logger.info(
+            "v2_phase2_bundle domain=%s items=%d edges=%d",
+            domain.get("name", "?"), len(bundle.items), len(bundle.dependency_edges),
+        )
+        if progress_cb:
+            progress_cb("evidence_assembly", "gathering", i + 1, len(domains))
+
+    if progress_cb:
+        progress_cb("evidence_assembly", "done", len(domains), len(domains))
+
+    return bundles
+
+
+async def run_v2_phase3(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+    domains: list[dict],
+    bundles: list,
+    progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
+) -> list[dict]:
+    """v2 Phase 3: Per-domain extraction in parallel. Returns list of extraction results."""
+    from app.services.processes.prompts import build_v2_phase3_prompt
+
+    if progress_cb:
+        progress_cb("extraction", "running", 0, len(domains))
+
+    async def _extract_domain(domain: dict, bundle) -> dict:
+        evidence_text = bundle.as_tagged_text()
+        if not evidence_text.strip():
+            logger.warning("v2_phase3_empty_bundle domain=%s", domain.get("name", "?"))
+            return {"processes": [], "domain": domain}
+
+        prompt = await build_v2_phase3_prompt(org_id, db, domain, evidence_text)
+        result, parsed = await _async_llm_call(
+            prompt=prompt, max_tokens=8000, tier="fast",
+            operation="discovery_v2_extraction", label=f"v2_phase3_{domain.get('name', '?')}",
+            model_config=model_config,
+        )
+        logger.info(
+            "v2_phase3_domain_done domain=%s processes=%d tokens_in=%d tokens_out=%d",
+            domain.get("name", "?"),
+            len(parsed.get("processes", [])),
+            result.input_tokens, result.output_tokens,
+        )
+        parsed["domain"] = domain
+        return parsed
+
+    tasks = [_extract_domain(d, b) for d, b in zip(domains, bundles)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    extraction_results: list[dict] = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            logger.error("v2_phase3_failed domain=%s error=%s", domains[i].get("name"), r)
+            extraction_results.append({"processes": [], "domain": domains[i]})
+        else:
+            extraction_results.append(r)
+
+        if progress_cb:
+            progress_cb("extraction", "running", i + 1, len(domains))
+
+    if progress_cb:
+        progress_cb("extraction", "done", len(domains), len(domains))
+
+    return extraction_results
+
+
+async def run_v2_phase4(
+    org_id: UUID,
+    db: AsyncSession,
+    extraction_results: list[dict],
+    bundles: list,
+    progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
+) -> list[dict]:
+    """v2 Phase 4: Evidence verification in parallel. Returns updated extraction results."""
+    from app.services.processes.evidence import (
+        apply_verification_results,
+        build_verification_pairs,
+    )
+    from app.services.processes.prompts import build_v2_phase4_prompt
+
+    if progress_cb:
+        progress_cb("verification", "running", 0, len(extraction_results))
+
+    async def _verify_domain(extraction: dict, bundle) -> dict:
+        pairs = build_verification_pairs(bundle, extraction)
+        if not pairs:
+            return extraction
+
+        prompt = await build_v2_phase4_prompt(org_id, db, pairs)
+        result, parsed = await _async_llm_call(
+            prompt=prompt, max_tokens=4000, tier="fast",
+            operation="discovery_v2_verification",
+            label=f"v2_phase4_{extraction.get('domain', {}).get('name', '?')}",
+            model_config=model_config,
+        )
+
+        verifications = parsed.get("verifications", [])
+        if verifications:
+            updated, _ = apply_verification_results(extraction, verifications)
+            logger.info(
+                "v2_phase4_domain_done domain=%s verified=%d tokens_in=%d tokens_out=%d",
+                extraction.get("domain", {}).get("name", "?"),
+                len(verifications),
+                result.input_tokens, result.output_tokens,
+            )
+            return updated
+
+        logger.warning(
+            "v2_phase4_no_verifications domain=%s",
+            extraction.get("domain", {}).get("name", "?"),
+        )
+        return extraction
+
+    tasks = [_verify_domain(e, b) for e, b in zip(extraction_results, bundles)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    verified: list[dict] = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            logger.error(
+                "v2_phase4_failed domain=%s error=%s",
+                extraction_results[i].get("domain", {}).get("name"), r,
+            )
+            verified.append(extraction_results[i])
+        else:
+            verified.append(r)
+
+        if progress_cb:
+            progress_cb("verification", "running", i + 1, len(extraction_results))
+
+    if progress_cb:
+        progress_cb("verification", "done", len(extraction_results), len(extraction_results))
+
+    return verified
+
+
+async def run_v2_persist(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+    verified_results: list[dict],
+    bundles: list,
+) -> int:
+    """Persist v2 extraction results into BusinessProcess and ProcessHandoff rows.
+
+    Returns total process rows created.
+    """
+    from app.services.processes.evidence import resolve_evidence_refs
+
+    domains_q = await db.execute(
+        select(BusinessProcess).where(
+            BusinessProcess.org_id == org_id,
+            BusinessProcess.discovery_run_id == run_id,
+            BusinessProcess.level == "domain",
+        )
+    )
+    domain_rows = {p.name: p for p in domains_q.scalars().all()}
+    total_created = 0
+
+    for extraction, bundle in zip(verified_results, bundles):
+        domain_name = extraction.get("domain", {}).get("name", "")
+        domain_row = domain_rows.get(domain_name)
+        if not domain_row:
+            continue
+
+        for proc in extraction.get("processes", []):
+            evidence = resolve_evidence_refs(
+                bundle, proc.get("evidence_refs", [])
+            )
+            confidence = float(proc.get("confidence", 0.5))
+
+            proc_row = BusinessProcess(
+                org_id=org_id,
+                name=str(proc.get("name", "Unnamed"))[:255],
+                description=proc.get("description"),
+                narrative=proc.get("narrative"),
+                level="process",
+                parent_id=domain_row.id,
+                confidence_score=confidence,
+                needs_review=proc.get("needs_review", confidence < NEEDS_REVIEW_CONFIDENCE),
+                status="discovered",
+                source="discovery",
+                discovery_run_id=run_id,
+                actors=_as_list(proc.get("actors")),
+                trigger_conditions=_as_list(proc.get("trigger_conditions")),
+                system_touchpoints=_as_list(proc.get("system_touchpoints")),
+                decision_logic=_as_list(proc.get("decision_logic")),
+                success_criteria=_as_list(proc.get("success_criteria")),
+                failure_modes=_as_list(proc.get("failure_modes")),
+                value_classification=proc.get("value_classification"),
+                complexity_score=proc.get("complexity_score"),
+                automation_potential=proc.get("automation_potential"),
+                evidence_sources=evidence,
+                metadata_json={},
+            )
+            db.add(proc_row)
+            await db.flush()
+            total_created += 1
+
+            for child in proc.get("children", []):
+                child_evidence = resolve_evidence_refs(
+                    bundle, child.get("evidence_refs", [])
+                )
+                child_confidence = float(child.get("confidence", 0.5))
+                child_row = BusinessProcess(
+                    org_id=org_id,
+                    name=str(child.get("name", "Unnamed"))[:255],
+                    description=child.get("description"),
+                    level=child.get("level", "step"),
+                    parent_id=proc_row.id,
+                    confidence_score=child_confidence,
+                    needs_review=child.get("needs_review", child_confidence < NEEDS_REVIEW_CONFIDENCE),
+                    status="discovered",
+                    source="discovery",
+                    discovery_run_id=run_id,
+                    actors=_as_list(child.get("actors")),
+                    trigger_conditions=_as_list(child.get("trigger_conditions")),
+                    system_touchpoints=_as_list(child.get("system_touchpoints")),
+                    decision_logic=_as_list(child.get("decision_logic")),
+                    success_criteria=_as_list(child.get("success_criteria")),
+                    failure_modes=_as_list(child.get("failure_modes")),
+                    value_classification=child.get("value_classification"),
+                    complexity_score=child.get("complexity_score"),
+                    automation_potential=child.get("automation_potential"),
+                    estimated_duration=child.get("estimated_duration"),
+                    estimated_frequency=child.get("estimated_frequency"),
+                    evidence_sources=child_evidence,
+                    sequencing=child.get("sequencing", {}),
+                    metadata_json={},
+                )
+                db.add(child_row)
+                total_created += 1
+
+        for handoff in extraction.get("intra_domain_handoffs", []):
+            source_name = handoff.get("source", "")
+            target_name = handoff.get("target", "")
+            await db.flush()
+
+            src_q = await db.execute(
+                select(BusinessProcess.id).where(
+                    BusinessProcess.org_id == org_id,
+                    BusinessProcess.discovery_run_id == run_id,
+                    BusinessProcess.name == source_name,
+                ).limit(1)
+            )
+            tgt_q = await db.execute(
+                select(BusinessProcess.id).where(
+                    BusinessProcess.org_id == org_id,
+                    BusinessProcess.discovery_run_id == run_id,
+                    BusinessProcess.name == target_name,
+                ).limit(1)
+            )
+            src_row = src_q.scalar_one_or_none()
+            tgt_row = tgt_q.scalar_one_or_none()
+            if src_row and tgt_row:
+                h_evidence = resolve_evidence_refs(
+                    bundle, handoff.get("evidence_refs", [])
+                )
+                db.add(ProcessHandoff(
+                    org_id=org_id,
+                    source_process_id=src_row,
+                    target_process_id=tgt_row,
+                    handoff_type=handoff.get("type", "unknown"),
+                    description=handoff.get("description"),
+                    confidence_score=float(handoff.get("confidence", 0.5)),
+                    discovery_run_id=run_id,
+                    evidence_sources=h_evidence,
+                ))
+
+    await db.flush()
+    return total_created
+
+
+async def run_v2_phase5(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+    org_ctx: dict,
+    verified_results: list[dict],
+    bundles: list,
+    progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
+) -> dict:
+    """v2 Phase 5: Cross-domain synthesis. Returns synthesis dict."""
+    from app.services.processes.evidence import resolve_evidence_refs
+    from app.services.processes.prompts import build_v2_phase5_prompt
+
+    if progress_cb:
+        progress_cb("cross_domain_synthesis", "gathering", 0, 1)
+
+    domain_summaries = []
+    all_claimed_objects: set[str] = set()
+    all_claimed_autos: set[str] = set()
+
+    for extraction, bundle in zip(verified_results, bundles):
+        domain = extraction.get("domain", {})
+        procs_summary = []
+        for proc in extraction.get("processes", []):
+            evidence = resolve_evidence_refs(bundle, proc.get("evidence_refs", []))
+            procs_summary.append({
+                "name": proc.get("name", ""),
+                "confidence": proc.get("confidence", 0),
+                "evidence_sources": evidence,
+            })
+            for e in evidence:
+                if e.get("type") == "metadata_object":
+                    all_claimed_objects.add(e.get("api_name", ""))
+                elif e.get("type") == "automation":
+                    all_claimed_autos.add(e.get("api_name", ""))
+
+        domain_summaries.append({
+            "domain_name": domain.get("name", ""),
+            "processes": procs_summary,
+        })
+
+    all_obj_q = await db.execute(
+        select(MetadataObject.api_name).where(
+            MetadataObject.org_id == org_id,
+            MetadataObject.record_count > 0,
+        )
+    )
+    all_org_objects = {r[0] for r in all_obj_q.all()}
+    orphaned_objects = list(all_org_objects - all_claimed_objects)[:30]
+
+    all_auto_q = await db.execute(
+        select(MetadataAutomation.api_name).where(
+            MetadataAutomation.org_id == org_id,
+        )
+    )
+    all_org_autos = {r[0] for r in all_auto_q.all()}
+    orphaned_autos = list(all_org_autos - all_claimed_autos)[:30]
+
+    cross_edges = await _find_cross_domain_edges(org_id, db, verified_results)
+
+    prompt = await build_v2_phase5_prompt(
+        org_id, db, org_ctx, domain_summaries,
+        cross_edges, orphaned_objects, orphaned_autos,
+    )
+
+    result, parsed = await _async_llm_call(
+        prompt=prompt, max_tokens=6000, tier="fast",
+        operation="discovery_v2_synthesis", label="v2_phase5",
+        model_config=model_config,
+    )
+
+    logger.info(
+        "v2_phase5_complete org_id=%s handoffs=%d tokens_in=%d tokens_out=%d",
+        org_id,
+        len(parsed.get("cross_domain_handoffs", [])),
+        result.input_tokens, result.output_tokens,
+    )
+
+    for handoff in parsed.get("cross_domain_handoffs", []):
+        src_name = handoff.get("source_process", "")
+        tgt_name = handoff.get("target_process", "")
+        src_q = await db.execute(
+            select(BusinessProcess.id).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.name == src_name,
+            ).limit(1)
+        )
+        tgt_q = await db.execute(
+            select(BusinessProcess.id).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.name == tgt_name,
+            ).limit(1)
+        )
+        src_id = src_q.scalar_one_or_none()
+        tgt_id = tgt_q.scalar_one_or_none()
+        if src_id and tgt_id:
+            db.add(ProcessHandoff(
+                org_id=org_id,
+                source_process_id=src_id,
+                target_process_id=tgt_id,
+                handoff_type=handoff.get("type", "unknown"),
+                description=handoff.get("description"),
+                confidence_score=float(handoff.get("confidence", 0.5)),
+                is_gap=handoff.get("is_gap", False),
+                discovery_run_id=run_id,
+            ))
+
+    for dn in parsed.get("domain_narratives", []):
+        dname = dn.get("domain", "")
+        narrative = dn.get("narrative", "")
+        if dname and narrative:
+            dq = await db.execute(
+                select(BusinessProcess).where(
+                    BusinessProcess.org_id == org_id,
+                    BusinessProcess.discovery_run_id == run_id,
+                    BusinessProcess.level == "domain",
+                    BusinessProcess.name == dname,
+                ).limit(1)
+            )
+            domain_row = dq.scalar_one_or_none()
+            if domain_row:
+                domain_row.narrative = narrative
+
+    await db.flush()
+
+    if progress_cb:
+        progress_cb("cross_domain_synthesis", "done", 1, 1)
+
+    return parsed
+
+
+async def _find_cross_domain_edges(
+    org_id: UUID,
+    db: AsyncSession,
+    verified_results: list[dict],
+) -> list[dict]:
+    """Find MetadataDependency edges that bridge two different domains."""
+    domain_objects: dict[str, set[str]] = {}
+    for extraction in verified_results:
+        dname = extraction.get("domain", {}).get("name", "")
+        objs = set(extraction.get("domain", {}).get("key_objects", []))
+        domain_objects[dname] = objs
+
+    all_objects: set[str] = set()
+    for s in domain_objects.values():
+        all_objects.update(s)
+
+    if not all_objects:
+        return []
+
+    edges_q = await db.execute(
+        select(MetadataDependency).where(
+            MetadataDependency.org_id == org_id,
+            or_(
+                MetadataDependency.source_api_name.in_(all_objects),
+                MetadataDependency.target_api_name.in_(all_objects),
+            ),
+        ).limit(200)
+    )
+
+    cross: list[dict] = []
+    for e in edges_q.scalars().all():
+        src_domain = None
+        tgt_domain = None
+        for dname, objs in domain_objects.items():
+            if e.source_api_name in objs:
+                src_domain = dname
+            if e.target_api_name in objs:
+                tgt_domain = dname
+        if src_domain and tgt_domain and src_domain != tgt_domain:
+            cross.append({
+                "source": e.source_api_name,
+                "source_domain": src_domain,
+                "target": e.target_api_name,
+                "target_domain": tgt_domain,
+                "relationship": e.relationship_type,
+            })
+
+    return cross
+
+
+async def run_v2_quality_scoring(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+) -> dict:
+    """v2 Phase 6: Quality scoring with evidence coverage metrics."""
+    base_scores = await run_stage7(org_id, run_id, db)
+
+    all_procs_q = await db.execute(
+        select(BusinessProcess).where(
+            BusinessProcess.org_id == org_id,
+            BusinessProcess.discovery_run_id == run_id,
+            BusinessProcess.level.in_(["process", "subprocess", "step"]),
+        )
+    )
+    all_procs = all_procs_q.scalars().all()
+
+    if all_procs:
+        with_evidence = sum(1 for p in all_procs if p.evidence_sources)
+        evidence_coverage = with_evidence / len(all_procs)
+    else:
+        evidence_coverage = 0.0
+
+    base_scores["evidence_coverage"] = round(evidence_coverage, 3)
+
+    overall = base_scores.get("overall", 0.0)
+    base_scores["overall"] = round(overall * 0.8 + evidence_coverage * 0.2, 3)
+
+    run = await db.get(DiscoveryRun, run_id)
+    if run:
+        run.quality_scores = base_scores
+    await db.flush()
+
+    langfuse_score(name="discovery_evidence_coverage", value=evidence_coverage)
+
+    return base_scores
 
 
 async def cleanup_previous_run(org_id: UUID, db: AsyncSession) -> None:

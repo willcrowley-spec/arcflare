@@ -1,4 +1,4 @@
-"""Celery task for process discovery pipeline."""
+"""Celery task for process discovery pipeline (v2: evidence-grounded)."""
 import logging
 from uuid import UUID
 
@@ -9,10 +9,9 @@ logger = logging.getLogger(__name__)
 PHASES = [
     "context_gathering",
     "domain_discovery",
-    "structural_decomposition",
-    "step_enrichment",
-    "flow_analysis",
-    "validation",
+    "evidence_assembly",
+    "extraction",
+    "verification",
     "cross_domain_synthesis",
     "quality_scoring",
     "graph_generation",
@@ -47,17 +46,16 @@ def process_discovery_task(org_id: str) -> str:
         r.hset(run_key, f"phase:{phase}:count", str(count))
         r.hset(run_key, f"phase:{phase}:total", str(total))
 
-    def _discovery_progress_cb(phase: str, status: str, count: int, total: int) -> None:
-        redis_phase = {
+    def _progress_cb(phase: str, status: str, count: int, total: int) -> None:
+        mapped = {
             "domain_discovery": "domain_discovery",
-            "structural_decomposition": "structural_decomposition",
-            "step_enrichment": "step_enrichment",
-            "flow_analysis": "flow_analysis",
-            "validation": "validation",
+            "evidence_assembly": "evidence_assembly",
+            "extraction": "extraction",
+            "verification": "verification",
             "cross_domain_synthesis": "cross_domain_synthesis",
         }.get(phase)
-        if redis_phase:
-            _update(redis_phase, _map_discovery_status(status), count, total)
+        if mapped:
+            _update(mapped, _map_discovery_status(status), count, total)
 
     async def _pipeline() -> str:
         from datetime import datetime, timezone
@@ -68,12 +66,13 @@ def process_discovery_task(org_id: str) -> str:
         from app.models.discovery import DiscoveryRun
         from app.services.processes.discovery import (
             cleanup_previous_run,
-            run_stage1,
-            run_stage2,
-            run_stage3_4,
-            run_stage5,
-            run_stage6,
-            run_stage7,
+            run_v2_phase1,
+            run_v2_phase2,
+            run_v2_phase3,
+            run_v2_phase4,
+            run_v2_phase5,
+            run_v2_persist,
+            run_v2_quality_scoring,
         )
 
         settings = get_settings()
@@ -99,65 +98,62 @@ def process_discovery_task(org_id: str) -> str:
                     await session.commit()
                     _update("context_gathering", "done")
 
+                    # Phase 1: Domain Discovery
                     _update("domain_discovery", "pulling", 0, 1)
-                    domains, org_ctx, meta_summary = await run_stage1(
+                    domains, org_ctx = await run_v2_phase1(
                         UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                        progress_cb=_progress_cb, model_config=org_config,
                     )
                     await session.commit()
                     _update("domain_discovery", "done", len(domains), max(len(domains), 1))
 
-                    _update("structural_decomposition", "pulling", 0, max(len(domains), 1))
-                    process_count = await run_stage2(
-                        UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
+                    # Phase 2: Evidence Assembly (no LLM)
+                    _update("evidence_assembly", "pulling", 0, len(domains))
+                    bundles = await run_v2_phase2(
+                        UUID(org_id), session, domains,
+                        progress_cb=_progress_cb,
+                    )
+                    _update("evidence_assembly", "done", len(bundles), len(bundles))
+
+                    # Phase 3: Per-Domain Extraction (parallel)
+                    _update("extraction", "pulling", 0, len(domains))
+                    extraction_results = await run_v2_phase3(
+                        UUID(org_id), run_id, session, domains, bundles,
+                        progress_cb=_progress_cb, model_config=org_config,
+                    )
+                    _update("extraction", "done", len(extraction_results), len(extraction_results))
+
+                    # Phase 4: Evidence Verification (parallel)
+                    _update("verification", "pulling", 0, len(domains))
+                    verified_results = await run_v2_phase4(
+                        UUID(org_id), session, extraction_results, bundles,
+                        progress_cb=_progress_cb, model_config=org_config,
+                    )
+                    _update("verification", "done", len(verified_results), len(verified_results))
+
+                    # Persist extraction results
+                    process_count = await run_v2_persist(
+                        UUID(org_id), run_id, session, verified_results, bundles,
                     )
                     await session.commit()
-                    _update(
-                        "structural_decomposition", "done",
-                        process_count, max(process_count, 1),
-                    )
 
-                    _update("step_enrichment", "pulling", 0, 1)
-                    _update("flow_analysis", "pulling", 0, 1)
-                    enriched_count, handoff_count = await run_stage3_4(
-                        UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
-                    )
-                    await session.commit()
-                    _update(
-                        "step_enrichment", "done",
-                        enriched_count, max(enriched_count, 1),
-                    )
-                    _update(
-                        "flow_analysis", "done",
-                        handoff_count, max(handoff_count, 1),
-                    )
-
-                    _update("validation", "pulling", 0, 1)
-                    validation = await run_stage5(
-                        UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
-                        meta_summary=meta_summary,
-                    )
-                    await session.commit()
-                    critique_n = len(validation.get("critique", []))
-                    _update("validation", "done", critique_n, max(critique_n, 1))
-
+                    # Phase 5: Cross-Domain Synthesis
                     _update("cross_domain_synthesis", "pulling", 0, 1)
-                    synthesis = await run_stage6(
-                        UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
-                        meta_summary=meta_summary,
+                    synthesis = await run_v2_phase5(
+                        UUID(org_id), run_id, session, org_ctx,
+                        verified_results, bundles,
+                        progress_cb=_progress_cb, model_config=org_config,
                     )
                     await session.commit()
                     _update("cross_domain_synthesis", "done", 1, 1)
 
+                    # Phase 6: Quality Scoring
                     _update("quality_scoring", "pulling", 0, 1)
-                    quality = await run_stage7(UUID(org_id), run_id, session)
+                    quality = await run_v2_quality_scoring(UUID(org_id), run_id, session)
                     await session.commit()
                     _update("quality_scoring", "done", 1, 1)
 
+                    # Phase 7: Graph Generation
                     _update("graph_generation", "pulling")
                     from app.services.processes.graph import generate_graphs_for_run
                     graph_nodes = await generate_graphs_for_run(UUID(org_id), run_id, session)
@@ -169,26 +165,23 @@ def process_discovery_task(org_id: str) -> str:
                     run.pass_results = {
                         "domains": len(domains),
                         "processes": process_count,
-                        "enriched_steps": enriched_count,
-                        "domain_handoffs": handoff_count,
-                        "validation_issues": critique_n,
                         "executive_summary": synthesis.get("executive_summary", ""),
+                        "evidence_coverage": quality.get("evidence_coverage", 0),
                     }
                     run.stage_results = {
-                        "stage3_4_enriched": enriched_count,
-                        "stage3_4_handoffs": handoff_count,
-                        "stage5_critique_count": critique_n,
-                        "stage7_quality": quality,
+                        "v2_domains": len(domains),
+                        "v2_bundles": len(bundles),
+                        "v2_processes": process_count,
+                        "v2_handoffs": len(synthesis.get("cross_domain_handoffs", [])),
+                        "v2_quality": quality,
                     }
                     await session.commit()
 
                     r.hset(run_key, "status", "completed")
                     logger.info(
-                        "discovery_complete org=%s run=%s domains=%d processes=%d",
-                        org_id,
-                        run_id,
-                        len(domains),
-                        process_count,
+                        "v2_discovery_complete org=%s run=%s domains=%d processes=%d evidence_coverage=%.2f",
+                        org_id, run_id, len(domains), process_count,
+                        quality.get("evidence_coverage", 0),
                     )
                     return str(run_id)
 
@@ -215,7 +208,7 @@ def process_discovery_task(org_id: str) -> str:
 
     try:
         with langfuse_context(org_id=org_id):
-            with langfuse_span("process_discovery", metadata={"org_id": org_id}):
+            with langfuse_span("process_discovery_v2", metadata={"org_id": org_id}):
                 return asyncio.run(_pipeline())
     finally:
         flush_langfuse()

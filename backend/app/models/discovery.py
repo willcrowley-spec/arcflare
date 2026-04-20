@@ -87,6 +87,9 @@ class ProcessHandoff(Base):
     metadata_json: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    evidence_sources: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
 
     source_process: Mapped["BusinessProcess"] = relationship(
         "BusinessProcess", foreign_keys=[source_process_id]

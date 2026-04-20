@@ -471,6 +471,259 @@ DISCOVERY_ENRICHMENT_FLOW_SCHEMA: dict = {
 }
 
 
+_EVIDENCE_REF = {"type": "string", "description": "Tagged ref like OBJ-1, AUTO-3, DOC-5"}
+
+_EVIDENCE_REF_ARRAY = {"type": "array", "items": _EVIDENCE_REF}
+
+_V2_ACTOR = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string", "enum": ["user", "integration", "system"]},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["name", "type"],
+    "additionalProperties": False,
+}
+
+_V2_TRIGGER = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["description"],
+    "additionalProperties": False,
+}
+
+_V2_TOUCHPOINT = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string", "enum": ["object", "automation", "component", "integration"]},
+        "operation": {"type": "string", "enum": ["read", "write", "create", "trigger"]},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["name", "type"],
+    "additionalProperties": False,
+}
+
+_V2_DECISION = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["description"],
+    "additionalProperties": False,
+}
+
+_V2_SUCCESS = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["description"],
+    "additionalProperties": False,
+}
+
+_V2_FAILURE = {
+    "type": "object",
+    "properties": {
+        "mode": {"type": "string"},
+        "impact": {"type": "string"},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+    },
+    "required": ["mode"],
+    "additionalProperties": False,
+}
+
+_V2_CHILD = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "level": {"type": "string", "enum": ["subprocess", "step"]},
+        "description": {"type": "string"},
+        "evidence_refs": _EVIDENCE_REF_ARRAY,
+        "actors": {"type": "array", "items": _V2_ACTOR},
+        "trigger_conditions": {"type": "array", "items": _V2_TRIGGER},
+        "system_touchpoints": {"type": "array", "items": _V2_TOUCHPOINT},
+        "decision_logic": {"type": "array", "items": _V2_DECISION},
+        "success_criteria": {"type": "array", "items": _V2_SUCCESS},
+        "failure_modes": {"type": "array", "items": _V2_FAILURE},
+        "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+        "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+        "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+        "estimated_duration": {"type": "string", "enum": ["minutes", "hours", "days"]},
+        "estimated_frequency": {"type": "string", "enum": ["per_transaction", "daily", "weekly", "monthly"]},
+        "confidence": {"type": "number"},
+        "needs_review": {"type": "boolean"},
+        "sequencing": {
+            "type": "object",
+            "properties": {
+                "position": {"type": "integer"},
+                "parallel_group": {"type": ["string", "null"]},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["name", "level", "description", "evidence_refs"],
+    "additionalProperties": False,
+}
+
+DISCOVERY_V2_DOMAIN_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "domains": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "key_objects": {"type": "array", "items": {"type": "string"}},
+                    "key_terms": {"type": "array", "items": {"type": "string"}},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["name", "description", "confidence", "key_objects", "key_terms", "reasoning"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["domains"],
+    "additionalProperties": False,
+}
+
+DISCOVERY_V2_EXTRACTION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "processes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "level": {"type": "string", "enum": ["process"]},
+                    "description": {"type": "string"},
+                    "narrative": {"type": "string"},
+                    "evidence_refs": _EVIDENCE_REF_ARRAY,
+                    "confidence": {"type": "number"},
+                    "needs_review": {"type": "boolean"},
+                    "actors": {"type": "array", "items": _V2_ACTOR},
+                    "trigger_conditions": {"type": "array", "items": _V2_TRIGGER},
+                    "system_touchpoints": {"type": "array", "items": _V2_TOUCHPOINT},
+                    "decision_logic": {"type": "array", "items": _V2_DECISION},
+                    "success_criteria": {"type": "array", "items": _V2_SUCCESS},
+                    "failure_modes": {"type": "array", "items": _V2_FAILURE},
+                    "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+                    "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                    "children": {"type": "array", "items": _V2_CHILD},
+                },
+                "required": ["name", "description", "evidence_refs", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+        "intra_domain_handoffs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                    "description": {"type": "string"},
+                    "evidence_refs": _EVIDENCE_REF_ARRAY,
+                    "confidence": {"type": "number"},
+                },
+                "required": ["source", "target", "type"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["processes"],
+    "additionalProperties": False,
+}
+
+DISCOVERY_V2_VERIFICATION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "verifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "process_name": {"type": "string"},
+                    "claim": {"type": "string"},
+                    "evidence_ref": {"type": "string"},
+                    "verdict": {"type": "string", "enum": ["CONFIRMED", "WEAK", "UNSUPPORTED"]},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["process_name", "claim", "evidence_ref", "verdict", "reasoning"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["verifications"],
+    "additionalProperties": False,
+}
+
+DISCOVERY_V2_SYNTHESIS_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "cross_domain_handoffs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_domain": {"type": "string"},
+                    "source_process": {"type": "string"},
+                    "target_domain": {"type": "string"},
+                    "target_process": {"type": "string"},
+                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                    "is_gap": {"type": "boolean"},
+                    "confidence": {"type": "number"},
+                    "description": {"type": "string"},
+                    "evidence_refs": _EVIDENCE_REF_ARRAY,
+                },
+                "required": ["source_process", "target_process", "type"],
+                "additionalProperties": False,
+            },
+        },
+        "orphaned_artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["object", "automation", "component"]},
+                    "api_name": {"type": "string"},
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["type", "api_name"],
+                "additionalProperties": False,
+            },
+        },
+        "domain_narratives": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "domain": {"type": "string"},
+                    "narrative": {"type": "string"},
+                },
+                "required": ["domain", "narrative"],
+                "additionalProperties": False,
+            },
+        },
+        "executive_summary": {"type": "string"},
+    },
+    "required": ["cross_domain_handoffs", "executive_summary"],
+    "additionalProperties": False,
+}
+
+
 OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_domain": DISCOVERY_DOMAIN_SCHEMA,
     "discovery_structure": DISCOVERY_STRUCTURE_SCHEMA,
@@ -479,6 +732,10 @@ OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_enrichment_flow": DISCOVERY_ENRICHMENT_FLOW_SCHEMA,
     "discovery_validation": DISCOVERY_VALIDATION_SCHEMA,
     "discovery_synthesis": DISCOVERY_SYNTHESIS_SCHEMA,
+    "discovery_v2_domain": DISCOVERY_V2_DOMAIN_SCHEMA,
+    "discovery_v2_extraction": DISCOVERY_V2_EXTRACTION_SCHEMA,
+    "discovery_v2_verification": DISCOVERY_V2_VERIFICATION_SCHEMA,
+    "discovery_v2_synthesis": DISCOVERY_V2_SYNTHESIS_SCHEMA,
 }
 
 

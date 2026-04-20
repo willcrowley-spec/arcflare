@@ -47,6 +47,7 @@ class ProcessResponse(BaseModel):
     estimated_duration: str | None = None
     estimated_frequency: str | None = None
     sequencing: dict = {}
+    evidence_sources: list = []
 
 
 class ProcessCreate(BaseModel):

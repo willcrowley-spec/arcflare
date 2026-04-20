@@ -92,6 +92,9 @@ class BusinessProcess(Base):
     domain_map_positions: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    evidence_sources: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
 
     organization: Mapped["Organization"] = relationship("Organization")
     children: Mapped[list["BusinessProcess"]] = relationship(

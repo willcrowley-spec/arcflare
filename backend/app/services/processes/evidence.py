@@ -1,0 +1,594 @@
+"""Evidence assembly, tagging, and resolution for discovery pipeline v2.
+
+Phase 2 (assembly): graph traversal + vector search → focused evidence bundles.
+Phase 4 (resolution): maps LLM-emitted tagged refs back to DB UUIDs for storage.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from uuid import UUID
+
+import sqlalchemy as sa
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.document import Document, DocumentChunk
+from app.models.metadata import (
+    MetadataAutomation,
+    MetadataComponent,
+    MetadataDependency,
+    MetadataField,
+    MetadataObject,
+)
+
+logger = logging.getLogger(__name__)
+
+MAX_FIELDS_PER_OBJECT = 25
+MAX_EDGES = 150
+MAX_DOC_CHUNKS_PER_DOMAIN = 8
+MAX_BUNDLE_ITEMS = 40
+
+
+@dataclass
+class EvidenceItem:
+    tag: str
+    type: str
+    id: str
+    api_name: str = ""
+    label: str = ""
+    category: str = ""
+    document_id: str = ""
+    document_name: str = ""
+    excerpt: str = ""
+    content: str = ""
+
+
+@dataclass
+class EvidenceBundle:
+    domain: dict
+    items: list[EvidenceItem] = field(default_factory=list)
+    dependency_edges: list[dict] = field(default_factory=list)
+    community_summary: str | None = None
+
+    def as_tagged_text(self) -> str:
+        """Render the bundle as tagged text for the LLM prompt."""
+        sections: list[str] = []
+
+        objects = [i for i in self.items if i.type == "metadata_object"]
+        automations = [i for i in self.items if i.type == "automation"]
+        components = [i for i in self.items if i.type == "component"]
+        doc_chunks = [i for i in self.items if i.type == "document_chunk"]
+
+        if objects:
+            lines = ["## Metadata Objects"]
+            for item in objects:
+                lines.append(f"[{item.tag}] {item.api_name} ({item.label})")
+                if item.content:
+                    lines.append(item.content)
+            sections.append("\n".join(lines))
+
+        if automations:
+            lines = ["## Automations"]
+            for item in automations:
+                lines.append(f"[{item.tag}] {item.api_name} ({item.label})")
+                if item.content:
+                    lines.append(item.content)
+            sections.append("\n".join(lines))
+
+        if components:
+            lines = ["## Components"]
+            for item in components:
+                lines.append(f"[{item.tag}] {item.api_name} ({item.label})")
+                if item.content:
+                    lines.append(item.content)
+            sections.append("\n".join(lines))
+
+        if doc_chunks:
+            lines = ["## Document Passages"]
+            for item in doc_chunks:
+                lines.append(f"[{item.tag}] from \"{item.document_name}\"")
+                lines.append(item.content)
+            sections.append("\n".join(lines))
+
+        if self.dependency_edges:
+            edge_lines = ["## Dependency Edges"]
+            for e in self.dependency_edges[:30]:
+                edge_lines.append(
+                    f"  {e['source']} ({e['source_type']}) "
+                    f"—[{e['relationship']}]→ "
+                    f"{e['target']} ({e['target_type']})"
+                )
+            sections.append("\n".join(edge_lines))
+
+        if self.community_summary:
+            sections.append(f"## Community Context\n{self.community_summary}")
+
+        return "\n\n".join(sections)
+
+    def tag_index(self) -> dict[str, EvidenceItem]:
+        return {item.tag: item for item in self.items}
+
+
+async def assemble_evidence_bundle(
+    org_id: UUID,
+    db: AsyncSession,
+    domain: dict,
+) -> EvidenceBundle:
+    """Phase 2: assemble a focused evidence bundle for one domain.
+
+    Uses graph traversal from key_objects through MetadataDependency,
+    then loads object/automation/component details and runs vector
+    search for document chunks.
+    """
+    bundle = EvidenceBundle(domain=domain)
+    key_objects = domain.get("key_objects", [])
+    key_terms = domain.get("key_terms", [])
+    domain_name = domain.get("name", "")
+
+    expanded_objects = set(key_objects)
+    auto_names: set[str] = set()
+    comp_names: set[str] = set()
+
+    if key_objects:
+        edges = await _expand_via_graph(org_id, db, key_objects)
+        bundle.dependency_edges = edges
+        for e in edges:
+            if e["target_type"] == "object":
+                expanded_objects.add(e["target"])
+            elif e["target_type"] in ("flow", "workflow", "trigger", "validation"):
+                auto_names.add(e["target"])
+            elif e["target_type"] in ("apex_class", "component"):
+                comp_names.add(e["target"])
+            if e["source_type"] == "object":
+                expanded_objects.add(e["source"])
+            elif e["source_type"] in ("flow", "workflow", "trigger", "validation"):
+                auto_names.add(e["source"])
+
+    obj_idx = 0
+    if expanded_objects:
+        obj_idx = await _load_objects(org_id, db, list(expanded_objects), bundle)
+
+    auto_idx = obj_idx
+    if auto_names or key_objects:
+        auto_idx = await _load_automations(org_id, db, auto_names, key_objects, bundle, start_idx=obj_idx)
+
+    comp_idx = auto_idx
+    if comp_names:
+        comp_idx = await _load_components(org_id, db, comp_names, bundle, start_idx=auto_idx)
+
+    queries = [f"{domain_name} business process"]
+    if key_terms:
+        queries.append(" ".join(key_terms[:5]))
+    await _load_document_chunks(org_id, db, queries, bundle, start_idx=comp_idx)
+
+    bundle.community_summary = await _load_community_summary(
+        org_id, db, expanded_objects
+    )
+
+    return bundle
+
+
+async def _expand_via_graph(
+    org_id: UUID,
+    db: AsyncSession,
+    seed_objects: list[str],
+    max_hops: int = 2,
+) -> list[dict]:
+    """Expand seed objects through MetadataDependency edges (up to max_hops)."""
+    visited_sources: set[str] = set()
+    current_seeds = set(seed_objects)
+    all_edges: list[dict] = []
+
+    for _hop in range(max_hops):
+        if not current_seeds:
+            break
+        q = await db.execute(
+            select(MetadataDependency).where(
+                MetadataDependency.org_id == org_id,
+                sa.or_(
+                    MetadataDependency.source_api_name.in_(current_seeds),
+                    MetadataDependency.target_api_name.in_(current_seeds),
+                ),
+            ).limit(MAX_EDGES)
+        )
+        edges = q.scalars().all()
+        next_seeds: set[str] = set()
+        for e in edges:
+            edge_dict = {
+                "source": e.source_api_name,
+                "source_type": e.source_type,
+                "relationship": e.relationship_type,
+                "target": e.target_api_name,
+                "target_type": e.target_type,
+            }
+            if e.source_api_name not in visited_sources:
+                all_edges.append(edge_dict)
+            next_seeds.add(e.target_api_name)
+            next_seeds.add(e.source_api_name)
+        visited_sources.update(current_seeds)
+        current_seeds = next_seeds - visited_sources
+
+    return all_edges[:MAX_EDGES]
+
+
+async def _load_objects(
+    org_id: UUID,
+    db: AsyncSession,
+    object_names: list[str],
+    bundle: EvidenceBundle,
+) -> int:
+    """Load MetadataObject details into the bundle. Returns next index."""
+    q = await db.execute(
+        select(MetadataObject).where(
+            MetadataObject.org_id == org_id,
+            MetadataObject.api_name.in_(object_names),
+        )
+    )
+    objects = q.scalars().all()
+
+    obj_ids = [o.id for o in objects]
+    fields_by_obj: dict[UUID, list] = {oid: [] for oid in obj_ids}
+    if obj_ids:
+        fq = await db.execute(
+            select(MetadataField).where(
+                MetadataField.object_id.in_(obj_ids),
+            ).limit(MAX_FIELDS_PER_OBJECT * len(obj_ids))
+        )
+        for f in fq.scalars().all():
+            bucket = fields_by_obj.get(f.object_id)
+            if bucket is not None and len(bucket) < MAX_FIELDS_PER_OBJECT:
+                bucket.append(f)
+
+    idx = 0
+    for o in objects:
+        if idx >= MAX_BUNDLE_ITEMS:
+            break
+        fields = fields_by_obj.get(o.id, [])
+        custom_fields = [f for f in fields if f.is_custom]
+        relationships = [f for f in fields if f.relationship_to]
+
+        content_lines = [f"  Records: {o.record_count or 0}"]
+        if relationships:
+            rel_strs = [f"{f.api_name}→{f.relationship_to}" for f in relationships[:10]]
+            content_lines.append(f"  Relationships: {', '.join(rel_strs)}")
+        if custom_fields:
+            cf_strs = [f"{f.api_name} ({f.field_type})" for f in custom_fields[:15]]
+            content_lines.append(f"  Custom fields: {', '.join(cf_strs)}")
+
+        rt = (o.metadata_json or {}).get("record_types", [])
+        if rt:
+            content_lines.append(f"  Record types: {', '.join(str(r) for r in rt[:5])}")
+
+        bundle.items.append(EvidenceItem(
+            tag=f"OBJ-{idx}",
+            type="metadata_object",
+            id=str(o.id),
+            api_name=o.api_name,
+            label=o.label or o.api_name,
+            content="\n".join(content_lines),
+        ))
+        idx += 1
+
+    return idx
+
+
+async def _load_automations(
+    org_id: UUID,
+    db: AsyncSession,
+    auto_names: set[str],
+    key_objects: list[str],
+    bundle: EvidenceBundle,
+    start_idx: int = 0,
+) -> int:
+    """Load automations into the bundle. Returns next index."""
+    conditions = [MetadataAutomation.org_id == org_id]
+    if auto_names and key_objects:
+        conditions.append(sa.or_(
+            MetadataAutomation.api_name.in_(auto_names),
+            MetadataAutomation.related_object.in_(key_objects),
+        ))
+    elif auto_names:
+        conditions.append(MetadataAutomation.api_name.in_(auto_names))
+    elif key_objects:
+        conditions.append(MetadataAutomation.related_object.in_(key_objects))
+    else:
+        return start_idx
+
+    q = await db.execute(select(MetadataAutomation).where(*conditions).limit(MAX_BUNDLE_ITEMS))
+    idx = start_idx
+    for a in q.scalars().all():
+        if idx >= MAX_BUNDLE_ITEMS:
+            break
+        meta = a.metadata_json or {}
+        content_lines = [f"  Type: {a.automation_type}"]
+        if a.related_object:
+            content_lines.append(f"  Object: {a.related_object}")
+        desc = meta.get("description", "")
+        if desc:
+            content_lines.append(f"  {desc[:200]}")
+
+        bundle.items.append(EvidenceItem(
+            tag=f"AUTO-{idx - start_idx}",
+            type="automation",
+            id=str(a.id),
+            api_name=a.api_name,
+            label=a.label or a.api_name,
+            content="\n".join(content_lines),
+        ))
+        idx += 1
+
+    return idx
+
+
+async def _load_components(
+    org_id: UUID,
+    db: AsyncSession,
+    comp_names: set[str],
+    bundle: EvidenceBundle,
+    start_idx: int = 0,
+) -> int:
+    """Load components into the bundle. Returns next index."""
+    if not comp_names:
+        return start_idx
+
+    q = await db.execute(
+        select(MetadataComponent).where(
+            MetadataComponent.org_id == org_id,
+            MetadataComponent.api_name.in_(comp_names),
+        ).limit(15)
+    )
+    idx = start_idx
+    for c in q.scalars().all():
+        if idx >= MAX_BUNDLE_ITEMS:
+            break
+        meta = c.metadata_json or {}
+        content = f"  Category: {c.component_category}"
+        desc = meta.get("description", "")
+        if desc:
+            content += f"\n  {desc[:200]}"
+
+        bundle.items.append(EvidenceItem(
+            tag=f"COMP-{idx - start_idx}",
+            type="component",
+            id=str(c.id),
+            api_name=c.api_name,
+            label=c.label or c.api_name,
+            category=c.component_category or "",
+            content=content,
+        ))
+        idx += 1
+
+    return idx
+
+
+async def _load_document_chunks(
+    org_id: UUID,
+    db: AsyncSession,
+    queries: list[str],
+    bundle: EvidenceBundle,
+    start_idx: int = 0,
+) -> int:
+    """Vector-search for document chunks and add to bundle."""
+    from app.services.processes.context import batch_semantic_search
+
+    try:
+        results = await batch_semantic_search(
+            org_id, db, queries, limit=MAX_DOC_CHUNKS_PER_DOMAIN
+        )
+    except Exception as exc:
+        logger.warning("evidence_doc_search_failed org_id=%s error=%s", org_id, exc)
+        return start_idx
+
+    doc_name_cache: dict[str, str] = {}
+    seen_chunk_ids: set[str] = set()
+    idx = start_idx
+    doc_idx = 0
+
+    for chunk_list in results:
+        for chunk in chunk_list:
+            chunk_id = chunk.get("chunk_id", "")
+            if chunk_id in seen_chunk_ids:
+                continue
+            seen_chunk_ids.add(chunk_id)
+
+            doc_id = chunk.get("document_id", "")
+            if doc_id not in doc_name_cache:
+                doc_name_cache[doc_id] = await _get_document_name(db, doc_id)
+
+            content = (chunk.get("content") or "")[:600]
+            bundle.items.append(EvidenceItem(
+                tag=f"DOC-{doc_idx}",
+                type="document_chunk",
+                id=chunk_id,
+                document_id=doc_id,
+                document_name=doc_name_cache[doc_id],
+                content=content,
+                excerpt=content[:200],
+            ))
+            doc_idx += 1
+            idx += 1
+            if doc_idx >= MAX_DOC_CHUNKS_PER_DOMAIN:
+                return idx
+
+    return idx
+
+
+async def _get_document_name(db: AsyncSession, doc_id: str) -> str:
+    try:
+        doc = await db.get(Document, UUID(doc_id))
+        return doc.filename if doc else "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+async def _load_community_summary(
+    org_id: UUID,
+    db: AsyncSession,
+    object_names: set[str],
+) -> str | None:
+    """Find the metadata community whose members best overlap with our objects."""
+    if not object_names:
+        return None
+
+    from app.models.knowledge import Community
+
+    try:
+        async with db.begin_nested():
+            q = await db.execute(
+                select(Community).where(
+                    Community.org_id == org_id,
+                    Community.source == "metadata",
+                    Community.summary.isnot(None),
+                ).limit(20)
+            )
+            communities = q.scalars().all()
+    except Exception:
+        logger.warning("community_load_failed org_id=%s", org_id, exc_info=True)
+        return None
+
+    if not communities:
+        return None
+
+    typed_names = {f"object:{n}" for n in object_names}
+    best_overlap = 0
+    best_summary = None
+    for comm in communities:
+        members = set(comm.member_concept_ids or [])
+        overlap = len(members & typed_names)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_summary = comm.summary
+
+    return best_summary
+
+
+def resolve_evidence_refs(
+    bundle: EvidenceBundle,
+    evidence_refs: list[str],
+    verifications: dict[str, str] | None = None,
+) -> list[dict]:
+    """Convert tagged refs (OBJ-1, AUTO-3, DOC-5) to stored evidence_sources entries.
+
+    Drops refs that failed verification (verdict=UNSUPPORTED).
+    """
+    tag_idx = bundle.tag_index()
+    sources: list[dict] = []
+
+    for ref in evidence_refs:
+        if verifications and verifications.get(ref) == "UNSUPPORTED":
+            continue
+
+        item = tag_idx.get(ref)
+        if not item:
+            continue
+
+        confidence = 0.9
+        if verifications:
+            verdict = verifications.get(ref, "CONFIRMED")
+            if verdict == "WEAK":
+                confidence = 0.5
+            elif verdict == "UNSUPPORTED":
+                continue
+
+        entry: dict = {"type": item.type, "relevance": "", "confidence": confidence}
+
+        if item.type == "metadata_object":
+            entry.update({"id": item.id, "api_name": item.api_name, "label": item.label})
+        elif item.type == "automation":
+            entry.update({"id": item.id, "api_name": item.api_name, "label": item.label})
+        elif item.type == "component":
+            entry.update({"id": item.id, "api_name": item.api_name, "category": item.category})
+        elif item.type == "document_chunk":
+            entry.update({
+                "chunk_id": item.id,
+                "document_id": item.document_id,
+                "document_name": item.document_name,
+                "excerpt": item.excerpt[:200],
+            })
+
+        sources.append(entry)
+
+    return sources
+
+
+def build_verification_pairs(
+    bundle: EvidenceBundle,
+    extraction_result: dict,
+) -> list[dict]:
+    """Build claim-evidence pairs for the verification LLM call."""
+    tag_idx = bundle.tag_index()
+    pairs: list[dict] = []
+
+    for proc in extraction_result.get("processes", []):
+        proc_name = proc.get("name", "")
+
+        for ref in proc.get("evidence_refs", []):
+            item = tag_idx.get(ref)
+            if not item:
+                continue
+            pairs.append({
+                "process_name": proc_name,
+                "claim": f"Process '{proc_name}': {proc.get('description', '')[:150]}",
+                "evidence_ref": ref,
+                "evidence_text": item.content[:300],
+            })
+
+        for child in proc.get("children", []):
+            child_name = child.get("name", "")
+            for ref in child.get("evidence_refs", []):
+                item = tag_idx.get(ref)
+                if not item:
+                    continue
+                pairs.append({
+                    "process_name": proc_name,
+                    "claim": f"Step '{child_name}': {child.get('description', '')[:150]}",
+                    "evidence_ref": ref,
+                    "evidence_text": item.content[:300],
+                })
+
+    return pairs
+
+
+def apply_verification_results(
+    extraction_result: dict,
+    verifications: list[dict],
+) -> tuple[dict, dict[str, str]]:
+    """Apply verification verdicts to the extraction result.
+
+    Returns (updated_extraction, ref_verdicts_map).
+    Processes with >50% UNSUPPORTED evidence get needs_review=true.
+    """
+    ref_verdicts: dict[str, str] = {}
+    for v in verifications:
+        ref = v.get("evidence_ref", "")
+        verdict = v.get("verdict", "CONFIRMED")
+        if ref:
+            ref_verdicts[ref] = verdict
+
+    for proc in extraction_result.get("processes", []):
+        refs = proc.get("evidence_refs", [])
+        if refs:
+            unsupported = sum(1 for r in refs if ref_verdicts.get(r) == "UNSUPPORTED")
+            if unsupported > len(refs) / 2:
+                proc["needs_review"] = True
+                proc["confidence"] = min(proc.get("confidence", 0.5), 0.4)
+
+        proc["evidence_refs"] = [
+            r for r in refs if ref_verdicts.get(r) != "UNSUPPORTED"
+        ]
+
+        for child in proc.get("children", []):
+            child_refs = child.get("evidence_refs", [])
+            if child_refs:
+                child_unsupported = sum(
+                    1 for r in child_refs if ref_verdicts.get(r) == "UNSUPPORTED"
+                )
+                if child_unsupported > len(child_refs) / 2:
+                    child["needs_review"] = True
+                    child["confidence"] = min(child.get("confidence", 0.5), 0.4)
+            child["evidence_refs"] = [
+                r for r in child_refs if ref_verdicts.get(r) != "UNSUPPORTED"
+            ]
+
+    return extraction_result, ref_verdicts
