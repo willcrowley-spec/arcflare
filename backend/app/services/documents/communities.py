@@ -21,13 +21,62 @@ LEIDEN_RESOLUTION = 1.0
 LEIDEN_SEED = 42
 LEIDEN_MAX_COMM_SIZE = 10
 LEIDEN_N_ITERATIONS = -1
+LEIDEN_MIN_RECURSE_SIZE = 5
 MIN_COMMUNITY_SIZE = 2
 
 
-async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
+def _recursive_doc_leiden(
+    g: igraph.Graph,
+    idx_to_concept: dict[int, UUID],
+    members_list: list[list[int]],
+    max_cluster_size: int = LEIDEN_MAX_COMM_SIZE,
+    min_recurse_size: int = LEIDEN_MIN_RECURSE_SIZE,
+    level: int = 0,
+) -> list[tuple[int, list[UUID], int | None]]:
+    """Recursively partition document communities exceeding max_cluster_size."""
+    results: list[tuple[int, list[UUID], int | None]] = []
+    for members in members_list:
+        concept_ids = [idx_to_concept[m] for m in members]
+        if len(members) <= max_cluster_size or len(members) < min_recurse_size:
+            results.append((level, concept_ids, None))
+        else:
+            parent_idx = len(results)
+            results.append((level, concept_ids, parent_idx))
+            subgraph = g.subgraph(members)
+            sub_idx_map = {i: idx_to_concept[members[i]] for i in range(len(members))}
+            sub_weights = subgraph.es["weight"] if subgraph.ecount() > 0 else None
+            try:
+                sub_partition = leidenalg.find_partition(
+                    subgraph,
+                    leidenalg.RBConfigurationVertexPartition,
+                    weights=sub_weights,
+                    resolution_parameter=LEIDEN_RESOLUTION * 1.5,
+                    n_iterations=LEIDEN_N_ITERATIONS,
+                    seed=LEIDEN_SEED,
+                )
+                child_groups = [list(m) for m in sub_partition if len(m) >= MIN_COMMUNITY_SIZE]
+                if len(child_groups) > 1:
+                    children = _recursive_doc_leiden(
+                        subgraph, sub_idx_map, child_groups,
+                        max_cluster_size, min_recurse_size, level + 1,
+                    )
+                    results.extend(children)
+            except Exception:
+                logger.warning("recursive_doc_leiden_failed level=%d members=%d", level, len(members))
+    return results
+
+
+async def detect_communities(
+    org_id: UUID,
+    db: AsyncSession,
+    document_id: UUID | None = None,
+) -> list[UUID]:
     """Run Leiden community detection on an org's concept graph.
 
-    Replaces all existing communities for the org.
+    Leiden operates on the full org graph — individual documents cannot be
+    incrementally re-clustered because adding concepts shifts community
+    boundaries globally.  When document_id is given, we skip the rebuild
+    if the document introduced no new concepts (fast-path optimisation).
     Returns list of new community IDs.
     """
     async def _clear_existing() -> None:
@@ -49,6 +98,28 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
     if len(concepts) < 2:
         await _clear_existing()
         return []
+
+    if document_id is not None:
+        from app.models.document import DocumentChunk
+        doc_concepts_q = await db.execute(
+            select(DocumentChunk.concept_ids).where(
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.concept_ids.isnot(None),
+            )
+        )
+        doc_concept_ids = set()
+        for row in doc_concepts_q.all():
+            doc_concept_ids.update(row[0] or [])
+        if not doc_concept_ids:
+            logger.info(
+                "detect_communities skip: doc %s added no concepts", document_id,
+            )
+            existing_q = await db.execute(
+                select(Community.id).where(
+                    Community.org_id == org_id, Community.source == "document"
+                )
+            )
+            return [r[0] for r in existing_q.all()]
 
     concept_idx = {c.id: i for i, c in enumerate(concepts)}
     idx_to_concept = {i: c for c, i in concept_idx.items()}
@@ -85,7 +156,6 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
         resolution_parameter=LEIDEN_RESOLUTION,
         n_iterations=LEIDEN_N_ITERATIONS,
         seed=LEIDEN_SEED,
-        max_comm_size=LEIDEN_MAX_COMM_SIZE,
     )
 
     await _clear_existing()
@@ -93,21 +163,30 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
     concept_names = {c.id: c.display_name or c.name for c in concepts}
     concept_freqs = {c.id: c.frequency for c in concepts}
 
-    new_community_ids = []
-    for comm_idx, members in enumerate(partition):
-        if len(members) < MIN_COMMUNITY_SIZE:
+    top_level_groups = [list(m) for m in partition if len(m) >= MIN_COMMUNITY_SIZE]
+    hierarchy = _recursive_doc_leiden(g, idx_to_concept, top_level_groups)
+
+    new_community_ids: list[UUID] = []
+    idx_to_db_id: dict[int, UUID] = {}
+
+    for i, (level, member_concept_ids, parent_placeholder) in enumerate(hierarchy):
+        if len(member_concept_ids) < MIN_COMMUNITY_SIZE:
             continue
 
-        member_concept_ids = [idx_to_concept[m] for m in members]
         sorted_by_freq = sorted(
             member_concept_ids, key=lambda cid: concept_freqs.get(cid, 0), reverse=True
         )
         top_names = [concept_names.get(cid, "?") for cid in sorted_by_freq[:5]]
         label = ", ".join(top_names)
 
+        parent_db_id = None
+        if parent_placeholder is not None and parent_placeholder in idx_to_db_id:
+            parent_db_id = idx_to_db_id[parent_placeholder]
+
         community = Community(
             org_id=org_id,
-            level=0,
+            parent_id=parent_db_id,
+            level=level,
             source="document",
             label=label,
             member_concept_ids=[str(cid) for cid in member_concept_ids],
@@ -118,9 +197,9 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
         )
         db.add(community)
         await db.flush()
+        idx_to_db_id[i] = community.id
         new_community_ids.append(community.id)
 
-    await db.flush()
     return new_community_ids
 
 

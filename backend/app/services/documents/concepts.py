@@ -27,6 +27,18 @@ STOPWORD_CONCEPTS = frozenset({
     "information", "process", "document", "page", "table", "list",
     "value", "field", "data", "form", "date", "status", "set",
     "purpose", "overview", "description", "summary", "detail",
+    "approach", "requirement", "requirements", "solution", "solutions",
+    "organization", "organizations", "implementation", "functionality",
+    "configuration", "capability", "capabilities", "feature", "features",
+    "option", "options", "method", "methods", "resource", "resources",
+    "service", "services", "platform", "product", "products", "module",
+    "modules", "system", "systems", "tool", "tools", "action", "actions",
+    "aspect", "aspects", "element", "elements", "factor", "factors",
+    "issue", "issues", "activity", "activities", "state", "states",
+    "input", "output", "access", "role", "roles", "user", "users",
+    "change", "changes", "update", "updates", "review", "reviews",
+    "request", "requests", "response", "responses", "task", "tasks",
+    "report", "reports", "record", "records", "entry", "entries",
 })
 _LEADING_DETERMINERS = frozenset({
     "the", "a", "an", "this", "that", "these", "those",
@@ -42,7 +54,11 @@ MIN_COOCCURRENCE_FOR_PMI = 2
 def _get_nlp():
     global _nlp
     if _nlp is None:
-        _nlp = spacy.load("en_core_web_sm", exclude=["lemmatizer"])
+        try:
+            _nlp = spacy.load("en_core_web_lg", exclude=["lemmatizer"])
+        except OSError:
+            logger.warning("en_core_web_lg not available, falling back to en_core_web_sm")
+            _nlp = spacy.load("en_core_web_sm", exclude=["lemmatizer"])
     return _nlp
 
 

@@ -207,21 +207,3 @@ async def generate_graphs_for_run(
         org_id, run_id, len(domains), total_nodes,
     )
     return total_nodes
-
-
-async def update_node_positions(
-    process_id: UUID,
-    positions: dict[str, tuple[float, float]],
-    db: AsyncSession,
-) -> int:
-    """Bulk-update node coordinates keyed by node id string."""
-    updated = 0
-    for nid, (x, y) in positions.items():
-        node = await db.get(ProcessNode, UUID(nid))
-        if node is None or node.process_id != process_id:
-            continue
-        node.position_x = float(x)
-        node.position_y = float(y)
-        updated += 1
-    await db.flush()
-    return updated

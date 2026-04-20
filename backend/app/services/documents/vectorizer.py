@@ -8,9 +8,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.document import DocumentChunk
-from app.services.ai.router import get_embedding_provider
+from app.services.ai.router import get_embedding_provider, llm_call
 
 logger = logging.getLogger(__name__)
+
+_BATCH_CONTEXT_PROMPT = """\
+Given the full document below, provide a 1-2 sentence context for EACH chunk listed.
+Each context should explain where the chunk fits in the document.
+Return one context per line, in the same order as the chunks, prefixed with the chunk number.
+
+<document>
+{document_text}
+</document>
+
+{chunk_list}
+
+Return ONLY the contexts, one per line, formatted as:
+1: <context for chunk 1>
+2: <context for chunk 2>
+..."""
 
 
 def _embed_model() -> str:
@@ -93,20 +109,96 @@ async def _embed_batch(client, texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+async def generate_contextual_prefixes(
+    chunks: list[dict],
+    full_document_text: str,
+    batch_size: int = 25,
+) -> dict[int, str]:
+    """Generate contextual retrieval prefixes for document chunks via LLM.
+
+    Returns a map of chunk_index -> context_prefix string.
+    Uses batched prompting to minimize LLM calls.
+    """
+    if not full_document_text.strip():
+        return {}
+
+    doc_text = full_document_text[:15_000]
+    result: dict[int, str] = {}
+
+    for batch_start in range(0, len(chunks), batch_size):
+        batch = chunks[batch_start : batch_start + batch_size]
+        chunk_list_lines = []
+        for j, c in enumerate(batch):
+            content = (c.get("content") or "")[:500]
+            if content.strip():
+                chunk_list_lines.append(f"Chunk {j + 1}:\n{content}")
+
+        if not chunk_list_lines:
+            continue
+
+        prompt = _BATCH_CONTEXT_PROMPT.format(
+            document_text=doc_text,
+            chunk_list="\n\n".join(chunk_list_lines),
+        )
+
+        try:
+            llm_result = llm_call(
+                prompt=prompt,
+                max_tokens=1500,
+                tier="lite",
+                operation="contextual_retrieval",
+            )
+            lines = llm_result.text.strip().split("\n")
+            for line in lines:
+                line = line.strip()
+                if not line or ":" not in line:
+                    continue
+                prefix, context = line.split(":", 1)
+                try:
+                    idx = int(prefix.strip()) - 1
+                    global_idx = batch_start + idx
+                    if 0 <= global_idx < len(chunks):
+                        result[global_idx] = context.strip()
+                except (ValueError, IndexError):
+                    continue
+        except Exception:
+            logger.warning("contextual_prefix_batch_failed batch_start=%d", batch_start, exc_info=True)
+
+    return result
+
+
 async def vectorize_chunks(
     chunks: list[dict],
     document_id: UUID,
     db: AsyncSession,
+    full_document_text: str = "",
+    skip_contextual: bool = False,
 ) -> list[DocumentChunk]:
     provider = get_embedding_provider()
+    model_name = _embed_model()
     out: list[DocumentChunk] = []
+
+    context_map: dict[int, str] = {}
+    if not skip_contextual and full_document_text.strip():
+        try:
+            context_map = await generate_contextual_prefixes(chunks, full_document_text)
+            logger.info("contextual_prefixes_generated count=%d/%d", len(context_map), len(chunks))
+        except Exception:
+            logger.warning("contextual_prefix_generation_failed", exc_info=True)
 
     batch_texts = []
     batch_indices = []
+    contextualized_map: dict[int, str] = {}
     for i, c in enumerate(chunks):
         content = c.get("content") or ""
         if content.strip():
-            batch_texts.append(content)
+            ctx_prefix = context_map.get(i, "")
+            if ctx_prefix:
+                contextualized = f"{ctx_prefix}\n\n{content}"
+            else:
+                contextualized = content
+            contextualized_map[i] = contextualized
+            batch_texts.append(contextualized)
             batch_indices.append(i)
 
     embeddings_map: dict[int, list[float]] = {}
@@ -124,17 +216,19 @@ async def vectorize_chunks(
                     embeddings_map[idx] = await _embed(provider, txt)
                 except Exception as e:
                     logger.warning("embed_failed chunk=%d error=%s", idx, e)
-                    embeddings_map[idx] = [0.0] * _embed_dims()
 
-    dims = _embed_dims()
     for i, c in enumerate(chunks):
         content = c.get("content") or ""
-        embedding = embeddings_map.get(i, [0.0] * dims)
+        embedding = embeddings_map.get(i)
+        ctx_content = contextualized_map.get(i)
+
         row = DocumentChunk(
             document_id=document_id,
             chunk_index=int(c["chunk_index"]),
             content=content,
+            contextualized_content=ctx_content if ctx_content != content else None,
             embedding=embedding,
+            embedding_model=model_name if embedding else None,
             page_number=c.get("page_number"),
             section_title=c.get("section_title"),
             metadata_json=c.get("metadata_json") or {},
@@ -151,6 +245,8 @@ async def search_documents(
     top_k: int,
     db: AsyncSession,
 ) -> list[dict]:
+    from app.core.observability import langfuse_generation
+
     provider = get_embedding_provider()
     qvec = await _embed(provider, query)
     vec_str = "[" + ",".join(str(float(x)) for x in qvec) + "]"
@@ -176,8 +272,10 @@ async def search_documents(
         sql, {"qvec": vec_str, "org_id": str(org_id), "limit": top_k}
     )
     rows: list[dict] = []
+    distances: list[float] = []
     for r in result.mappings().all():
         dist = float(r["distance"])
+        distances.append(dist)
         score = float(1.0 / (1.0 + dist))
         rows.append(
             {
@@ -190,4 +288,23 @@ async def search_documents(
                 "score": score,
             }
         )
+
+    try:
+        with langfuse_generation(
+            name="retrieval_quality",
+            model="vector_search",
+            input=query[:200],
+            metadata={
+                "org_id": str(org_id),
+                "top_k": top_k,
+                "results_returned": len(rows),
+                "distances": distances[:10],
+                "min_distance": min(distances) if distances else None,
+                "max_distance": max(distances) if distances else None,
+            },
+        ):
+            pass
+    except Exception:
+        pass
+
     return rows

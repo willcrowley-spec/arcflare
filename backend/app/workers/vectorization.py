@@ -52,7 +52,11 @@ def vectorize_document_task(document_id: str) -> str:
                     for c in text_chunks
                 ]
 
-                db_chunks = await vectorize_chunks(chunks, doc.id, session)
+                full_doc_text = "\n".join(c.text for c in text_chunks if c.text)
+                db_chunks = await vectorize_chunks(
+                    chunks, doc.id, session,
+                    full_document_text=full_doc_text,
+                )
 
                 chunk_dicts = [
                     {"content": c.get("content") or "", "chunk_db_id": db_chunks[i].id}
@@ -63,7 +67,7 @@ def vectorize_document_task(document_id: str) -> str:
                 )
                 await compute_pmi_weights(doc.org_id, session)
 
-                community_ids = await detect_communities(doc.org_id, session)
+                community_ids = await detect_communities(doc.org_id, session, document_id=doc.id)
                 if community_ids:
                     await link_chunks_to_communities(doc.org_id, session)
                     await summarize_document_communities(doc.org_id, session)

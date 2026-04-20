@@ -588,8 +588,11 @@ export interface Community {
   id: string
   label: string | null
   level: number
+  source: string
   member_concept_ids: string[]
   metadata_json: Record<string, unknown>
+  summary: string | null
+  parent_id: string | null
 }
 
 export interface ProvenanceLink {

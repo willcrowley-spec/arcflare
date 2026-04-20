@@ -470,11 +470,16 @@ async def get_relevant_metadata_summaries(
     db: AsyncSession,
     query_text: str,
     limit: int = 5,
+    prefer_level: int | None = None,
 ) -> list[dict]:
     """Find metadata community summaries most relevant to the query.
 
     Returns top-K metadata communities ranked by summary embedding similarity.
-    Each dict contains: id, label, summary, member_count, members (top node IDs).
+    If prefer_level is set, filters to that level (0=operational, 1=capability,
+    2=strategic). For Phase 1 (domain discovery), use prefer_level=0 for parent
+    communities (capability-level), or None for all.
+
+    Each dict contains: id, label, summary, level, member_count, members.
     """
     from app.services.ai.router import get_embedding_provider
     from app.services.documents.vectorizer import _embed
@@ -489,26 +494,56 @@ async def get_relevant_metadata_summaries(
 
     try:
         async with db.begin_nested():
+            conditions = [
+                Community.org_id == org_id,
+                Community.source == "metadata",
+                Community.summary_embedding.isnot(None),
+            ]
+            if prefer_level is not None:
+                conditions.append(Community.level == prefer_level)
+
             comms_q = await db.execute(
                 select(Community)
-                .where(
-                    Community.org_id == org_id,
-                    Community.source == "metadata",
-                    Community.summary_embedding.isnot(None),
-                )
+                .where(*conditions)
                 .order_by(Community.summary_embedding.cosine_distance(query_embedding))
                 .limit(limit)
             )
-            return [
+            results = [
                 {
                     "id": str(c.id),
                     "label": c.label,
                     "summary": c.summary,
+                    "level": c.level,
                     "member_count": (c.metadata_json or {}).get("member_count", 0),
                     "members": (c.member_concept_ids or [])[:15],
                 }
                 for c in comms_q.scalars().all()
             ]
+
+            if not results and prefer_level is not None:
+                comms_q2 = await db.execute(
+                    select(Community)
+                    .where(
+                        Community.org_id == org_id,
+                        Community.source == "metadata",
+                        Community.summary_embedding.isnot(None),
+                    )
+                    .order_by(Community.summary_embedding.cosine_distance(query_embedding))
+                    .limit(limit)
+                )
+                results = [
+                    {
+                        "id": str(c.id),
+                        "label": c.label,
+                        "summary": c.summary,
+                        "level": c.level,
+                        "member_count": (c.metadata_json or {}).get("member_count", 0),
+                        "members": (c.member_concept_ids or [])[:15],
+                    }
+                    for c in comms_q2.scalars().all()
+                ]
+
+            return results
     except Exception:
         logger.warning("metadata_summary_query_failed org_id=%s", org_id, exc_info=True)
         return []

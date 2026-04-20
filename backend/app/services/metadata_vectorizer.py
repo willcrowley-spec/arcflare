@@ -488,7 +488,7 @@ async def vectorize_org_metadata(
     db.add(doc)
     await db.flush()
 
-    await vectorize_chunks(chunks, doc.id, db)
+    await vectorize_chunks(chunks, doc.id, db, skip_contextual=True)
     await db.commit()
 
     logger.info(

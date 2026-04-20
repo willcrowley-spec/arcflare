@@ -23,8 +23,23 @@ logger = logging.getLogger(__name__)
 YIELD_PER = 200
 METADATA_LEIDEN_SEED = 42
 METADATA_LEIDEN_N_ITERATIONS = -1
-METADATA_CPM_RESOLUTION = 0.05
+METADATA_RB_RESOLUTION = 1.0
 METADATA_MIN_COMMUNITY_SIZE = 2
+METADATA_MAX_CLUSTER_SIZE = 10
+METADATA_MIN_RECURSE_SIZE = 5
+
+EDGE_WEIGHTS: dict[str, float] = {
+    "master_detail": 3.0,
+    "lookup": 1.5,
+    "triggers_on": 2.0,
+    "reads": 1.0,
+    "writes": 2.0,
+    "calls_subflow": 1.5,
+    "invokes_apex": 1.0,
+    "validates": 1.5,
+    "defines_process_for": 2.0,
+    "sends_email": 0.5,
+}
 
 
 def _dedupe_edges(edges: list[dict]) -> list[dict]:
@@ -309,6 +324,52 @@ def _node_id(t: str, name: str) -> str:
     return f"{t}:{name}"
 
 
+def _recursive_leiden(
+    g: igraph.Graph,
+    rev: dict[int, str],
+    members_list: list[list[int]],
+    max_cluster_size: int = METADATA_MAX_CLUSTER_SIZE,
+    min_recurse_size: int = METADATA_MIN_RECURSE_SIZE,
+    level: int = 0,
+) -> list[tuple[int, list[str], int | None]]:
+    """Recursively partition communities exceeding max_cluster_size.
+
+    Returns list of (level, member_node_ids, parent_placeholder_index).
+    """
+    results: list[tuple[int, list[str], int | None]] = []
+    for members in members_list:
+        member_ids = [rev[m] for m in members]
+        if len(members) <= max_cluster_size:
+            results.append((level, member_ids, None))
+        elif len(members) < min_recurse_size:
+            results.append((level, member_ids, None))
+        else:
+            parent_idx = len(results)
+            results.append((level, member_ids, parent_idx))
+            subgraph = g.subgraph(members)
+            sub_rev = {i: rev[members[i]] for i in range(len(members))}
+            sub_weights = subgraph.es["weight"] if subgraph.ecount() > 0 else None
+            try:
+                sub_partition = leidenalg.find_partition(
+                    subgraph,
+                    leidenalg.RBConfigurationVertexPartition,
+                    weights=sub_weights,
+                    resolution_parameter=METADATA_RB_RESOLUTION * 1.5,
+                    n_iterations=METADATA_LEIDEN_N_ITERATIONS,
+                    seed=METADATA_LEIDEN_SEED,
+                )
+                child_groups = [list(m) for m in sub_partition if len(m) >= METADATA_MIN_COMMUNITY_SIZE]
+                if len(child_groups) > 1:
+                    children = _recursive_leiden(
+                        subgraph, sub_rev, child_groups,
+                        max_cluster_size, min_recurse_size, level + 1,
+                    )
+                    results.extend(children)
+            except Exception:
+                logger.warning("recursive_leiden_failed level=%d members=%d", level, len(members))
+    return results
+
+
 async def detect_metadata_communities(
     connection_id: UUID,
     org_id: UUID,
@@ -317,24 +378,28 @@ async def detect_metadata_communities(
     dep_stmt = select(
         MetadataDependency.source_type,
         MetadataDependency.source_api_name,
+        MetadataDependency.relationship_type,
         MetadataDependency.target_type,
         MetadataDependency.target_api_name,
     ).where(MetadataDependency.connection_id == connection_id)
     res = await db.execute(dep_stmt)
 
     nodes: set[str] = set()
-    edge_pairs: list[tuple[str, str]] = []
-    for st, sn, tt, tn in res.all():
+    edge_pairs: list[tuple[str, str, float]] = []
+    for st, sn, rel, tt, tn in res.all():
         a, b = _node_id(st, sn), _node_id(tt, tn)
         nodes.add(a)
         nodes.add(b)
         if a != b:
-            edge_pairs.append((a, b))
+            weight = EDGE_WEIGHTS.get(rel, 1.0)
+            edge_pairs.append((a, b, weight))
 
+    conn_str = str(connection_id)
     await db.execute(
         delete(Community).where(
             Community.org_id == org_id,
             Community.source == "metadata",
+            Community.metadata_json["connection_id"].astext == conn_str,
         )
     )
     await db.flush()
@@ -346,37 +411,52 @@ async def detect_metadata_communities(
     index = {n: i for i, n in enumerate(sorted(nodes))}
     rev = {i: n for n, i in index.items()}
     g = igraph.Graph(n=len(index), directed=False)
-    g.add_edges([(index[a], index[b]) for a, b in edge_pairs])
+    g.add_edges([(index[a], index[b]) for a, b, _w in edge_pairs])
+    g.es["weight"] = [w for _a, _b, w in edge_pairs]
+
+    g.simplify(combine_edges={"weight": "max"})
 
     partition = leidenalg.find_partition(
         g,
-        leidenalg.CPMVertexPartition,
-        resolution_parameter=METADATA_CPM_RESOLUTION,
+        leidenalg.RBConfigurationVertexPartition,
+        weights=g.es["weight"],
+        resolution_parameter=METADATA_RB_RESOLUTION,
         n_iterations=METADATA_LEIDEN_N_ITERATIONS,
         seed=METADATA_LEIDEN_SEED,
     )
 
+    top_level_groups = [list(m) for m in partition if len(m) >= METADATA_MIN_COMMUNITY_SIZE]
+    hierarchy = _recursive_leiden(g, rev, top_level_groups)
+
     created = 0
-    for members in partition:
-        member_ids = [rev[m] for m in members]
+    idx_to_db_id: dict[int, UUID] = {}
+
+    for i, (level, member_ids, parent_placeholder) in enumerate(hierarchy):
         if len(member_ids) < METADATA_MIN_COMMUNITY_SIZE:
             continue
         top3 = sorted(member_ids, key=lambda x: x.split(":", 1)[1])[:3]
         label = ", ".join(n.split(":", 1)[1] for n in top3)
-        db.add(
-            Community(
-                org_id=org_id,
-                level=0,
-                source="metadata",
-                label=label[:512],
-                member_concept_ids=member_ids,
-                metadata_json={
-                    "connection_id": str(connection_id),
-                    "member_count": len(member_ids),
-                },
-            )
+
+        parent_db_id = None
+        if parent_placeholder is not None and parent_placeholder in idx_to_db_id:
+            parent_db_id = idx_to_db_id[parent_placeholder]
+
+        comm = Community(
+            org_id=org_id,
+            parent_id=parent_db_id,
+            level=level,
+            source="metadata",
+            label=label[:512],
+            member_concept_ids=member_ids,
+            metadata_json={
+                "connection_id": conn_str,
+                "member_count": len(member_ids),
+            },
         )
+        db.add(comm)
+        await db.flush()
+        idx_to_db_id[i] = comm.id
         created += 1
-    await db.flush()
+
     logger.info("detect_metadata_communities connection=%s communities=%d", connection_id, created)
     return created

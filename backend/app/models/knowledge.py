@@ -104,7 +104,7 @@ class Community(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    summary_embedding: Mapped[list[float] | None] = mapped_column(Vector(3072), nullable=True)
+    summary_embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

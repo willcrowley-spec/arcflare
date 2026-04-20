@@ -5,7 +5,7 @@ from app.services.ai.base import BaseLLM
 
 
 class AnthropicProvider(BaseLLM):
-    """Anthropic Claude for reasoning; embeddings fall back to deterministic stub."""
+    """Anthropic Claude for reasoning. Embeddings are not supported — use Gemini."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -26,5 +26,4 @@ class AnthropicProvider(BaseLLM):
         return "".join(parts)
 
     async def embed(self, text: str) -> list[float]:
-        # Anthropic does not expose embeddings in this SDK path; return zero vector of expected dim.
-        return [0.0] * 3072
+        raise NotImplementedError("Anthropic does not support embeddings; use Gemini embedding provider.")

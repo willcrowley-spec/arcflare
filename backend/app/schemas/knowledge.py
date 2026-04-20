@@ -16,6 +16,7 @@ class ConceptResponse(BaseModel):
 
 class CommunityResponse(BaseModel):
     id: UUID
+    parent_id: UUID | None = None
     label: str | None
     level: int
     source: str

@@ -217,6 +217,13 @@ def _get_procs_under_domain(
     return result
 
 
+# ---------------------------------------------------------------------------
+# DEPRECATED v1 PIPELINE — not invoked by any worker or API route.
+# Retained temporarily for reference; will be removed in a future PR.
+# The active pipeline is the run_v2_phase* family below.
+# ---------------------------------------------------------------------------
+
+
 async def run_stage1(
     org_id: UUID,
     run_id: UUID,
@@ -1587,7 +1594,9 @@ async def run_v2_phase1(
         ]
 
         org_desc = org_ctx.get("description") or org_ctx.get("name", "")
-        meta_summaries = await get_relevant_metadata_summaries(org_id, db, org_desc, limit=10)
+        meta_summaries = await get_relevant_metadata_summaries(
+            org_id, db, org_desc, limit=10, prefer_level=0,
+        )
 
         from app.models.knowledge import Community
         doc_summaries: list[dict] = []
@@ -1598,6 +1607,7 @@ async def run_v2_phase1(
                         Community.org_id == org_id,
                         Community.source == "document",
                         Community.summary.isnot(None),
+                        Community.level == 0,
                     ).limit(5)
                 )
                 doc_summaries = [
@@ -1779,7 +1789,8 @@ async def run_v2_phase4(
 
         verifications = parsed.get("verifications", [])
         if verifications:
-            updated, _ = apply_verification_results(extraction, verifications)
+            updated, ref_verdicts = apply_verification_results(extraction, verifications)
+            updated["_ref_verdicts"] = ref_verdicts
             logger.info(
                 "v2_phase4_domain_done domain=%s verified=%d tokens_in=%d tokens_out=%d",
                 extraction.get("domain", {}).get("name", "?"),
@@ -1846,9 +1857,12 @@ async def run_v2_persist(
         if not domain_row:
             continue
 
+        ref_verdicts = extraction.pop("_ref_verdicts", None)
+
         for proc in extraction.get("processes", []):
             evidence = resolve_evidence_refs(
-                bundle, proc.get("evidence_refs", [])
+                bundle, proc.get("evidence_refs", []),
+                verifications=ref_verdicts,
             )
             confidence = float(proc.get("confidence", 0.5))
 
@@ -1882,7 +1896,8 @@ async def run_v2_persist(
 
             for child in proc.get("children", []):
                 child_evidence = resolve_evidence_refs(
-                    bundle, child.get("evidence_refs", [])
+                    bundle, child.get("evidence_refs", []),
+                    verifications=ref_verdicts,
                 )
                 child_confidence = float(child.get("confidence", 0.5))
                 child_row = BusinessProcess(
@@ -1937,7 +1952,8 @@ async def run_v2_persist(
             tgt_row = tgt_q.scalar_one_or_none()
             if src_row and tgt_row:
                 h_evidence = resolve_evidence_refs(
-                    bundle, handoff.get("evidence_refs", [])
+                    bundle, handoff.get("evidence_refs", []),
+                    verifications=ref_verdicts,
                 )
                 db.add(ProcessHandoff(
                     org_id=org_id,

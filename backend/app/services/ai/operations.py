@@ -27,7 +27,16 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "output_format": "text",
         "label": "Community Summarization",
         "group": "metadata",
-        "description": "Generates 2-3 sentence summaries for metadata and document community clusters (GraphRAG retrieval anchors).",
+        "description": "Generates level-appropriate summaries for metadata and document community clusters (GraphRAG retrieval anchors).",
+    },
+    "contextual_retrieval": {
+        "model": "gemini/gemini-2.0-flash-lite",
+        "tier": "lite",
+        "thinking_budget": 0,
+        "output_format": "text",
+        "label": "Contextual Retrieval",
+        "group": "metadata",
+        "description": "Generates 1-2 sentence context prefixes for document chunks before embedding (Anthropic Contextual Retrieval technique).",
     },
     "entity_extraction": {
         "model": "gemini/gemini-2.5-flash",

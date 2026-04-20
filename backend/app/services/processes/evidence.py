@@ -133,17 +133,23 @@ async def assemble_evidence_bundle(
     if key_objects:
         edges = await _expand_via_graph(org_id, db, key_objects)
         bundle.dependency_edges = edges
+        _AUTO_TYPES = {"flow", "workflow_rule", "apex_trigger", "validation_rule", "approval_process"}
+        _COMP_TYPES = {"apex_class", "business_process"}
         for e in edges:
-            if e["target_type"] == "object":
+            tt = e["target_type"]
+            if tt == "object":
                 expanded_objects.add(e["target"])
-            elif e["target_type"] in ("flow", "workflow", "trigger", "validation"):
+            elif tt in _AUTO_TYPES:
                 auto_names.add(e["target"])
-            elif e["target_type"] in ("apex_class", "component"):
+            elif tt in _COMP_TYPES:
                 comp_names.add(e["target"])
-            if e["source_type"] == "object":
+            st = e["source_type"]
+            if st == "object":
                 expanded_objects.add(e["source"])
-            elif e["source_type"] in ("flow", "workflow", "trigger", "validation"):
+            elif st in _AUTO_TYPES:
                 auto_names.add(e["source"])
+            elif st in _COMP_TYPES:
+                comp_names.add(e["source"])
 
     obj_idx = 0
     if expanded_objects:
@@ -163,7 +169,9 @@ async def assemble_evidence_bundle(
     await _load_document_chunks(org_id, db, queries, bundle, start_idx=comp_idx)
 
     bundle.community_summary = await _load_community_summary(
-        org_id, db, expanded_objects
+        org_id, db, expanded_objects,
+        auto_names=auto_names, comp_names=comp_names,
+        domain_name=domain_name,
     )
 
     return bundle
@@ -547,12 +555,58 @@ async def _load_community_summary(
     org_id: UUID,
     db: AsyncSession,
     object_names: set[str],
+    auto_names: set[str] | None = None,
+    comp_names: set[str] | None = None,
+    domain_name: str = "",
 ) -> str | None:
-    """Find the metadata community whose members best overlap with our objects."""
-    if not object_names:
+    """Find the metadata community summaries most relevant to this domain.
+
+    Primary: embedding-based cosine similarity on domain_name.
+    Fallback: member-overlap matching all type prefixes.
+    """
+    from app.models.knowledge import Community
+
+    if domain_name:
+        try:
+            from app.services.ai.router import get_embedding_provider
+            from app.services.documents.vectorizer import _embed
+
+            client = get_embedding_provider()
+            query_emb = await _embed(client, domain_name)
+
+            async with db.begin_nested():
+                q = await db.execute(
+                    select(Community).where(
+                        Community.org_id == org_id,
+                        Community.source == "metadata",
+                        Community.summary_embedding.isnot(None),
+                    )
+                    .order_by(Community.summary_embedding.cosine_distance(query_emb))
+                    .limit(3)
+                )
+                results = q.scalars().all()
+                if results:
+                    summaries = [c.summary for c in results if c.summary]
+                    if summaries:
+                        return "\n\n".join(summaries[:3])
+        except Exception:
+            logger.warning("embedding_community_lookup_failed org_id=%s", org_id, exc_info=True)
+
+    if not object_names and not auto_names and not comp_names:
         return None
 
-    from app.models.knowledge import Community
+    typed_names: set[str] = set()
+    for n in object_names:
+        typed_names.add(f"object:{n}")
+    for n in (auto_names or set()):
+        typed_names.add(f"flow:{n}")
+        typed_names.add(f"workflow_rule:{n}")
+        typed_names.add(f"validation_rule:{n}")
+        typed_names.add(f"apex_trigger:{n}")
+        typed_names.add(f"approval_process:{n}")
+    for n in (comp_names or set()):
+        typed_names.add(f"apex_class:{n}")
+        typed_names.add(f"business_process:{n}")
 
     try:
         async with db.begin_nested():
@@ -561,7 +615,7 @@ async def _load_community_summary(
                     Community.org_id == org_id,
                     Community.source == "metadata",
                     Community.summary.isnot(None),
-                ).limit(20)
+                ).limit(50)
             )
             communities = q.scalars().all()
     except Exception:
@@ -571,17 +625,18 @@ async def _load_community_summary(
     if not communities:
         return None
 
-    typed_names = {f"object:{n}" for n in object_names}
     best_overlap = 0
-    best_summary = None
+    best_summaries: list[str] = []
     for comm in communities:
         members = set(comm.member_concept_ids or [])
         overlap = len(members & typed_names)
         if overlap > best_overlap:
             best_overlap = overlap
-            best_summary = comm.summary
+            best_summaries = [comm.summary or ""]
+        elif overlap == best_overlap and overlap > 0 and comm.summary:
+            best_summaries.append(comm.summary)
 
-    return best_summary
+    return "\n\n".join(best_summaries[:3]) if best_summaries else None
 
 
 def resolve_evidence_refs(
@@ -597,9 +652,6 @@ def resolve_evidence_refs(
     sources: list[dict] = []
 
     for ref in evidence_refs:
-        if verifications and verifications.get(ref) == "UNSUPPORTED":
-            continue
-
         item = tag_idx.get(ref)
         if not item:
             continue
@@ -607,10 +659,10 @@ def resolve_evidence_refs(
         confidence = 0.9
         if verifications:
             verdict = verifications.get(ref, "CONFIRMED")
+            if verdict == "UNSUPPORTED":
+                continue
             if verdict == "WEAK":
                 confidence = 0.5
-            elif verdict == "UNSUPPORTED":
-                continue
 
         entry: dict = {"type": item.type, "relevance": "", "confidence": confidence}
 
