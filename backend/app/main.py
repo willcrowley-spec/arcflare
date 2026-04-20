@@ -24,10 +24,30 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+async def _reset_stale_syncing_connections() -> int:
+    """Reset any connections stuck in 'syncing' from a previous worker crash/deploy."""
+    from sqlalchemy import update
+
+    from app.core.database import async_session_factory
+    from app.models.connection import PlatformConnection
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            update(PlatformConnection)
+            .where(PlatformConnection.status == "syncing")
+            .values(status="connected")
+        )
+        await session.commit()
+        return result.rowcount  # type: ignore[return-value]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting Arcflare API (environment=%s)", settings.ENVIRONMENT)
+    reset_count = await _reset_stale_syncing_connections()
+    if reset_count:
+        logger.warning("startup_reset_stale_syncing connections=%d", reset_count)
     yield
     from app.core.observability import shutdown_langfuse
     shutdown_langfuse()
