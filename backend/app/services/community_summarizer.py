@@ -64,10 +64,7 @@ summary of the main topics, processes, or business areas these sections cover.
 
 ## Top Concepts
 {concepts}
-
-## Representative Excerpts
-{excerpts}
-"""
+{excerpts_section}"""
 
 _DOC_L1_PROMPT = """\
 You are a business analyst. Given the following operational summaries from \
@@ -275,9 +272,13 @@ async def summarize_document_communities(org_id: UUID, db: AsyncSession) -> int:
                 if not concepts_str and not excerpts:
                     continue
 
+                excerpts_section = ""
+                if excerpts:
+                    excerpts_section = f"\n## Representative Excerpts\n{excerpts[:2000]}"
+
                 prompt = _DOC_SUMMARY_PROMPT.format(
                     concepts=concepts_str,
-                    excerpts=excerpts[:2000],
+                    excerpts_section=excerpts_section,
                 )
 
             try:

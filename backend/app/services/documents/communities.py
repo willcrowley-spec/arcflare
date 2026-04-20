@@ -212,10 +212,10 @@ async def link_chunks_to_communities(org_id: UUID, db: AsyncSession) -> None:
     )
     communities = communities_q.scalars().all()
 
-    concept_to_community: dict[str, UUID] = {}
+    concept_to_communities: dict[str, set[UUID]] = {}
     for comm in communities:
-        for cid in comm.member_concept_ids:
-            concept_to_community[cid] = comm.id
+        for cid in (comm.member_concept_ids or []):
+            concept_to_communities.setdefault(cid, set()).add(comm.id)
 
     from app.models.document import Document, DocumentChunk
     chunks_q = await db.execute(
@@ -231,9 +231,9 @@ async def link_chunks_to_communities(org_id: UUID, db: AsyncSession) -> None:
             continue
         seen_communities: set[UUID] = set()
         for cid in chunk.concept_ids:
-            comm_id = concept_to_community.get(str(cid))
-            if comm_id and comm_id not in seen_communities:
-                seen_communities.add(comm_id)
-                db.add(ChunkCommunity(chunk_id=chunk.id, community_id=comm_id))
+            for comm_id in concept_to_communities.get(str(cid), ()):
+                if comm_id not in seen_communities:
+                    seen_communities.add(comm_id)
+                    db.add(ChunkCommunity(chunk_id=chunk.id, community_id=comm_id))
 
     await db.flush()
