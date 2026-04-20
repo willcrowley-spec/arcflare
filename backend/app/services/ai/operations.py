@@ -12,7 +12,7 @@ TierName = Literal["lite", "fast", "strong"]
 
 MODEL_OPERATIONS: dict[str, dict] = {
     "metadata_enrichment": {
-        "model": "gemini/gemini-2.0-flash-lite",
+        "model": "gemini/gemini-3.1-flash-lite-preview",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -21,7 +21,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates business-context descriptions for platform objects with few fields/records. Uses the cheapest model for bulk throughput.",
     },
     "community_summarization": {
-        "model": "gemini/gemini-2.0-flash-lite",
+        "model": "gemini/gemini-3.1-flash-lite-preview",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -30,7 +30,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates level-appropriate summaries for metadata and document community clusters (GraphRAG retrieval anchors).",
     },
     "contextual_retrieval": {
-        "model": "gemini/gemini-2.0-flash-lite",
+        "model": "gemini/gemini-3.1-flash-lite-preview",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -211,7 +211,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "strong": "openai/gpt-4o",
     },
     "gemini": {
-        "lite": "gemini/gemini-2.0-flash-lite",
+        "lite": "gemini/gemini-3.1-flash-lite-preview",
         "fast": "gemini/gemini-2.5-flash",
         "strong": "gemini/gemini-2.5-pro",
     },
