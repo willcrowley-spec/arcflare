@@ -17,7 +17,13 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_INPUT_TPM = 25_000  # conservative vs Tier 1's ~30-38K
+_DEFAULT_INPUT_TPM = 25_000  # conservative vs Anthropic Tier 1's ~30-38K
+
+_PROVIDER_DEFAULTS: dict[str, int] = {
+    "anthropic": 25_000,
+    "gemini": 4_000_000,
+    "openai": 200_000,
+}
 _WINDOW_SECONDS = 60
 
 
@@ -125,6 +131,7 @@ def get_limiter(model: str) -> AdaptiveTokenRateLimiter:
     from app.services.ai.router import _provider_from_model
     provider = _provider_from_model(model)
     if provider not in _limiters:
-        _limiters[provider] = AdaptiveTokenRateLimiter()
-        logger.info("rate_limiter_created provider=%s default_tpm=%d", provider, _DEFAULT_INPUT_TPM)
+        default = _PROVIDER_DEFAULTS.get(provider, _DEFAULT_INPUT_TPM)
+        _limiters[provider] = AdaptiveTokenRateLimiter(default_tpm=default)
+        logger.info("rate_limiter_created provider=%s default_tpm=%d", provider, default)
     return _limiters[provider]

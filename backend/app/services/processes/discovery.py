@@ -584,7 +584,7 @@ async def run_stage3_4(
 
         async def _enrich_flow_domain(domain: BusinessProcess, prompt) -> tuple[LLMResult, dict]:
             return await _async_llm_call(
-                prompt=prompt, max_tokens=14000, tier="strong",
+                prompt=prompt, max_tokens=20000, tier="strong",
                 operation="discovery_enrichment_flow",
                 label=f"stage3_4_{domain.name}",
                 model_config=model_config,
@@ -1328,7 +1328,7 @@ async def run_stage6(
 
         result, parsed = await asyncio.to_thread(
             _call_with_retry,
-            prompt=prompt, max_tokens=8000, tier="strong",
+            prompt=prompt, max_tokens=12000, tier="strong",
             operation="discovery_synthesis", label="stage6",
             model_config=model_config,
         )
