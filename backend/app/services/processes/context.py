@@ -323,25 +323,26 @@ async def semantic_document_search(
     try:
         from app.models.knowledge import Community, ChunkCommunity
 
-        top_comms_q = await db.execute(
-            select(Community.id)
-            .where(
-                Community.org_id == org_id,
-                Community.source == "document",
-                Community.summary_embedding.isnot(None),
-            )
-            .order_by(Community.summary_embedding.cosine_distance(query_embedding))
-            .limit(3)
-        )
-        top_comm_ids = [row[0] for row in top_comms_q.all()]
-
-        if top_comm_ids:
-            cc_q = await db.execute(
-                select(ChunkCommunity.chunk_id).where(
-                    ChunkCommunity.community_id.in_(top_comm_ids)
+        async with db.begin_nested():
+            top_comms_q = await db.execute(
+                select(Community.id)
+                .where(
+                    Community.org_id == org_id,
+                    Community.source == "document",
+                    Community.summary_embedding.isnot(None),
                 )
+                .order_by(Community.summary_embedding.cosine_distance(query_embedding))
+                .limit(3)
             )
-            boosted_chunk_ids = {row[0] for row in cc_q.all()}
+            top_comm_ids = [row[0] for row in top_comms_q.all()]
+
+            if top_comm_ids:
+                cc_q = await db.execute(
+                    select(ChunkCommunity.chunk_id).where(
+                        ChunkCommunity.community_id.in_(top_comm_ids)
+                    )
+                )
+                boosted_chunk_ids = {row[0] for row in cc_q.all()}
     except Exception:
         logger.warning("community_boost_failed, falling back to global", exc_info=True)
 
@@ -486,24 +487,28 @@ async def get_relevant_metadata_summaries(
         logger.error("metadata_summary_embed_failed org_id=%s error=%s", org_id, exc)
         return []
 
-    comms_q = await db.execute(
-        select(Community)
-        .where(
-            Community.org_id == org_id,
-            Community.source == "metadata",
-            Community.summary_embedding.isnot(None),
-        )
-        .order_by(Community.summary_embedding.cosine_distance(query_embedding))
-        .limit(limit)
-    )
-
-    return [
-        {
-            "id": str(c.id),
-            "label": c.label,
-            "summary": c.summary,
-            "member_count": (c.metadata_json or {}).get("member_count", 0),
-            "members": (c.member_concept_ids or [])[:15],
-        }
-        for c in comms_q.scalars().all()
-    ]
+    try:
+        async with db.begin_nested():
+            comms_q = await db.execute(
+                select(Community)
+                .where(
+                    Community.org_id == org_id,
+                    Community.source == "metadata",
+                    Community.summary_embedding.isnot(None),
+                )
+                .order_by(Community.summary_embedding.cosine_distance(query_embedding))
+                .limit(limit)
+            )
+            return [
+                {
+                    "id": str(c.id),
+                    "label": c.label,
+                    "summary": c.summary,
+                    "member_count": (c.metadata_json or {}).get("member_count", 0),
+                    "members": (c.member_concept_ids or [])[:15],
+                }
+                for c in comms_q.scalars().all()
+            ]
+    except Exception:
+        logger.warning("metadata_summary_query_failed org_id=%s", org_id, exc_info=True)
+        return []

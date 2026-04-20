@@ -14,31 +14,29 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "communities",
-        sa.Column("source", sa.String(20), nullable=False, server_default="document"),
+    op.execute(
+        "ALTER TABLE communities "
+        "ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'document'"
     )
-    op.add_column(
-        "communities",
-        sa.Column("summary", sa.Text, nullable=True),
+    op.execute(
+        "ALTER TABLE communities ADD COLUMN IF NOT EXISTS summary TEXT"
+    )
+    op.execute(
+        "ALTER TABLE communities "
+        "ADD COLUMN IF NOT EXISTS summary_embedding vector(3072)"
     )
 
     op.execute(
         "UPDATE communities SET source = 'metadata' "
-        "WHERE metadata_json->>'source' = 'metadata_graph'"
+        "WHERE source = 'document' AND metadata_json->>'source' = 'metadata_graph'"
     )
 
-    op.create_index("ix_communities_source", "communities", ["source"])
-
     op.execute(
-        "ALTER TABLE communities "
-        "ADD COLUMN summary_embedding vector(3072)"
+        "CREATE INDEX IF NOT EXISTS ix_communities_source "
+        "ON communities (source)"
     )
-
-    # HNSW index on summary_embedding — CONCURRENTLY to avoid blocking.
-    op.execute("COMMIT")
     op.execute(
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_communities_summary_embedding_hnsw "
+        "CREATE INDEX IF NOT EXISTS ix_communities_summary_embedding_hnsw "
         "ON communities USING hnsw (summary_embedding vector_cosine_ops) "
         "WITH (m = 16, ef_construction = 64)"
     )
