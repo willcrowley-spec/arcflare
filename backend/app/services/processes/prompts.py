@@ -707,23 +707,46 @@ _V2_PHASE1_PROTOCOL = """Return a JSON object matching the enforced schema:
   ]
 }"""
 
-_V2_PHASE3_INSTRUCTIONS = """You are a senior business process analyst performing evidence-grounded process extraction. Given an evidence bundle for a single business domain, extract the complete process hierarchy.
+_V2_PHASE3_INSTRUCTIONS = """You are a senior business process analyst building an operational profile for Agentic Business Operating Systems (ABOS) assessment. Given an evidence bundle for a single business domain, extract the complete process hierarchy with enough operational detail to evaluate which steps can be replaced by agentic AI workers.
 
 ## CRITICAL: Citation Requirement
 Every process, step, actor, touchpoint, trigger, and decision MUST cite at least one evidence reference using the tagged IDs (e.g., [OBJ-1], [AUTO-3], [DOC-5]). Claims without citations will be rejected in verification.
 
+## Purpose: ABOS Readiness Profiling
+The output of this extraction will be used to recommend which business processes can be automated by agentic workers. For each process and step, you must capture:
+- WHO does the work (actors) — named roles, integrations, or system automations, not generic labels like "user"
+- WHAT triggers the work — specific events, field changes, schedules, or conditions from the evidence
+- WHAT systems are touched — specific object names, operations, and if visible, specific fields
+- WHAT decisions are made — the rules, thresholds, or judgments applied
+- WHAT can go wrong — failure modes and their recovery paths
+- HOW suitable for automation — based on rule-based vs judgment-based, data availability, exception rate
+
 ## Hierarchy
-- **Process** — a complete business workflow with a clear trigger and outcome. Has 2-8 children.
-- **Subprocess/Step** — atomic units of work or logical groupings within a process.
+- **Process** — a complete business workflow with a clear trigger and outcome (e.g., "Lead Qualification"). Has 2-8 children.
+- **Subprocess/Step** — atomic units of work or logical groupings within a process. If a step contains "and", split it.
 
 ## Extraction Rules
 1. Derive processes ONLY from the evidence provided. Do not hallucinate processes that have no metadata or document support.
-2. For system_touchpoints, reference SPECIFIC object names from the evidence. Do NOT invent names.
-3. If you cannot find evidence for a claim, do NOT include it. Absence is better than fabrication.
-4. Set needs_review=true for anything with confidence < 0.6.
-5. Value classification: VA = customer-facing value, BVA = business-necessary, NVA = waste/rework."""
+2. For system_touchpoints, reference SPECIFIC object and automation names from the evidence. Do NOT invent names.
+3. For actors, use specific role names visible in the evidence (e.g., "Sales Rep via Lead object owner field", "Scheduled Flow: Lead_Score_Calculation"). Do NOT use generic labels like "User" or "Admin" unless that is literally what the evidence shows.
+4. For trigger_conditions, cite the specific automation trigger type, field change, or schedule from the evidence. "Record created" is not enough — say which object and what trigger type.
+5. For automation_potential, consider: Is the step fully rule-based with structured data? (high) Does it require human judgment on unstructured data? (low) Is there partial automation already via flows/triggers? (medium — cite the existing automation)
+6. If you cannot find evidence for a claim, do NOT include it. Absence is better than fabrication.
+7. Set needs_review=true for anything with confidence < 0.6.
+8. Value classification: VA = directly produces customer-facing value, BVA = business-necessary but internal, NVA = waste/rework/manual workaround."""
 
-_V2_PHASE3_PROTOCOL = """Return a JSON object with "processes" array and optional "intra_domain_handoffs" array. Every item MUST include evidence_refs citing at least one tagged reference from the evidence bundle."""
+_V2_PHASE3_PROTOCOL = """Return a JSON object with "processes" array and optional "intra_domain_handoffs" array.
+
+REQUIRED for every process and child step:
+- evidence_refs: at least one tagged reference (e.g., OBJ-1, AUTO-3)
+- actors: at least one, with specific name and type (user/integration/system)
+- trigger_conditions: at least one, with description citing evidence
+- system_touchpoints: at least one, with specific object/automation name and operation
+- value_classification: VA, BVA, or NVA
+- automation_potential: high, medium, low, or none — with reasoning implicit in the context
+- complexity_score: low, medium, or high
+
+If you truly cannot determine a required field from the evidence, set needs_review=true and provide your best inference."""
 
 _V2_PHASE4_INSTRUCTIONS = """You are a verification analyst. Your job is to check whether evidence citations actually support the claims made about business processes.
 
@@ -823,9 +846,15 @@ async def build_v2_phase3_prompt(
     instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE3_INSTRUCTIONS
     protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE3_PROTOCOL
     task = (
-        f"Extract all business processes for the \"{domain['name']}\" domain. "
+        f"Extract all business processes for the \"{domain['name']}\" domain.\n"
         f"Domain description: {domain.get('description', '')}\n\n"
-        "Every process, step, actor, and touchpoint MUST cite at least one evidence reference."
+        "## Your task\n"
+        "Build a complete operational profile of this domain for ABOS readiness assessment.\n"
+        "For every process and step:\n"
+        "1. Cite specific evidence (OBJ-x, AUTO-x, DOC-x) for every claim\n"
+        "2. Name specific actors, triggers, and system touchpoints from the evidence\n"
+        "3. Assess automation_potential based on whether the step is rule-based with structured data (high) or judgment-heavy (low)\n"
+        "4. Classify value: VA (customer-facing), BVA (business-necessary), NVA (waste/workaround)\n"
     )
     return PromptParts(
         system=f"{instructions}\n\n{protocol}",

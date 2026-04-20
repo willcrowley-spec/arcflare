@@ -3,16 +3,13 @@ import { Link } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
-  Check,
   ChevronDown,
   ChevronRight,
   Eye,
   GitBranch,
   Layers,
   Sparkles,
-  Timer,
   Workflow,
-  X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useQueryClient } from '@tanstack/react-query'
@@ -23,10 +20,8 @@ import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import { DiscoveryPipeline } from '@/components/DiscoveryPipeline'
 import { GapsPanel } from './GapsPanel'
 import {
-  useConfirmProcess,
   useDiscoveryStatus,
   useProcesses,
-  useRejectProcess,
   useStartDiscovery,
 } from '@/hooks/useApi'
 import type { DiscoveryStatus } from '@/types'
@@ -39,6 +34,19 @@ type ProcessKpis = {
   domain_count?: number
   needs_review_count?: number
   gap_count?: number
+}
+
+type EvidenceSource = {
+  type: string
+  id?: string
+  chunk_id?: string
+  api_name?: string
+  label?: string
+  category?: string
+  document_name?: string
+  excerpt?: string
+  relevance?: string
+  confidence?: number
 }
 
 type ProcessItem = {
@@ -58,6 +66,10 @@ type ProcessItem = {
   narrative?: string | null
   parent_id?: string | null
   children?: ProcessItem[]
+  evidence_sources?: EvidenceSource[]
+  actors?: Array<{ name: string; type: string }>
+  trigger_conditions?: Array<{ description: string }>
+  system_touchpoints?: Array<{ name: string; type: string; operation?: string }>
 }
 
 function normalizeProcessList(data: unknown): {
@@ -122,9 +134,6 @@ export default function ProcessesPage() {
   const { data, isLoading, isError, error, refetch } = useProcesses()
   const { data: discoveryData } = useDiscoveryStatus()
   const startDiscovery = useStartDiscovery()
-  const confirmMutation = useConfirmProcess()
-  const rejectMutation = useRejectProcess()
-
   const { items, tree, kpis } = useMemo(() => normalizeProcessList(data), [data])
 
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -230,11 +239,16 @@ export default function ProcessesPage() {
     )
   }, [discoveryBusy, priorDiscovery, handleStartDiscovery])
 
-  const renderProcessActions = useCallback(
+  const renderProcessDetails = useCallback(
     (p: ProcessItem) => {
-      const isDiscovered = p.status.toLowerCase() === 'discovered'
+      const evidence = p.evidence_sources ?? []
+      const actors = p.actors ?? []
+      const triggers = p.trigger_conditions ?? []
+      const touchpoints = p.system_touchpoints ?? []
+      const hasEnrichment = actors.length > 0 || triggers.length > 0 || touchpoints.length > 0
+
       return (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="space-y-3">
           {p.level === 'domain' ? (
             <Link
               to={`/processes/${p.id}/map`}
@@ -244,30 +258,109 @@ export default function ProcessesPage() {
               Open process map
             </Link>
           ) : null}
-          {isDiscovered ? (
+
+          {hasEnrichment ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              {actors.length > 0 ? (
+                <div className="rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Actors</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {actors.map((a, i) => (
+                      <span key={i} className={clsx(
+                        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1',
+                        a.type === 'system' ? 'bg-violet-50 text-violet-800 ring-violet-200' :
+                        a.type === 'integration' ? 'bg-sky-50 text-sky-800 ring-sky-200' :
+                        'bg-slate-100 text-slate-700 ring-slate-200',
+                      )}>
+                        {a.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {triggers.length > 0 ? (
+                <div className="rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Triggers</p>
+                  <ul className="mt-1.5 space-y-1">
+                    {triggers.slice(0, 3).map((t, i) => (
+                      <li key={i} className="text-xs text-slate-700">{t.description}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {touchpoints.length > 0 ? (
+                <div className="rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">System Touchpoints</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {touchpoints.slice(0, 6).map((tp, i) => (
+                      <span key={i} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                        {tp.name}{tp.operation ? ` (${tp.operation})` : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {p.automation_potential || p.value_classification ? (
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={confirmMutation.isPending || rejectMutation.isPending}
-                onClick={() => confirmMutation.mutate(p.id)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Check className="h-3.5 w-3.5" /> Confirm
-              </button>
-              <button
-                type="button"
-                disabled={confirmMutation.isPending || rejectMutation.isPending}
-                onClick={() => rejectMutation.mutate(p.id)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <X className="h-3.5 w-3.5" /> Reject
-              </button>
+              {p.automation_potential ? (
+                <span className={clsx(
+                  'inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1',
+                  p.automation_potential === 'high' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' :
+                  p.automation_potential === 'medium' ? 'bg-amber-50 text-amber-800 ring-amber-200' :
+                  'bg-slate-100 text-slate-700 ring-slate-200',
+                )}>
+                  Automation: {p.automation_potential}
+                </span>
+              ) : null}
+              {p.value_classification ? (
+                <span className={clsx(
+                  'inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1',
+                  p.value_classification === 'VA' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' :
+                  p.value_classification === 'BVA' ? 'bg-sky-50 text-sky-800 ring-sky-200' :
+                  'bg-orange-50 text-orange-800 ring-orange-200',
+                )}>
+                  {p.value_classification === 'VA' ? 'Value-Adding' : p.value_classification === 'BVA' ? 'Business-Necessary' : 'Non-Value'}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {evidence.length > 0 ? (
+            <div className="rounded-lg border border-slate-200/80 bg-white/80 px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Evidence ({evidence.length} sources)
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {evidence.map((ev, i) => (
+                  <span
+                    key={i}
+                    title={ev.relevance || ev.excerpt || ''}
+                    className={clsx(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1',
+                      ev.type === 'metadata_object' && 'bg-blue-50 text-blue-800 ring-blue-200',
+                      ev.type === 'automation' && 'bg-violet-50 text-violet-800 ring-violet-200',
+                      ev.type === 'component' && 'bg-indigo-50 text-indigo-800 ring-indigo-200',
+                      ev.type === 'document_chunk' && 'bg-amber-50 text-amber-800 ring-amber-200',
+                      ev.type === 'community' && 'bg-teal-50 text-teal-800 ring-teal-200',
+                    )}
+                  >
+                    {ev.type === 'metadata_object' ? ev.api_name || ev.label :
+                     ev.type === 'automation' ? ev.api_name || ev.label :
+                     ev.type === 'component' ? ev.api_name :
+                     ev.type === 'document_chunk' ? ev.document_name :
+                     ev.type}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>
       )
     },
-    [confirmMutation, rejectMutation],
+    [],
   )
 
   const renderChildren = useCallback(
@@ -330,7 +423,7 @@ export default function ProcessesPage() {
                         <p className="mt-1 text-sm leading-relaxed text-slate-700">{child.narrative}</p>
                       </div>
                     ) : null}
-                    <div className="mt-2">{renderProcessActions(child)}</div>
+                    <div className="mt-2">{renderProcessDetails(child)}</div>
                     {childKids.length > 0 ? renderChildren(childKids, depth + 1) : null}
                   </div>
                 ) : null}
@@ -340,7 +433,7 @@ export default function ProcessesPage() {
         </div>
       )
     },
-    [open, handleAccordionToggle, renderProcessActions],
+    [open, handleAccordionToggle, renderProcessDetails],
   )
 
   const listSection = useMemo(() => {
@@ -388,7 +481,7 @@ export default function ProcessesPage() {
                     <p className="mt-1 text-sm leading-relaxed text-slate-700">{p.narrative}</p>
                   </div>
                 ) : null}
-                {renderProcessActions(p)}
+                {renderProcessDetails(p)}
                 {kids.length > 0 ? renderChildren(kids, 0) : null}
               </div>
             </AccordionRow>
@@ -396,7 +489,7 @@ export default function ProcessesPage() {
         })}
       </div>
     )
-  }, [filtered, handleAccordionToggle, open, renderProcessActions, renderChildren])
+  }, [filtered, handleAccordionToggle, open, renderProcessDetails, renderChildren])
 
   return (
     <div className="space-y-8">
@@ -455,7 +548,7 @@ export default function ProcessesPage() {
               label="Needs review"
               value={String(discoveryKpis.needsReviewCount)}
               sublabel="Flagged during discovery"
-              helpText="Steps flagged by AI with low confidence scores or incomplete metadata. Expand a process below and look for amber-highlighted items. Use the Confirm or Reject buttons to review each one."
+              helpText="Steps flagged by AI with low confidence scores or insufficient evidence. Expand a process below and look for amber-highlighted items to review evidence sources."
             />
             <KpiCard
               icon={AlertTriangle}
@@ -533,55 +626,3 @@ function AccordionRow({
   )
 }
 
-function SubProcess({
-  title,
-  tags,
-  stat,
-  tone,
-  action,
-}: {
-  title: string
-  tags: string[]
-  stat: string
-  tone: 'ok' | 'bad' | 'ai'
-  action?: ReactNode
-}) {
-  return (
-    <div
-      className={clsx(
-        'flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between',
-        tone === 'bad' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white',
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <span
-          className={clsx(
-            'mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg ring-1 ring-inset',
-            tone === 'ai' && 'bg-violet-50 text-violet-700 ring-violet-200',
-            tone === 'ok' && 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-            tone === 'bad' && 'bg-red-100 text-red-800 ring-red-200',
-          )}
-        >
-          {tone === 'ai' ? <Sparkles className="h-4 w-4" /> : tone === 'bad' ? <Timer className="h-4 w-4" /> : <Workflow className="h-4 w-4" />}
-        </span>
-        <div>
-          <p className="font-semibold text-navy-900">{title}</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {tags.map((t) => (
-              <span
-                key={t}
-                className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-          <p className={clsx('mt-2 text-xs font-semibold', tone === 'bad' ? 'text-red-800' : 'text-slate-600')}>
-            {stat}
-          </p>
-        </div>
-      </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
-    </div>
-  )
-}

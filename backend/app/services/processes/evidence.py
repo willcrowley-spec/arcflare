@@ -218,7 +218,7 @@ async def _load_objects(
     object_names: list[str],
     bundle: EvidenceBundle,
 ) -> int:
-    """Load MetadataObject details into the bundle. Returns next index."""
+    """Load MetadataObject details into the bundle with full operational context."""
     q = await db.execute(
         select(MetadataObject).where(
             MetadataObject.org_id == org_id,
@@ -246,19 +246,67 @@ async def _load_objects(
             break
         fields = fields_by_obj.get(o.id, [])
         custom_fields = [f for f in fields if f.is_custom]
+        required_fields = [f for f in fields if f.is_required]
         relationships = [f for f in fields if f.relationship_to]
+        meta = o.metadata_json or {}
 
-        content_lines = [f"  Records: {o.record_count or 0}"]
+        content_lines = [
+            f"  Type: {'Custom' if o.is_custom else 'Standard'} Object",
+            f"  Records: {o.record_count or 0}",
+            f"  Fields: {o.field_count or len(fields)} ({len(custom_fields)} custom, {len(required_fields)} required)",
+        ]
+
+        if o.managed_package_namespace:
+            content_lines.append(f"  Package: {o.managed_package_namespace}")
+
         if relationships:
             rel_strs = [f"{f.api_name}→{f.relationship_to}" for f in relationships[:10]]
             content_lines.append(f"  Relationships: {', '.join(rel_strs)}")
-        if custom_fields:
-            cf_strs = [f"{f.api_name} ({f.field_type})" for f in custom_fields[:15]]
-            content_lines.append(f"  Custom fields: {', '.join(cf_strs)}")
 
-        rt = (o.metadata_json or {}).get("record_types", [])
-        if rt:
-            content_lines.append(f"  Record types: {', '.join(str(r) for r in rt[:5])}")
+        key_fields = sorted(fields, key=lambda f: (not f.is_required, not f.is_custom))[:15]
+        if key_fields:
+            field_strs = []
+            for f in key_fields:
+                parts = [f"{f.api_name} ({f.field_type})"]
+                if f.is_required:
+                    parts.append("required")
+                if f.relationship_to:
+                    parts.append(f"→{f.relationship_to}")
+                field_strs.append(", ".join(parts))
+            content_lines.append(f"  Key Fields: {'; '.join(field_strs)}")
+
+        vrs = meta.get("validation_rules", [])
+        if vrs:
+            vr_strs = []
+            for vr in vrs[:8]:
+                status = "Active" if vr.get("active") else "Inactive"
+                vr_strs.append(f"{vr.get('name', '?')} [{status}]: {vr.get('error_condition_formula', '?')[:120]}")
+            content_lines.append(f"  Validation Rules ({len(vrs)}): {'; '.join(vr_strs)}")
+
+        ffs = meta.get("formula_fields", [])
+        if ffs:
+            ff_strs = [f"{ff.get('api_name', '?')}={ff.get('formula', '?')[:80]}" for ff in ffs[:6]]
+            content_lines.append(f"  Formula Fields ({len(ffs)}): {'; '.join(ff_strs)}")
+
+        rts = meta.get("record_types", [])
+        if rts:
+            rt_strs = [rt.get("developer_name", "?") if isinstance(rt, dict) else str(rt) for rt in rts[:5]]
+            content_lines.append(f"  Record Types: {', '.join(rt_strs)}")
+
+        sm = meta.get("sharing_model")
+        if sm:
+            content_lines.append(f"  Sharing Model: {sm}")
+
+        rels = meta.get("relationships", [])
+        if rels:
+            extended_rels = []
+            for r in rels[:8]:
+                targets = r.get("targets", [])
+                rtype = r.get("relationship_type", "Lookup")
+                if targets:
+                    extended_rels.append(f"{r.get('field_name', '')}→{','.join(targets)} ({rtype})")
+            if extended_rels:
+                content_lines.append(f"  Object Relationships: {'; '.join(extended_rels)}")
 
         bundle.items.append(EvidenceItem(
             tag=f"OBJ-{idx}",
@@ -301,12 +349,79 @@ async def _load_automations(
         if idx >= MAX_BUNDLE_ITEMS:
             break
         meta = a.metadata_json or {}
-        content_lines = [f"  Type: {a.automation_type}"]
+        content_lines = [f"  Type: {a.automation_type}", f"  Status: {a.status or 'Unknown'}"]
         if a.related_object:
             content_lines.append(f"  Object: {a.related_object}")
         desc = meta.get("description", "")
         if desc:
-            content_lines.append(f"  {desc[:200]}")
+            content_lines.append(f"  Description: {desc[:200]}")
+
+        if a.automation_type == "flow":
+            pt = meta.get("process_type")
+            if pt:
+                content_lines.append(f"  Process Type: {pt}")
+            tt = meta.get("trigger_type")
+            if tt:
+                content_lines.append(f"  Trigger Type: {tt}")
+            objs = meta.get("objects_touched", [])
+            if objs:
+                content_lines.append(f"  Objects Touched: {', '.join(str(o) for o in objs[:10])}")
+            ec = meta.get("element_count")
+            if ec is not None:
+                content_lines.append(f"  Element Count: {ec}")
+            cs = meta.get("complexity_score")
+            if cs is not None:
+                content_lines.append(f"  Complexity: {cs}")
+            elems = meta.get("elements", {})
+            for key in ("decisions", "record_creates", "record_updates", "record_lookups", "subflows", "action_calls"):
+                items = elems.get(key, [])
+                if items:
+                    names = [str(i.get("name", "?")) for i in items if isinstance(i, dict)][:6]
+                    if names:
+                        content_lines.append(f"  {key}: {', '.join(names)}")
+            variables = meta.get("variables", [])
+            if variables:
+                var_names = [str(v.get("name", "")) for v in variables if isinstance(v, dict)][:8]
+                if var_names:
+                    content_lines.append(f"  Variables: {', '.join(var_names)}")
+            formulas = meta.get("formulas", [])
+            if formulas:
+                for f in formulas[:3]:
+                    content_lines.append(f"  Formula: {f.get('name', '?')} = {f.get('expression', '?')[:80]}")
+
+        elif a.automation_type == "workflow_rule":
+            criteria = meta.get("criteria", {})
+            if criteria.get("formula"):
+                content_lines.append(f"  Criteria: {criteria['formula'][:120]}")
+            if criteria.get("trigger_type"):
+                content_lines.append(f"  Trigger: {criteria['trigger_type']}")
+            actions = meta.get("actions", {})
+            for atype in ("field_updates", "email_alerts", "outbound_messages", "tasks"):
+                alist = actions.get(atype, [])
+                if alist:
+                    names = [str(ac.get("name", "?")) for ac in alist if isinstance(ac, dict)]
+                    content_lines.append(f"  {atype}: {', '.join(names)}")
+
+        elif a.automation_type == "approval_process":
+            if meta.get("entry_criteria_formula"):
+                content_lines.append(f"  Entry Criteria: {meta['entry_criteria_formula'][:120]}")
+            steps = meta.get("steps", [])
+            for step in steps[:4]:
+                content_lines.append(f"  Step {step.get('number', '?')}: assignee={step.get('assignee_type', '?')}")
+            fa = meta.get("final_approval_actions", [])
+            if fa:
+                content_lines.append(f"  Final Actions: {', '.join(ac.get('name', '?') for ac in fa)}")
+
+        elif a.automation_type == "trigger":
+            events = meta.get("trigger_events", [])
+            if events:
+                content_lines.append(f"  Events: {', '.join(str(e) for e in events)}")
+            dml = meta.get("dml_objects", [])
+            if dml:
+                content_lines.append(f"  DML Objects: {', '.join(str(o) for o in dml[:8])}")
+            soql = meta.get("soql_objects", [])
+            if soql:
+                content_lines.append(f"  SOQL Objects: {', '.join(str(o) for o in soql[:8])}")
 
         bundle.items.append(EvidenceItem(
             tag=f"AUTO-{idx - start_idx}",
@@ -343,10 +458,16 @@ async def _load_components(
         if idx >= MAX_BUNDLE_ITEMS:
             break
         meta = c.metadata_json or {}
-        content = f"  Category: {c.component_category}"
+        content_lines = [f"  Category: {c.component_category}"]
         desc = meta.get("description", "")
         if desc:
-            content += f"\n  {desc[:200]}"
+            content_lines.append(f"  Description: {desc[:200]}")
+        related = meta.get("related_objects", [])
+        if related:
+            content_lines.append(f"  Related Objects: {', '.join(str(o) for o in related[:8])}")
+        api_version = meta.get("api_version")
+        if api_version:
+            content_lines.append(f"  API Version: {api_version}")
 
         bundle.items.append(EvidenceItem(
             tag=f"COMP-{idx - start_idx}",
@@ -355,7 +476,7 @@ async def _load_components(
             api_name=c.api_name,
             label=c.label or c.api_name,
             category=c.component_category or "",
-            content=content,
+            content="\n".join(content_lines),
         ))
         idx += 1
 

@@ -568,7 +568,12 @@ _V2_CHILD = {
             "additionalProperties": False,
         },
     },
-    "required": ["name", "level", "description", "evidence_refs"],
+    "required": [
+        "name", "level", "description", "evidence_refs",
+        "actors", "trigger_conditions", "system_touchpoints",
+        "value_classification", "automation_potential", "complexity_score",
+        "confidence", "needs_review",
+    ],
     "additionalProperties": False,
 }
 
@@ -622,7 +627,11 @@ DISCOVERY_V2_EXTRACTION_SCHEMA: dict = {
                     "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
                     "children": {"type": "array", "items": _V2_CHILD},
                 },
-                "required": ["name", "description", "evidence_refs", "confidence"],
+                "required": [
+                    "name", "description", "evidence_refs", "confidence",
+                    "actors", "trigger_conditions", "system_touchpoints",
+                    "value_classification", "automation_potential",
+                ],
                 "additionalProperties": False,
             },
         },
