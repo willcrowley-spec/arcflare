@@ -37,11 +37,8 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS ix_discovery_cache_lookup "
         "ON discovery_cache (org_id, prompt_hash, operation)"
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_hnsw "
-        "ON document_chunks USING hnsw (embedding vector_cosine_ops) "
-        "WITH (m = 16, ef_construction = 64)"
-    )
+    # HNSW index on document_chunks.embedding handled post-migration
+    # (too large for synchronous build within healthcheck window)
 
 
 def downgrade() -> None:
