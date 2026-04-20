@@ -48,7 +48,6 @@ export interface Organization {
 
 export interface AnalysisConfig {
   velocity_window_days: number
-  classification_threshold: number
   min_records_for_vectorization: number
   embedding_provider: string
   vector_store_provider: string

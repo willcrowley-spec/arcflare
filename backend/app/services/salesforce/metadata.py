@@ -33,10 +33,8 @@ from app.models.metadata import (
 )
 from app.models.organization import Organization
 from app.services.connectors.base import (
-    AutomationMeta,
     PermissionMeta,
     PlatformObjectMeta,
-    UIComponentMeta,
     UsageData,
 )
 from app.services.salesforce.apex_parser.analyzer import analyze_apex_class, analyze_apex_trigger
@@ -222,153 +220,6 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
     return results
 
 
-def _legacy_pull_flows(sf: Salesforce) -> list[AutomationMeta]:
-    try:
-        raw = _tooling_query_all(sf, "SELECT Id,MasterLabel,ProcessType,Status,Description FROM Flow")
-        results = []
-        for flow in raw:
-            pt = flow.get("ProcessType", "")
-            auto_type = "process_builder" if pt in ("Workflow", "InvocableProcess") else "flow"
-            results.append(
-                AutomationMeta(
-                    api_name=flow.get("Id", ""),
-                    label=flow.get("MasterLabel", ""),
-                    automation_type=auto_type,
-                    is_active=flow.get("Status") == "Active",
-                    description=flow.get("Description"),
-                    related_objects=[],
-                )
-            )
-        logger.info("sf_flows_pulled count=%d", len(results))
-        return results
-    except Exception as e:
-        logger.warning("sf_flows_failed error=%s", e)
-        return []
-
-
-def _legacy_pull_apex_triggers(sf: Salesforce) -> list[AutomationMeta]:
-    try:
-        soql = (
-            "SELECT Id,Name,ApiVersion,Status,"
-            "EntityDefinition.QualifiedApiName,"
-            "UsageBeforeInsert,UsageBeforeUpdate,UsageBeforeDelete,"
-            "UsageAfterInsert,UsageAfterUpdate,UsageAfterDelete,UsageAfterUndelete "
-            "FROM ApexTrigger WHERE NamespacePrefix=null"
-        )
-        raw = _tooling_query_all(sf, soql)
-        results = []
-        for trigger in raw:
-            entity_def = trigger.get("EntityDefinition") or {}
-            related_object = entity_def.get("QualifiedApiName", "")
-            events = [
-                k.replace("Usage", "")
-                for k in [
-                    "UsageBeforeInsert",
-                    "UsageBeforeUpdate",
-                    "UsageBeforeDelete",
-                    "UsageAfterInsert",
-                    "UsageAfterUpdate",
-                    "UsageAfterDelete",
-                    "UsageAfterUndelete",
-                ]
-                if trigger.get(k)
-            ]
-            results.append(
-                AutomationMeta(
-                    api_name=trigger.get("Name", ""),
-                    label=trigger.get("Name", ""),
-                    automation_type="trigger",
-                    is_active=trigger.get("Status") == "Active",
-                    description=f"Events: {', '.join(events)}" if events else None,
-                    related_objects=[related_object] if related_object else [],
-                )
-            )
-        logger.info("sf_apex_triggers_pulled count=%d", len(results))
-        return results
-    except Exception as e:
-        logger.warning("sf_apex_triggers_failed error=%s", e)
-        return []
-
-
-def _legacy_pull_apex_classes(sf: Salesforce) -> list[dict]:
-    try:
-        soql = (
-            "SELECT Id,Name,ApiVersion,Status,LengthWithoutComments "
-            "FROM ApexClass WHERE NamespacePrefix=null"
-        )
-        return _tooling_query_all(sf, soql)
-    except Exception as e:
-        logger.warning("sf_apex_classes_failed error=%s", e)
-        return []
-
-
-def _legacy_pull_validation_rules_bulk(sf: Salesforce, object_names: list[str]) -> dict[str, list[dict]]:
-    """Pull all validation rules in a single Tooling API query, grouped by object."""
-    result_map: dict[str, list[dict]] = {name: [] for name in object_names}
-    try:
-        soql = (
-            "SELECT Id,ValidationName,Active,Description,ErrorMessage,"
-            "EntityDefinition.QualifiedApiName "
-            "FROM ValidationRule"
-        )
-        rows = _tooling_query_all(sf, soql)
-        for vr in rows:
-            entity = (vr.get("EntityDefinition") or {}).get("QualifiedApiName", "")
-            if entity in result_map:
-                result_map[entity].append(vr)
-        logger.info("sf_validation_rules_bulk count=%d", len(rows))
-    except Exception as e:
-        logger.warning("sf_validation_rules_bulk_failed error=%s", e)
-    return result_map
-
-
-def _legacy_pull_workflow_rules(sf: Salesforce) -> list[AutomationMeta]:
-    try:
-        raw = _tooling_query_all(sf, "SELECT Id,Name,TableEnumOrId FROM WorkflowRule")
-        results = []
-        for rule in raw:
-            related_object = rule.get("TableEnumOrId", "")
-            results.append(
-                AutomationMeta(
-                    api_name=rule.get("Name", rule.get("Id", "")),
-                    label=rule.get("Name", ""),
-                    automation_type="workflow_rule",
-                    is_active=True,
-                    related_objects=[related_object] if related_object else [],
-                )
-            )
-        logger.info("sf_workflow_rules_pulled count=%d", len(results))
-        return results
-    except Exception as e:
-        logger.warning("sf_workflow_rules_failed error=%s", e)
-        return []
-
-
-def _legacy_pull_approval_processes(sf: Salesforce) -> list[AutomationMeta]:
-    try:
-        result = sf.restful("process/approvals")
-        approvals = result.get("approvals", {})
-        results = []
-        for name, details in approvals.items():
-            items = details if isinstance(details, list) else [details] if isinstance(details, dict) else []
-            for item in items:
-                results.append(
-                    AutomationMeta(
-                        api_name=item.get("id", name),
-                        label=item.get("name", name),
-                        automation_type="approval_process",
-                        is_active=True,
-                        description=item.get("description"),
-                        related_objects=[name] if name else [],
-                    )
-                )
-        logger.info("sf_approval_processes_pulled count=%d", len(results))
-        return results
-    except Exception as e:
-        logger.warning("sf_approval_processes_failed error=%s", e)
-        return []
-
-
 def _legacy_pull_business_processes(sf: Salesforce) -> list[dict]:
     """Pull BusinessProcess metadata (SalesProcess, SupportProcess, LeadProcess)."""
     try:
@@ -457,46 +308,6 @@ def pull_profiles(sf: Salesforce) -> list[PermissionMeta]:
         return results
     except Exception as e:
         logger.warning("sf_profiles_failed error=%s", e)
-        return []
-
-
-def _legacy_pull_page_layouts(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
-    results: list[UIComponentMeta] = []
-    for obj_name in object_names:
-        try:
-            result = sf.restful(f"sobjects/{obj_name}/describe/layouts")
-            for layout in result.get("layouts", []):
-                results.append(
-                    UIComponentMeta(
-                        api_name=layout.get("id", ""),
-                        label=layout.get("name", f"{obj_name} Layout"),
-                        component_type="page_layout",
-                        related_object=obj_name,
-                    )
-                )
-        except Exception:
-            continue
-    logger.info("sf_page_layouts_pulled count=%d", len(results))
-    return results
-
-
-def _legacy_pull_flexipages(sf: Salesforce) -> list[UIComponentMeta]:
-    try:
-        raw = _tooling_query_all(
-            sf,
-            "SELECT Id,DeveloperName,MasterLabel,Description,Type FROM FlexiPage WHERE NamespacePrefix=null",
-        )
-        return [
-            UIComponentMeta(
-                api_name=r.get("DeveloperName", r.get("Id", "")),
-                label=r.get("MasterLabel", ""),
-                component_type="lightning_page",
-                description=r.get("Description"),
-            )
-            for r in raw
-        ]
-    except Exception as e:
-        logger.warning("sf_flexipages_failed error=%s", e)
         return []
 
 
@@ -620,31 +431,12 @@ def pull_usage_data(
     )
 
 
-def _legacy_pull_all_automations(sf: Salesforce) -> list[AutomationMeta]:
-    automations: list[AutomationMeta] = []
-    automations.extend(_legacy_pull_flows(sf))
-    automations.extend(_legacy_pull_apex_triggers(sf))
-    automations.extend(_legacy_pull_workflow_rules(sf))
-    automations.extend(_legacy_pull_approval_processes(sf))
-    logger.info("sf_all_automations_complete total=%d", len(automations))
-    return automations
-
-
 def pull_all_permissions(sf: Salesforce) -> list[PermissionMeta]:
     permissions: list[PermissionMeta] = []
     permissions.extend(pull_permission_sets(sf))
     permissions.extend(pull_profiles(sf))
     logger.info("sf_all_permissions_complete total=%d", len(permissions))
     return permissions
-
-
-def _legacy_pull_all_ui_components(sf: Salesforce, object_names: list[str]) -> list[UIComponentMeta]:
-    components: list[UIComponentMeta] = []
-    components.extend(_legacy_pull_page_layouts(sf, object_names))
-    components.extend(_legacy_pull_flexipages(sf))
-    logger.info("sf_all_ui_components_complete total=%d", len(components))
-    return components
-
 
 
 async def _mdapi_retrieve_files(sf: Salesforce) -> dict[str, bytes]:
@@ -1012,8 +804,6 @@ async def sync_metadata(
     object_patches: dict[str, dict[str, Any]] = mdapi_bundle["object_patches"]
 
     await _emit("phase_start", "Processing automations...", phase="automations")
-    automations: list[AutomationMeta] = []
-    # Extract VRs from MDAPI-parsed CustomObject data instead of Tooling API
     all_validation_rules: list[dict] = []
     for obj_api_name, patch in mdapi_bundle["object_patches"].items():
         for vr in patch.get("validation_rules", []):
@@ -1035,7 +825,7 @@ async def sync_metadata(
     )
 
     await _emit("phase_start", "Processing UI components...", phase="ui_components")
-    ui_components: list[UIComponentMeta] = []
+    flexi_count = mdapi_bundle["counts"]["flexi"]
     await _emit(
         "phase_complete",
         f"UI components complete — {mdapi_bundle['counts']['flexi']} items",
@@ -1111,27 +901,6 @@ async def sync_metadata(
         phase="mdapi_parse",
         detail=mdapi_bundle["counts"],
     )
-
-    for auto in automations:
-        if not auto.is_active:
-            continue
-        rel = auto.related_objects[0] if auto.related_objects else None
-        db.add(
-            MetadataAutomation(
-                connection_id=connection_id,
-                org_id=org_id,
-                api_name=auto.api_name,
-                label=auto.label,
-                automation_type=auto.automation_type,
-                status="Active" if auto.is_active else "Inactive",
-                related_object=rel,
-                metadata_json={
-                    "description": auto.description,
-                    "related_objects": auto.related_objects,
-                    "is_active": auto.is_active,
-                },
-            )
-        )
 
     for vr in all_validation_rules:
         db.add(
@@ -1366,13 +1135,14 @@ async def sync_metadata(
     connection.entity_count = len(objects)
     await db.commit()
 
+    automation_count = len(mdapi_bundle["pending_automations"]) + len(all_validation_rules)
     logger.info(
         "sync_metadata_complete connection=%s objects=%d automations=%d permissions=%d ui=%d apex=%d packages=%d",
         connection_id,
         len(objects),
-        len(automations),
+        automation_count,
         len(permissions),
-        len(ui_components),
+        flexi_count,
         apex_class_count,
         len(packages),
     )

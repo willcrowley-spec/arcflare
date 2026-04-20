@@ -1,4 +1,4 @@
-"""Object classification and velocity scoring."""
+"""Object classification: binary include/exclude based on record count."""
 import logging
 from uuid import UUID
 
@@ -10,25 +10,11 @@ from app.models.organization import Organization
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG = {
-    "velocity_window_days": 30,
-    "classification_threshold": 0.1,
-    "min_records_for_vectorization": 1,
-}
 
-
-def _get_config(org: Organization) -> dict:
-    config = org.analysis_config or {}
-    return {**DEFAULT_CONFIG, **config}
-
-
-def classify_object(record_count: int, velocity_score: float, threshold: float) -> str:
+def classify_object(record_count: int) -> str:
     if record_count == 0:
-        return "deprecated"
-    ratio = velocity_score / record_count if record_count > 0 else 0.0
-    if ratio > threshold:
-        return "operational"
-    return "configuration"
+        return "excluded"
+    return "included"
 
 
 async def run_classification(
@@ -41,9 +27,6 @@ async def run_classification(
     if org is None:
         logger.warning("classification_skipped org=%s reason=org_not_found", org_id)
         return 0
-    config = _get_config(org)
-    threshold = config["classification_threshold"]
-
     filters = [
         MetadataObject.org_id == org_id,
         MetadataObject.classification_source != "manual",
@@ -54,9 +37,9 @@ async def run_classification(
     result = await db.execute(select(MetadataObject).where(*filters))
     objects = result.scalars().all()
 
-    counts = {"operational": 0, "configuration": 0, "deprecated": 0}
+    counts = {"included": 0, "excluded": 0}
     for obj in objects:
-        obj.classification = classify_object(obj.record_count, obj.velocity_score, threshold)
+        obj.classification = classify_object(obj.record_count)
         counts[obj.classification] = counts.get(obj.classification, 0) + 1
 
     await db.flush()

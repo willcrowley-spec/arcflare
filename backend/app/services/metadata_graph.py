@@ -172,8 +172,8 @@ def _edges_from_object_relationships(api: str, rels: list) -> list[dict]:
     for r in rels:
         if not isinstance(r, dict):
             continue
-        ref = r.get("referenceTo") or r.get("references_to") or []
-        rtype = r.get("relationshipType", r.get("type", "lookup")).lower()
+        ref = r.get("referenceTo") or r.get("references_to") or r.get("targets") or []
+        rtype = r.get("relationshipType", r.get("relationship_type", r.get("type", "lookup"))).lower()
         rel = "master_detail" if "master" in rtype else "lookup"
         targets = ref if isinstance(ref, list) else [ref]
         for t in targets:

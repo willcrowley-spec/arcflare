@@ -366,7 +366,7 @@ async def vectorize_org_metadata(
                 MetadataObject.record_count > 0,
                 sa.or_(
                     MetadataObject.classification.is_(None),
-                    MetadataObject.classification.notin_(["empty", "deprecated"]),
+                    MetadataObject.classification != "excluded",
                 ),
             )
         )

@@ -29,7 +29,7 @@ class Organization(Base):
         JSONB,
         nullable=False,
         server_default=text(
-            "'{\"velocity_window_days\":30,\"classification_threshold\":0.1,"
+            "'{\"velocity_window_days\":30,"
             "\"min_records_for_vectorization\":1,\"embedding_provider\":\"default\","
             "\"vector_store_provider\":\"default\",\"llm_provider\":\"default\"}'::jsonb"
         ),

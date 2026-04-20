@@ -87,7 +87,7 @@ For each domain:
 - Explain your reasoning briefly
 
 Do NOT use generic templates. Derive domains from what you actually see in the data.
-Objects with zero records or classified as "deprecated" have been excluded."""
+Objects classified as "excluded" (zero records or manually excluded) have been omitted."""
 
 _DISCOVERY_DOMAIN_PROTOCOL = """Return a JSON object matching the enforced schema:
 {

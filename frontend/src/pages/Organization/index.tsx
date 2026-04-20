@@ -124,11 +124,9 @@ function normalizeAnalysisSettings(x: unknown): AnalysisConfig | null {
   if (!x || typeof x !== 'object') return null
   const o = x as Record<string, unknown>
   const velocity = typeof o.velocity_window_days === 'number' ? o.velocity_window_days : 30
-  const threshold = typeof o.classification_threshold === 'number' ? o.classification_threshold : 0.1
   const minVec = typeof o.min_records_for_vectorization === 'number' ? o.min_records_for_vectorization : 1
   return {
     velocity_window_days: velocity,
-    classification_threshold: threshold,
     min_records_for_vectorization: minVec,
     embedding_provider: typeof o.embedding_provider === 'string' ? o.embedding_provider : 'default',
     vector_store_provider: typeof o.vector_store_provider === 'string' ? o.vector_store_provider : 'default',
@@ -238,13 +236,11 @@ export default function OrganizationPage() {
   const analysis = useMemo(() => normalizeAnalysisSettings(settings), [settings])
 
   const [velocityDraft, setVelocityDraft] = useState('')
-  const [thresholdDraft, setThresholdDraft] = useState('')
   const [minVecDraft, setMinVecDraft] = useState('')
 
   useEffect(() => {
     if (!analysis) return
     setVelocityDraft(String(analysis.velocity_window_days))
-    setThresholdDraft(String(analysis.classification_threshold))
     setMinVecDraft(String(analysis.min_records_for_vectorization))
   }, [analysis])
 
@@ -264,16 +260,6 @@ export default function OrganizationPage() {
     if (analysis && n === analysis.velocity_window_days) return
     patchSetting({ velocity_window_days: n })
   }, [velocityDraft, analysis, patchSetting])
-
-  const saveThreshold = useCallback(() => {
-    const n = parseFloat(thresholdDraft)
-    if (Number.isNaN(n) || n < 0) {
-      if (analysis) setThresholdDraft(String(analysis.classification_threshold))
-      return
-    }
-    if (analysis && n === analysis.classification_threshold) return
-    patchSetting({ classification_threshold: n })
-  }, [thresholdDraft, analysis, patchSetting])
 
   const saveMinVec = useCallback(() => {
     const n = parseInt(minVecDraft, 10)
@@ -489,7 +475,7 @@ export default function OrganizationPage() {
           <ErrorState message="Analysis settings response was invalid." />
         ) : (
           <div className={clsx(cardClass, 'space-y-6')}>
-            <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-3">
+            <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2">
               <AnalysisField
                 id="velocity-window"
                 label="Velocity window"
@@ -498,17 +484,6 @@ export default function OrganizationPage() {
                 value={velocityDraft}
                 onChange={setVelocityDraft}
                 onBlur={saveVelocity}
-                disabled={updateSettings.isPending}
-              />
-              <AnalysisField
-                id="classification-threshold"
-                label="Classification threshold"
-                helpText="Velocity-to-record ratio above which an object is classified as operational vs configuration. Lower values classify more objects as operational."
-                value={thresholdDraft}
-                onChange={setThresholdDraft}
-                onBlur={saveThreshold}
-                step="0.01"
-                inputMode="decimal"
                 disabled={updateSettings.isPending}
               />
               <AnalysisField

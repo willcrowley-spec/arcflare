@@ -1,24 +1,13 @@
 import { useMemo } from 'react'
 import clsx from 'clsx'
-import { Database } from 'lucide-react'
+import { Database, Eye, EyeOff } from 'lucide-react'
 import { DataTable, type ColumnDef } from '@/components/DataTable'
 import { useUpdateClassification } from '@/hooks/useApi'
 import type { MetadataObject } from '@/types'
 
-const CLASSIFICATIONS = ['operational', 'configuration', 'deprecated'] as const
-type ClassificationValue = (typeof CLASSIFICATIONS)[number]
-
-const CLASS_SELECT_STYLE: Record<ClassificationValue, string> = {
-  operational: 'bg-emerald-50 text-emerald-900 border-emerald-200',
-  configuration: 'bg-sky-50 text-sky-900 border-sky-200',
-  deprecated: 'bg-amber-50 text-amber-900 border-amber-200',
-}
-
-function normalizeClassification(raw: string | null | undefined): ClassificationValue {
+function isIncluded(raw: string | null | undefined): boolean {
   const v = (raw ?? '').toLowerCase().trim()
-  if (v === 'empty') return 'deprecated'
-  if (CLASSIFICATIONS.includes(v as ClassificationValue)) return v as ClassificationValue
-  return 'deprecated'
+  return v !== 'excluded'
 }
 
 function velocityPresentation(score: number | undefined, recordCount: number | undefined) {
@@ -42,6 +31,49 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
   const columns: ColumnDef<MetadataObject>[] = useMemo(
     () => [
       {
+        id: 'included',
+        header: 'Included',
+        className: 'w-[80px]',
+        sortValue: (row) => (isIncluded(row.classification) ? 1 : 0),
+        cell: (row) => {
+          const pending =
+            updateClassification.isPending && updateClassification.variables?.objectId === row.id
+          const included = pending
+            ? isIncluded(updateClassification.variables?.classification)
+            : isIncluded(row.classification)
+          const Icon = included ? Eye : EyeOff
+
+          return (
+            <div
+              className="inline-flex items-center"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                aria-label={`${included ? 'Exclude' : 'Include'} ${row.api_name}`}
+                className={clsx(
+                  'flex h-7 w-7 items-center justify-center rounded-md transition-all',
+                  included
+                    ? 'text-navy-700 hover:bg-navy-50 hover:text-navy-900'
+                    : 'text-slate-300 hover:bg-slate-50 hover:text-slate-500',
+                  pending && 'pointer-events-none opacity-40',
+                )}
+                disabled={pending}
+                onClick={() => {
+                  updateClassification.mutate({
+                    objectId: row.id,
+                    classification: included ? 'excluded' : 'included',
+                  })
+                }}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            </div>
+          )
+        },
+      },
+      {
         id: 'entity',
         header: 'Entity',
         className: 'min-w-[200px]',
@@ -63,48 +95,6 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
         header: 'Type',
         sortValue: (row) => row.object_type ?? '',
         cell: (row) => <span className="text-slate-700">{row.object_type?.trim() || '—'}</span>,
-      },
-      {
-        id: 'classification',
-        header: 'Classification',
-        sortValue: (row) => normalizeClassification(row.classification),
-        cell: (row) => {
-          const pending =
-            updateClassification.isPending && updateClassification.variables?.objectId === row.id
-          const value = pending
-            ? normalizeClassification(updateClassification.variables?.classification)
-            : normalizeClassification(row.classification)
-          const selectStyle = CLASS_SELECT_STYLE[value]
-
-          return (
-            <div
-              className="inline-flex items-center"
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              <select
-                aria-label={`Classification for ${row.api_name}`}
-                className={clsx(
-                  'cursor-pointer appearance-none rounded-full border px-3 py-1 text-xs font-semibold shadow-sm transition-colors',
-                  selectStyle,
-                  pending && 'opacity-50',
-                )}
-                value={value}
-                disabled={pending}
-                onChange={(e) => {
-                  const next = e.target.value as ClassificationValue
-                  updateClassification.mutate({ objectId: row.id, classification: next })
-                }}
-              >
-                {CLASSIFICATIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )
-        },
       },
       {
         id: 'records',
@@ -162,9 +152,7 @@ export function DataObjectsTable({ rows, isLoading }: DataObjectsTableProps) {
       defaultSortCol="records"
       defaultSortDir="desc"
       getRowClassName={(r) => {
-        const rc = r.record_count ?? 0
-        const cls = normalizeClassification(r.classification)
-        if (rc === 0 || cls === 'deprecated') return 'opacity-60'
+        if (!isIncluded(r.classification)) return 'opacity-50'
         return undefined
       }}
     />
