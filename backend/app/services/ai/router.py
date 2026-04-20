@@ -189,6 +189,8 @@ def llm_call(
         if thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             kwargs["max_tokens"] = max(kwargs["max_tokens"], thinking_budget + 1024)
+        elif model.startswith("gemini/"):
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 0}
 
         response = litellm.completion(**kwargs)
 
