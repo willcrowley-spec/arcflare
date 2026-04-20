@@ -36,14 +36,14 @@ def upgrade() -> None:
         "ON communities (source)"
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_communities_summary_embedding_hnsw "
-        "ON communities USING hnsw (summary_embedding vector_cosine_ops) "
-        "WITH (m = 16, ef_construction = 64)"
+        "CREATE INDEX IF NOT EXISTS ix_communities_summary_embedding_ivfflat "
+        "ON communities USING ivfflat (summary_embedding vector_cosine_ops) "
+        "WITH (lists = 4)"
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_communities_summary_embedding_hnsw")
+    op.execute("DROP INDEX IF EXISTS ix_communities_summary_embedding_ivfflat")
     op.execute("ALTER TABLE communities DROP COLUMN IF EXISTS summary_embedding")
     op.drop_index("ix_communities_source", table_name="communities")
     op.drop_column("communities", "summary")
