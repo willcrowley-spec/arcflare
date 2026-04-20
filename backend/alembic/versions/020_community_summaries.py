@@ -35,15 +35,12 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS ix_communities_source "
         "ON communities (source)"
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_communities_summary_embedding_ivfflat "
-        "ON communities USING ivfflat (summary_embedding vector_cosine_ops) "
-        "WITH (lists = 4)"
-    )
+    # No vector index needed — communities table is tiny (10-30 rows per org).
+    # Sequential scan with cosine distance is effectively instant.
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_communities_summary_embedding_ivfflat")
+    pass  # no vector index to drop
     op.execute("ALTER TABLE communities DROP COLUMN IF EXISTS summary_embedding")
     op.drop_index("ix_communities_source", table_name="communities")
     op.drop_column("communities", "summary")
