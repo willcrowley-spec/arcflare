@@ -285,7 +285,13 @@ async def semantic_document_search(
     query_text: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Find document chunks via community-filtered vector search, with global fallback."""
+    """Find document chunks via summary-boosted vector search.
+
+    Uses community summary embeddings to identify thematically relevant
+    communities, then boosts chunks from those communities in the global
+    cosine-distance ranking.  Cross-cutting queries still get global results;
+    community-aligned chunks rank higher.
+    """
     from app.services.ai.router import get_embedding_provider
     from app.services.documents.vectorizer import _embed
 
@@ -313,62 +319,45 @@ async def semantic_document_search(
         .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
     )
 
-    community_chunk_ids: set | None = None
+    boosted_chunk_ids: set = set()
     try:
-        from app.services.documents.concepts import extract_noun_phrases
-        from app.models.knowledge import Concept, Community, ChunkCommunity
+        from app.models.knowledge import Community, ChunkCommunity
 
-        query_phrases = extract_noun_phrases(query_text)
-        query_concepts = {canonical for canonical, _ in query_phrases}
-
-        if query_concepts:
-            communities_q = await db.execute(
-                select(Community).where(Community.org_id == org_id)
+        top_comms_q = await db.execute(
+            select(Community.id)
+            .where(
+                Community.org_id == org_id,
+                Community.source == "document",
+                Community.summary_embedding.isnot(None),
             )
-            relevant_comm_ids = []
-            for comm in communities_q.scalars().all():
-                if not comm.member_concept_ids:
-                    continue
-                uuid_ids = []
-                for c in comm.member_concept_ids:
-                    try:
-                        uuid_ids.append(UUID(c))
-                    except (ValueError, AttributeError):
-                        continue
-                if not uuid_ids:
-                    continue
-                concept_names_q = await db.execute(
-                    select(Concept.name).where(
-                        Concept.id.in_(uuid_ids)
-                    )
-                )
-                comm_names = {r[0] for r in concept_names_q.all()}
-                if query_concepts & comm_names:
-                    relevant_comm_ids.append(comm.id)
-
-            if relevant_comm_ids:
-                cc_q = await db.execute(
-                    select(ChunkCommunity.chunk_id).where(
-                        ChunkCommunity.community_id.in_(relevant_comm_ids)
-                    )
-                )
-                community_chunk_ids = {row[0] for row in cc_q.all()}
-    except Exception:
-        logger.warning("community_filter_failed, falling back to global", exc_info=True)
-
-    if community_chunk_ids:
-        comm_q = await db.execute(
-            base_query.where(DocumentChunk.id.in_(community_chunk_ids)).limit(limit)
+            .order_by(Community.summary_embedding.cosine_distance(query_embedding))
+            .limit(3)
         )
-        community_chunks = list(comm_q.scalars().all())
-        remaining = limit - len(community_chunks)
-        if remaining > 0:
-            seen = {c.id for c in community_chunks}
-            global_q = await db.execute(base_query.limit(limit + len(seen)))
-            extras = [c for c in global_q.scalars().all() if c.id not in seen][:remaining]
-            all_chunks = community_chunks + extras
-        else:
-            all_chunks = community_chunks
+        top_comm_ids = [row[0] for row in top_comms_q.all()]
+
+        if top_comm_ids:
+            cc_q = await db.execute(
+                select(ChunkCommunity.chunk_id).where(
+                    ChunkCommunity.community_id.in_(top_comm_ids)
+                )
+            )
+            boosted_chunk_ids = {row[0] for row in cc_q.all()}
+    except Exception:
+        logger.warning("community_boost_failed, falling back to global", exc_info=True)
+
+    if boosted_chunk_ids:
+        boost_slots = max(1, limit // 2)
+        global_slots = limit - boost_slots
+
+        comm_q = await db.execute(
+            base_query.where(DocumentChunk.id.in_(boosted_chunk_ids)).limit(boost_slots)
+        )
+        boosted_chunks = list(comm_q.scalars().all())
+        seen = {c.id for c in boosted_chunks}
+
+        global_q = await db.execute(base_query.limit(limit + len(seen)))
+        global_chunks = [c for c in global_q.scalars().all() if c.id not in seen]
+        all_chunks = boosted_chunks + global_chunks[: limit - len(boosted_chunks)]
     else:
         q = await db.execute(base_query.limit(limit))
         all_chunks = list(q.scalars().all())
@@ -472,4 +461,49 @@ async def gather_dependency_subgraph(
             "metadata": e.metadata_json or {},
         }
         for e in edges_q.scalars().all()
+    ]
+
+
+async def get_relevant_metadata_summaries(
+    org_id: UUID,
+    db: AsyncSession,
+    query_text: str,
+    limit: int = 5,
+) -> list[dict]:
+    """Find metadata community summaries most relevant to the query.
+
+    Returns top-K metadata communities ranked by summary embedding similarity.
+    Each dict contains: id, label, summary, member_count, members (top node IDs).
+    """
+    from app.services.ai.router import get_embedding_provider
+    from app.services.documents.vectorizer import _embed
+    from app.models.knowledge import Community
+
+    try:
+        client = get_embedding_provider()
+        query_embedding = await _embed(client, query_text)
+    except Exception as exc:
+        logger.error("metadata_summary_embed_failed org_id=%s error=%s", org_id, exc)
+        return []
+
+    comms_q = await db.execute(
+        select(Community)
+        .where(
+            Community.org_id == org_id,
+            Community.source == "metadata",
+            Community.summary_embedding.isnot(None),
+        )
+        .order_by(Community.summary_embedding.cosine_distance(query_embedding))
+        .limit(limit)
+    )
+
+    return [
+        {
+            "id": str(c.id),
+            "label": c.label,
+            "summary": c.summary,
+            "member_count": (c.metadata_json or {}).get("member_count", 0),
+            "members": (c.member_concept_ids or [])[:15],
+        }
+        for c in comms_q.scalars().all()
     ]

@@ -31,12 +31,15 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
     Returns list of new community IDs.
     """
     async def _clear_existing() -> None:
+        doc_comm_ids = select(Community.id).where(
+            Community.org_id == org_id, Community.source == "document"
+        )
         await db.execute(delete(ChunkCommunity).where(
-            ChunkCommunity.community_id.in_(
-                select(Community.id).where(Community.org_id == org_id)
-            )
+            ChunkCommunity.community_id.in_(doc_comm_ids)
         ))
-        await db.execute(delete(Community).where(Community.org_id == org_id))
+        await db.execute(delete(Community).where(
+            Community.org_id == org_id, Community.source == "document"
+        ))
         await db.flush()
 
     concepts_q = await db.execute(
@@ -105,6 +108,7 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
         community = Community(
             org_id=org_id,
             level=0,
+            source="document",
             label=label,
             member_concept_ids=[str(cid) for cid in member_concept_ids],
             metadata_json={
@@ -123,7 +127,9 @@ async def detect_communities(org_id: UUID, db: AsyncSession) -> list[UUID]:
 async def link_chunks_to_communities(org_id: UUID, db: AsyncSession) -> None:
     """Link document chunks to communities based on concept membership."""
     communities_q = await db.execute(
-        select(Community).where(Community.org_id == org_id)
+        select(Community).where(
+            Community.org_id == org_id, Community.source == "document"
+        )
     )
     communities = communities_q.scalars().all()
 

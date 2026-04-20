@@ -20,6 +20,7 @@ def vectorize_document_task(document_id: str) -> str:
     from app.services.documents.vectorizer import vectorize_chunks
     from app.services.documents.concepts import extract_and_store_concepts, compute_pmi_weights
     from app.services.documents.communities import detect_communities, link_chunks_to_communities
+    from app.services.community_summarizer import summarize_document_communities
 
     from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
 
@@ -65,6 +66,7 @@ def vectorize_document_task(document_id: str) -> str:
                 community_ids = await detect_communities(doc.org_id, session)
                 if community_ids:
                     await link_chunks_to_communities(doc.org_id, session)
+                    await summarize_document_communities(doc.org_id, session)
 
                 doc.chunk_count = len(chunks)
                 doc.concept_count = concept_count

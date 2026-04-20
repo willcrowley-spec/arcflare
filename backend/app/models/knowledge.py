@@ -7,12 +7,14 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
 
 from app.core.database import Base
 
@@ -92,12 +94,17 @@ class Community(Base):
     )
     level: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     label: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="document", index=True
+    )
     member_concept_ids: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     metadata_json: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_embedding: Mapped[list[float] | None] = mapped_column(Vector(3072), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

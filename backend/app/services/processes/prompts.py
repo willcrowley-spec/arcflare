@@ -253,11 +253,28 @@ _FALLBACK_PASS3_PROTOCOL = """Return a JSON object matching the enforced schema:
 }"""
 
 
+def _format_technical_modules(technical_modules: list[dict] | None) -> str:
+    if not technical_modules:
+        return ""
+    lines = ["\n## Technical Modules (Auto-detected from metadata dependency analysis)"]
+    for mod in technical_modules:
+        label = mod.get("label", "Unnamed")
+        summary = mod.get("summary", "")
+        members = mod.get("members", [])[:10]
+        lines.append(f"\n### {label}")
+        if summary:
+            lines.append(summary)
+        if members:
+            lines.append("Key members: " + ", ".join(members))
+    return "\n".join(lines) + "\n"
+
+
 def _pass1_dynamic_sections(
     org_context: dict,
     metadata_summary: dict,
     document_summary: list[dict],
     document_index: list[dict] | None = None,
+    technical_modules: list[dict] | None = None,
 ) -> str:
     totals = metadata_summary["totals"]
     doc_index_section = ""
@@ -283,7 +300,7 @@ Components: {totals['components']}
 
 ### Components
 {json.dumps(metadata_summary['components'][:40], indent=2)}{doc_index_section}
-
+{_format_technical_modules(technical_modules)}
 ## Relevant Document Excerpts
 {excerpts}"""
 
@@ -293,6 +310,7 @@ def _stage2_dynamic_sections(
     domain: dict,
     metadata_detail: dict,
     document_chunks: list[dict],
+    metadata_modules: list[dict] | None = None,
 ) -> str:
     excerpts = (
         json.dumps(
@@ -302,6 +320,7 @@ def _stage2_dynamic_sections(
         if document_chunks
         else "No relevant documents found."
     )
+    modules_section = _format_technical_modules(metadata_modules)
     return f"""## Domain
 Name: {domain['name']}
 Description: {domain['description']}
@@ -311,7 +330,7 @@ Description: {domain['description']}
 
 ## Detailed Metadata for This Domain
 {json.dumps(metadata_detail, indent=2)}
-
+{modules_section}
 ## Relevant Document Excerpts
 {excerpts}"""
 
@@ -401,6 +420,7 @@ async def build_pass1_prompt(
     metadata_summary: dict,
     document_summary: list[dict],
     document_index: list[dict] | None = None,
+    technical_modules: list[dict] | None = None,
 ) -> PromptParts:
     blocks = await resolve_prompt_blocks("discovery_domain", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -417,7 +437,9 @@ async def build_pass1_prompt(
             org_id,
         )
         protocol = _FALLBACK_PASS1_PROTOCOL
-    middle = _pass1_dynamic_sections(org_context, metadata_summary, document_summary, document_index)
+    middle = _pass1_dynamic_sections(
+        org_context, metadata_summary, document_summary, document_index, technical_modules
+    )
     return PromptParts(
         system=f"{instructions}\n\n{protocol}",
         context=middle,
@@ -432,6 +454,7 @@ async def build_stage2_prompt(
     domain: dict,
     metadata_detail: dict,
     document_chunks: list[dict],
+    metadata_modules: list[dict] | None = None,
 ) -> PromptParts:
     """Stage 2: Structural Decomposition prompt."""
     blocks = await resolve_prompt_blocks("discovery_structure", org_id, db)
@@ -444,7 +467,9 @@ async def build_stage2_prompt(
         logger.warning("discovery_prompt_fallback stage=2 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE2_PROTOCOL
     org_section = f"## Organization Context\n{json.dumps(org_context, indent=2)}"
-    domain_section = _stage2_dynamic_sections(org_context, domain, metadata_detail, document_chunks)
+    domain_section = _stage2_dynamic_sections(
+        org_context, domain, metadata_detail, document_chunks, metadata_modules
+    )
     return PromptParts(
         system=f"{instructions}\n\n{protocol}",
         context=org_section,

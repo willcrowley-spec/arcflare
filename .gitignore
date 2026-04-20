@@ -38,3 +38,6 @@ logs/
 # Temp analysis dumps
 arcflare-local-demo_FULL_DUMP.txt
 arcflare-local-demo-temp/
+
+# Salesforce local config
+.sfdx/

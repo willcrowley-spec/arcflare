@@ -18,8 +18,10 @@ class CommunityResponse(BaseModel):
     id: UUID
     label: str | None
     level: int
+    source: str
     member_concept_ids: list[str]
     metadata_json: dict
+    summary: str | None = None
 
     model_config = {"from_attributes": True}
 

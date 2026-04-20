@@ -16,6 +16,7 @@ def sync_metadata_task(connection_id: str) -> str:
         from app.core.config import get_settings
         from app.models.connection import PlatformConnection
         from app.services.classification import run_classification
+        from app.services.community_summarizer import summarize_metadata_communities
         from app.services.metadata_graph import build_dependency_graph, detect_metadata_communities
         from app.services.metadata_vectorizer import vectorize_org_metadata
         from app.services.salesforce.metadata import sync_metadata
@@ -68,6 +69,7 @@ def sync_metadata_task(connection_id: str) -> str:
                     if conn_obj:
                         edge_count = await build_dependency_graph(UUID(connection_id), conn_obj.org_id, session)
                         await detect_metadata_communities(UUID(connection_id), conn_obj.org_id, session)
+                        await summarize_metadata_communities(conn_obj.org_id, session)
                     else:
                         edge_count = 0
                     await emitter.emit(

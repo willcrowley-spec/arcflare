@@ -20,6 +20,15 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "group": "metadata",
         "description": "Generates business-context descriptions for platform objects with few fields/records. Uses the cheapest model for bulk throughput.",
     },
+    "community_summarization": {
+        "model": "gemini/gemini-2.0-flash-lite",
+        "tier": "lite",
+        "thinking_budget": 0,
+        "output_format": "text",
+        "label": "Community Summarization",
+        "group": "metadata",
+        "description": "Generates 2-3 sentence summaries for metadata and document community clusters (GraphRAG retrieval anchors).",
+    },
     "entity_extraction": {
         "model": "gemini/gemini-2.5-flash",
         "tier": "fast",

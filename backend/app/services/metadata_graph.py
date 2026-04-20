@@ -6,7 +6,6 @@ from uuid import UUID
 
 import igraph
 import leidenalg
-import sqlalchemy as sa
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -335,7 +334,7 @@ async def detect_metadata_communities(
     await db.execute(
         delete(Community).where(
             Community.org_id == org_id,
-            sa.cast(Community.metadata_json["source"], sa.String) == "metadata_graph",
+            Community.source == "metadata",
         )
     )
     await db.flush()
@@ -368,10 +367,10 @@ async def detect_metadata_communities(
             Community(
                 org_id=org_id,
                 level=0,
+                source="metadata",
                 label=label[:512],
                 member_concept_ids=member_ids,
                 metadata_json={
-                    "source": "metadata_graph",
                     "connection_id": str(connection_id),
                     "member_count": len(member_ids),
                 },

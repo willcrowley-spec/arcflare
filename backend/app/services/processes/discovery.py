@@ -24,6 +24,7 @@ from app.services.processes.context import (
     gather_metadata_relationships,
     gather_metadata_summary,
     gather_org_context,
+    get_relevant_metadata_summaries,
     semantic_document_search,
 )
 from app.services.processes.prompts import (
@@ -237,9 +238,11 @@ async def run_stage1(
         org_desc = org_ctx.get("description") or org_ctx.get("name", "")
         doc_chunks = await semantic_document_search(org_id, db, org_desc, limit=20)
         doc_index = await gather_document_summary(org_id, db)
+        tech_modules = await get_relevant_metadata_summaries(org_id, db, org_desc, limit=5)
 
         prompt = await build_pass1_prompt(
-            org_id, db, org_ctx, meta_summary, doc_chunks, document_index=doc_index,
+            org_id, db, org_ctx, meta_summary, doc_chunks,
+            document_index=doc_index, technical_modules=tech_modules,
         )
 
         result, parsed = await asyncio.to_thread(
@@ -350,16 +353,23 @@ async def run_stage2(
 
         all_doc_chunks = await batch_semantic_search(org_id, db, domain_queries, limit=20)
 
-        domain_contexts: list[tuple[BusinessProcess, dict, list[dict]]] = []
+        domain_meta_modules: list[list[dict]] = []
+        for query in domain_queries:
+            modules = await get_relevant_metadata_summaries(org_id, db, query, limit=3)
+            domain_meta_modules.append(modules)
+
+        domain_contexts: list[tuple[BusinessProcess, dict, list[dict], list[dict]]] = []
         for i, domain in enumerate(domains):
             doc_chunks = all_doc_chunks[i] if i < len(all_doc_chunks) else []
-            domain_contexts.append((domain, domain_meta_details[i], doc_chunks))
+            modules = domain_meta_modules[i] if i < len(domain_meta_modules) else []
+            domain_contexts.append((domain, domain_meta_details[i], doc_chunks, modules))
 
         domain_prompts: list[tuple[BusinessProcess, str]] = []
-        for domain, meta_detail, doc_chunks in domain_contexts:
+        for domain, meta_detail, doc_chunks, modules in domain_contexts:
             domain_dict = {"name": domain.name, "description": domain.description or ""}
             prompt = await build_stage2_prompt(
                 org_id, db, org_ctx, domain_dict, meta_detail, doc_chunks,
+                metadata_modules=modules,
             )
             domain_prompts.append((domain, prompt))
 
