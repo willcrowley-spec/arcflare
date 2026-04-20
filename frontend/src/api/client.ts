@@ -158,16 +158,16 @@ export const api = {
     getObject: (id: string) => request<MetadataObject>(`/metadata/objects/${id}`),
     getObjectTelemetry: (id: string) => request<RecordTelemetry[]>(`/metadata/objects/${id}/telemetry`),
     getObjectFields: (id: string) => request<MetadataField[]>(`/metadata/objects/${id}/fields`),
-    summary: () => request<MetadataSummary>('/metadata/summary/'),
+    summary: () => request<MetadataSummary>('/metadata/summary'),
     listAutomation: (params?: { page?: number; page_size?: number }) =>
-      request<PaginatedResponse<MetadataAutomation>>(withQuery('/metadata/automation/', params)),
+      request<PaginatedResponse<MetadataAutomation>>(withQuery('/metadata/automation', params)),
     listComponents: (params?: {
       page?: number
       page_size?: number
       component_category?: string
       q?: string
     }) =>
-      request<PaginatedResponse<MetadataComponent>>(withQuery('/metadata/components/', params)),
+      request<PaginatedResponse<MetadataComponent>>(withQuery('/metadata/components', params)),
     getVelocity: () => request<VelocityMetrics>('/analysis/velocity'),
     updateClassification: (objectId: string, classification: string) =>
       request<unknown>(`/metadata/objects/${objectId}/classification`, {
@@ -297,8 +297,8 @@ export const api = {
         body: JSON.stringify(data),
       }),
     costModel: () => request<unknown>('/organization/cost-model'),
-    licensing: () => request<Record<string, unknown>>('/organization/licensing/'),
-    userVelocity: () => request<unknown[]>('/organization/user-velocity/'),
+    licensing: () => request<Record<string, unknown>>('/organization/licensing'),
+    userVelocity: () => request<unknown[]>('/organization/user-velocity'),
     syncFromSalesforce: () =>
       request<void>('/organization/sync-from-salesforce', { method: 'POST' }),
     models: () => request<ModelCatalog>('/organization/models'),
