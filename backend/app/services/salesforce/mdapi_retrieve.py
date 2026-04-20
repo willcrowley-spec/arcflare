@@ -96,16 +96,44 @@ def _poll_retrieve(sf: Salesforce, async_process_id: str, timeout: int = 300) ->
     raise MDAPIRetrieveError(f"retrieve timed out after {timeout}s (last_state={last_state})")
 
 
+_MDAPI_TO_SOURCE_SUFFIX: dict[str, str] = {
+    ".flow": ".flow-meta.xml",
+    ".object": ".object-meta.xml",
+    ".workflow": ".workflow-meta.xml",
+    ".approvalprocess": ".approvalprocess-meta.xml",
+    ".flexipage": ".flexipage-meta.xml",
+}
+
+
+def _normalize_mdapi_path(name: str) -> str:
+    """Convert MDAPI zip paths to SFDX source-format suffixes.
+
+    The MDAPI retrieve returns e.g. ``flows/My_Flow.flow`` while the parsers
+    expect ``flows/My_Flow.flow-meta.xml``.  Apex files (``.cls``,
+    ``.trigger``) already match and are left untouched.
+    """
+    if "-meta.xml" in name:
+        return name
+    lower = name.lower()
+    for mdapi_suffix, source_suffix in _MDAPI_TO_SOURCE_SUFFIX.items():
+        if lower.endswith(mdapi_suffix):
+            return name[: len(name) - len(mdapi_suffix)] + source_suffix
+    return name
+
+
 def _extract_zip(zip_bytes: bytes) -> dict[str, bytes]:
     out: dict[str, bytes] = {}
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in zf.namelist():
+        raw_names = zf.namelist()
+        logger.debug("mdapi_zip_namelist count=%d entries=%s", len(raw_names), raw_names[:30])
+        for name in raw_names:
             if name.endswith("/"):
                 continue
             if ".." in name or name.startswith("/") or name.startswith("\\"):
                 logger.warning("zip_entry_rejected path=%s", name)
                 continue
-            out[name] = zf.read(name)
+            normalized = _normalize_mdapi_path(name)
+            out[normalized] = zf.read(name)
     return out
 
 

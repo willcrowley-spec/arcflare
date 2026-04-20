@@ -340,12 +340,18 @@ Relevant documents:
 def _stage4_dynamic_sections(
     enriched_tree: list[dict],
     metadata_relationships: dict,
+    dependency_graph: list[dict] | None = None,
 ) -> str:
-    return f"""## Enriched Process Hierarchy
-{json.dumps(enriched_tree, indent=2)}
-
-## Metadata Relationships (lookups, automations)
-{json.dumps(metadata_relationships, indent=2)}"""
+    sections = [
+        f"## Enriched Process Hierarchy\n{json.dumps(enriched_tree, indent=2)}",
+        f"## Metadata Relationships (lookups, automations)\n{json.dumps(metadata_relationships, indent=2)}",
+    ]
+    if dependency_graph:
+        sections.append(
+            f"## Dependency Graph (flows, triggers, apex DML, business processes)\n"
+            f"{json.dumps(dependency_graph, indent=2)}"
+        )
+    return "\n\n".join(sections)
 
 
 def _stage5_dynamic_sections(
@@ -462,6 +468,7 @@ async def build_stage4_prompt(
     db: AsyncSession,
     enriched_tree: list[dict],
     metadata_relationships: dict,
+    dependency_graph: list[dict] | None = None,
 ) -> str:
     """Stage 4: Flow & Handoff Analysis prompt."""
     blocks = await resolve_prompt_blocks("discovery_flow", org_id, db)
@@ -473,7 +480,7 @@ async def build_stage4_prompt(
     if not protocol:
         logger.warning("discovery_prompt_fallback stage=4 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE4_PROTOCOL
-    middle = _stage4_dynamic_sections(enriched_tree, metadata_relationships)
+    middle = _stage4_dynamic_sections(enriched_tree, metadata_relationships, dependency_graph)
     return f"{instructions}\n\n{middle}\n\n{protocol}"
 
 

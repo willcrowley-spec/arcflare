@@ -277,7 +277,7 @@ async def build_dependency_graph(connection_id: UUID, org_id: UUID, db: AsyncSes
             all_edges.append({
                 "source_type": "business_process",
                 "source_api_name": bp.api_name,
-                "edge_type": "defines_process_for",
+                "relationship_type": "defines_process_for",
                 "target_type": "object",
                 "target_api_name": bp.related_object,
                 "metadata_json": {

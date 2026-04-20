@@ -5,8 +5,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import sqlalchemy as sa
+
 from app.models.document import Document, DocumentChunk
-from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataField, MetadataObject
+from app.models.metadata import (
+    MetadataAutomation,
+    MetadataComponent,
+    MetadataDependency,
+    MetadataField,
+    MetadataObject,
+)
 from app.models.organization import Organization
 
 logger = logging.getLogger(__name__)
@@ -365,3 +373,39 @@ async def gather_metadata_relationships(
     ]
 
     return {"relationships": relationships, "automations": automations}
+
+
+async def gather_dependency_subgraph(
+    org_id: UUID,
+    db: AsyncSession,
+    object_names: list[str],
+    max_edges: int = 200,
+) -> list[dict]:
+    """Return dependency graph edges touching the given object set (1-hop).
+
+    Scoped to edges where either source or target api_name is in the object
+    set so prompt token budget stays bounded.
+    """
+    if not object_names:
+        return []
+
+    edges_q = await db.execute(
+        select(MetadataDependency).where(
+            MetadataDependency.org_id == org_id,
+            sa.or_(
+                MetadataDependency.source_api_name.in_(object_names),
+                MetadataDependency.target_api_name.in_(object_names),
+            ),
+        ).limit(max_edges)
+    )
+    return [
+        {
+            "source": e.source_api_name,
+            "source_type": e.source_type,
+            "relationship": e.relationship_type,
+            "target": e.target_api_name,
+            "target_type": e.target_type,
+            "metadata": e.metadata_json or {},
+        }
+        for e in edges_q.scalars().all()
+    ]

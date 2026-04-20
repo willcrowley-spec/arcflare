@@ -17,6 +17,7 @@ from app.models.metadata import MetadataAutomation, MetadataObject
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.services.ai.router import LLMResult, llm_call, parse_json_response
 from app.services.processes.context import (
+    gather_dependency_subgraph,
     gather_document_summary,
     gather_metadata_for_domain,
     gather_metadata_relationships,
@@ -651,7 +652,10 @@ async def run_stage4(
                         all_objects.add(art.get("api_name", ""))
 
             relationships = await gather_metadata_relationships(org_id, db, list(all_objects))
-            prompt = await build_stage4_prompt(org_id, db, enriched_tree, relationships)
+            dep_graph = await gather_dependency_subgraph(org_id, db, list(all_objects))
+            prompt = await build_stage4_prompt(
+                org_id, db, enriched_tree, relationships, dependency_graph=dep_graph,
+            )
             s4_payloads.append((domain, domain_procs, prompt))
 
         async def _flow_domain(domain: BusinessProcess, prompt: str) -> tuple[LLMResult, dict]:

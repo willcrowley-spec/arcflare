@@ -360,19 +360,21 @@ async def vectorize_org_metadata(
     org_id: UUID,
     db: AsyncSession,
 ) -> int:
+    sync_filename = f"metadata-sync-{connection_id}.txt"
     existing = await db.execute(
         select(Document).where(
             Document.org_id == org_id,
             Document.mime_type == SYNTHETIC_MIME,
-            Document.tags.contains([str(connection_id)]),
+            Document.filename == sync_filename,
         )
     )
-    old_doc = existing.scalar_one_or_none()
-    if old_doc:
+    old_docs = existing.scalars().all()
+    for old_doc in old_docs:
         await db.execute(
             DocumentChunk.__table__.delete().where(DocumentChunk.document_id == old_doc.id)
         )
         await db.delete(old_doc)
+    if old_docs:
         await db.flush()
 
     chunks: list[dict] = []
@@ -468,7 +470,7 @@ async def vectorize_org_metadata(
 
     doc = Document(
         org_id=org_id,
-        filename=f"metadata-sync-{connection_id}.txt",
+        filename=sync_filename,
         mime_type=SYNTHETIC_MIME,
         status="indexed",
         tags=[str(connection_id)],
