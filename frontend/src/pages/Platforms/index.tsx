@@ -269,9 +269,11 @@ export default function PlatformDetailPage() {
     if (!connection) return
     const cid = String(connection.id)
     setSyncingId(cid)
-    setActiveSyncId(cid)
-    setSyncKey((k) => k + 1)
     syncConnection.mutate(cid, {
+      onSuccess: () => {
+        setActiveSyncId(cid)
+        setSyncKey((k) => k + 1)
+      },
       onSettled: () => setSyncingId(null),
     })
   }, [syncConnection, connection])

@@ -136,10 +136,12 @@ export default function AnalysisPage() {
   const onSync = useCallback(
     (id: string) => {
       setSyncingId(id)
-      setActiveSyncId(id)
-      setSyncKey((k) => k + 1)
       setShowSyncModal(true)
       syncConnection.mutate(id, {
+        onSuccess: () => {
+          setActiveSyncId(id)
+          setSyncKey((k) => k + 1)
+        },
         onSettled: () => setSyncingId(null),
       })
     },
