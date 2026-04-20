@@ -43,41 +43,34 @@ function statusBadgeClass(status: string) {
   return 'bg-slate-100 text-slate-700 ring-slate-200/80'
 }
 
-function DocumentTopicsCell({ documentId }: { documentId: string }) {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['documents', 'communities', documentId],
-    queryFn: () => api.documents.communities(documentId),
-    staleTime: 60_000,
-  })
-
-  if (isLoading) {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-        …
-      </span>
-    )
-  }
-  if (isError || !data?.length) {
-    return <span className="text-xs text-slate-400">—</span>
-  }
+function StatusCell({ doc }: { doc: Document }) {
+  const isProcessing = ['processing', 'uploading', 'uploaded'].includes(doc.status.toLowerCase())
   return (
-    <div className="flex max-w-[220px] flex-wrap gap-1">
-      {data.slice(0, 4).map((c) => (
-        <span
-          key={c.id}
-          title={c.label ?? c.id}
-          className="max-w-[104px] truncate rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-900 ring-1 ring-violet-200/80"
-        >
-          {c.label?.trim() || c.id.slice(0, 8)}
+    <div className="flex flex-col gap-0.5">
+      <span
+        className={clsx(
+          'inline-flex w-fit rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1',
+          statusBadgeClass(doc.status),
+        )}
+      >
+        {doc.status}
+      </span>
+      {isProcessing && doc.processing_phase && (
+        <span className="flex items-center gap-1 text-[10px] text-amber-700">
+          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+          {doc.processing_phase}
         </span>
-      ))}
-      {data.length > 4 ? (
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200/80">
-          +{data.length - 4}
-        </span>
-      ) : null}
+      )}
     </div>
+  )
+}
+
+function SummaryCell({ summary }: { summary: string | null }) {
+  if (!summary) return <span className="text-xs text-slate-400">—</span>
+  return (
+    <span className="line-clamp-2 text-xs text-slate-600" title={summary}>
+      {summary}
+    </span>
   )
 }
 
@@ -175,7 +168,7 @@ export default function DocumentsPage() {
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Size</th>
                     <th className="px-4 py-3">Uploaded</th>
-                    <th className="px-4 py-3">Topics</th>
+                    <th className="px-4 py-3">Summary</th>
                     <th className="px-4 py-3">Chunks</th>
                     <th className="px-4 py-3">Tags</th>
                   </tr>
@@ -204,19 +197,12 @@ export default function DocumentsPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
-                        <span
-                          className={clsx(
-                            'inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1',
-                            statusBadgeClass(doc.status),
-                          )}
-                        >
-                          {doc.status}
-                        </span>
+                        <StatusCell doc={doc} />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatBytes(doc.file_size_bytes)}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDate(doc.created_at)}</td>
-                      <td className="px-4 py-3 align-top">
-                        <DocumentTopicsCell documentId={doc.id} />
+                      <td className="max-w-[280px] px-4 py-3 align-top">
+                        <SummaryCell summary={doc.summary ?? null} />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-700">{doc.chunk_count}</td>
                       <td className="px-4 py-3">

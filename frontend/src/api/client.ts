@@ -8,6 +8,8 @@ import type {
   Community,
   DiscoveryStatus,
   Document,
+  DocumentChunk,
+  DocumentConcept,
   DocumentSearchResult,
   DomainGraphResponse,
   FleetAnalytics,
@@ -195,6 +197,10 @@ export const api = {
         body: JSON.stringify({ query }),
       }),
     delete: (id: string) => request<void>(`/documents/${id}`, { method: 'DELETE' }),
+    chunks: (documentId: string) =>
+      request<DocumentChunk[]>(`/documents/${documentId}/chunks`),
+    concepts: (documentId: string) =>
+      request<DocumentConcept[]>(`/documents/${documentId}/concepts`),
     communities: (documentId: string) =>
       request<Community[]>(`/documents/${documentId}/communities`),
     provenance: (documentId: string) =>

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Loader2, Sparkles, Trash2, X } from 'lucide-react'
 import clsx from 'clsx'
 import { api } from '@/api/client'
-import type { Document } from '@/types'
+import type { Document, DocumentChunk, DocumentConcept } from '@/types'
 
 type DocumentDetailProps = {
   documentId: string | null
@@ -36,19 +36,96 @@ function formatDate(iso: string | null | undefined): string {
 
 function statusBadge(status: string) {
   const s = status.toLowerCase()
-  if (s === 'indexed') {
-    return 'bg-emerald-50 text-emerald-800 ring-emerald-200/80'
-  }
-  if (s === 'uploaded') {
-    return 'bg-sky-50 text-sky-800 ring-sky-200/80'
-  }
-  if (s === 'processing' || s === 'uploading' || s === 'vectorizing' || s === 'analyzing') {
+  if (s === 'indexed') return 'bg-emerald-50 text-emerald-800 ring-emerald-200/80'
+  if (s === 'uploaded') return 'bg-sky-50 text-sky-800 ring-sky-200/80'
+  if (['processing', 'uploading', 'vectorizing', 'analyzing'].includes(s)) {
     return 'bg-amber-50 text-amber-900 ring-amber-200/80'
   }
-  if (s === 'error' || s === 'failed') {
-    return 'bg-red-50 text-red-800 ring-red-200/80'
-  }
+  if (s === 'error' || s === 'failed') return 'bg-red-50 text-red-800 ring-red-200/80'
   return 'bg-slate-100 text-slate-700 ring-slate-200/80'
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  downloading: 'Downloading file…',
+  parsing: 'Parsing document…',
+  embedding: 'Generating embeddings…',
+  'extracting concepts': 'Extracting concepts…',
+  summarizing: 'Generating summary…',
+}
+
+function ProcessingProgress({ phase }: { phase: string | null }) {
+  const steps = ['downloading', 'parsing', 'embedding', 'extracting concepts', 'summarizing']
+  const currentIdx = phase ? steps.indexOf(phase) : -1
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin text-amber-700" />
+        <span className="text-sm font-semibold text-amber-900">
+          {phase ? PHASE_LABELS[phase] ?? `${phase}…` : 'Processing…'}
+        </span>
+      </div>
+      <div className="flex gap-1">
+        {steps.map((step, i) => (
+          <div
+            key={step}
+            className={clsx(
+              'h-1.5 flex-1 rounded-full transition-colors',
+              i < currentIdx
+                ? 'bg-amber-500'
+                : i === currentIdx
+                  ? 'animate-pulse bg-amber-400'
+                  : 'bg-amber-200',
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ChunkCard({ chunk }: { chunk: DocumentChunk }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasContext = !!chunk.contextualized_content && chunk.contextualized_content !== chunk.content
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white text-sm">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50/80"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+        )}
+        <span className="flex-1 truncate text-navy-900">
+          {chunk.section_title || `Chunk ${chunk.chunk_index + 1}`}
+        </span>
+        {chunk.page_number != null && (
+          <span className="shrink-0 text-[11px] text-slate-400">p.{chunk.page_number}</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="border-t border-slate-100 px-3 py-2.5">
+          {hasContext && (
+            <div className="mb-2 rounded border border-violet-100 bg-violet-50/50 px-2.5 py-1.5">
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-500">
+                AI Context
+              </p>
+              <p className="text-xs leading-relaxed text-violet-900">
+                {chunk.contextualized_content}
+              </p>
+            </div>
+          )}
+          <p className="whitespace-pre-wrap leading-relaxed text-slate-700">
+            {chunk.content ?? '(empty)'}
+          </p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function DocumentDetail({ documentId, initial, open, onClose }: DocumentDetailProps) {
@@ -56,19 +133,30 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
   const [tagInput, setTagInput] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  const isProcessing = (s?: string) =>
+    s != null && ['processing', 'uploading', 'uploaded'].includes(s.toLowerCase())
+
   const detailQuery = useQuery({
     queryKey: ['documents', 'detail', documentId],
     queryFn: () => api.documents.get(documentId!),
     enabled: open && !!documentId,
-    refetchInterval: open && documentId ? 5000 : false,
+    refetchInterval: open && documentId ? 3000 : false,
   })
 
   const doc = detailQuery.data ?? initial
 
-  const communitiesQuery = useQuery({
-    queryKey: ['documents', 'communities', documentId],
-    queryFn: () => api.documents.communities(documentId!),
-    enabled: open && !!documentId,
+  const chunksQuery = useQuery({
+    queryKey: ['documents', 'chunks', documentId],
+    queryFn: () => api.documents.chunks(documentId!),
+    enabled: open && !!documentId && !isProcessing(doc?.status),
+    staleTime: 60_000,
+  })
+
+  const conceptsQuery = useQuery({
+    queryKey: ['documents', 'concepts', documentId],
+    queryFn: () => api.documents.concepts(documentId!),
+    enabled: open && !!documentId && !isProcessing(doc?.status),
+    staleTime: 60_000,
   })
 
   const provenanceQuery = useQuery({
@@ -129,6 +217,8 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
   }
 
   const provenanceIds = useMemo(() => provenanceQuery.data ?? [], [provenanceQuery.data])
+  const concepts = conceptsQuery.data ?? []
+  const chunks = chunksQuery.data ?? []
 
   if (!open) return null
 
@@ -140,7 +230,7 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
         className="absolute inset-0 bg-navy-900/40 backdrop-blur-[1px] transition-opacity"
         onClick={onClose}
       />
-      <aside className="relative flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-200 ease-out">
+      <aside className="relative flex h-full w-full max-w-lg flex-col border-l border-slate-200 bg-white shadow-2xl transition-transform duration-200 ease-out">
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Document</p>
@@ -181,6 +271,20 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
                 ) : null}
               </div>
 
+              {isProcessing(doc.status) && <ProcessingProgress phase={doc.processing_phase ?? null} />}
+
+              {doc.summary && (
+                <section>
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                    Summary
+                  </h3>
+                  <p className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-sm leading-relaxed text-navy-900">
+                    {doc.summary}
+                  </p>
+                </section>
+              )}
+
               <dl className="space-y-3 text-sm">
                 <div className="flex justify-between gap-4 border-b border-slate-100 py-2">
                   <dt className="text-slate-500">File size</dt>
@@ -209,6 +313,25 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
                   </div>
                 ) : null}
               </dl>
+
+              {concepts.length > 0 && (
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Key Concepts
+                  </h3>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {concepts.map((c) => (
+                      <span
+                        key={c.id}
+                        title={`${c.display_name ?? c.name} (${c.frequency})`}
+                        className="rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-900 ring-1 ring-violet-200/80"
+                      >
+                        {c.display_name ?? c.name}
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section>
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tags</h3>
@@ -252,43 +375,25 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
                 </div>
               </section>
 
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Communities</h3>
-                {communitiesQuery.isLoading ? (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading…
-                  </div>
-                ) : communitiesQuery.isError ? (
-                  <p className="mt-2 text-sm text-red-600">Could not load communities.</p>
-                ) : (communitiesQuery.data?.length ?? 0) === 0 ? (
-                  <p className="mt-2 text-sm text-slate-500">No communities linked yet.</p>
-                ) : (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {(communitiesQuery.data ?? []).map((c) => (
-                      <span
-                        key={c.id}
-                        className="inline-flex max-w-full truncate rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-semibold text-violet-900 ring-1 ring-violet-200/80"
-                      >
-                        {c.label?.trim() || `Community ${c.id.slice(0, 8)}…`}
-                      </span>
+              {chunks.length > 0 && (
+                <section>
+                  <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <FileText className="h-3.5 w-3.5" />
+                    Chunks ({chunks.length})
+                  </h3>
+                  <div className="mt-2 space-y-2">
+                    {chunks.map((chunk) => (
+                      <ChunkCard key={chunk.id} chunk={chunk} />
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+              )}
 
-              <section>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Provenance</h3>
-                {provenanceQuery.isLoading ? (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading…
-                  </div>
-                ) : provenanceQuery.isError ? (
-                  <p className="mt-2 text-sm text-red-600">Could not load provenance.</p>
-                ) : provenanceIds.length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-500">No linked processes yet.</p>
-                ) : (
+              {provenanceIds.length > 0 && (
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Provenance
+                  </h3>
                   <ul className="mt-2 flex flex-col gap-2">
                     {provenanceIds.map((p) => (
                       <li key={p.id}>
@@ -301,8 +406,8 @@ export function DocumentDetail({ documentId, initial, open, onClose }: DocumentD
                       </li>
                     ))}
                   </ul>
-                )}
-              </section>
+                </section>
+              )}
             </div>
           ) : detailQuery.isLoading ? (
             <div className="flex items-center gap-2 text-sm text-slate-500">

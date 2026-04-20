@@ -42,6 +42,8 @@ class Document(Base):
     tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
     concept_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     community_ids: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")

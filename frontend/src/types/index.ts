@@ -200,15 +200,6 @@ export interface RecordTelemetry {
   unit?: string
 }
 
-export interface DocumentChunk {
-  id: string
-  document_id: string
-  content: string
-  embedding_id?: string
-  page?: number
-  created_at: string
-}
-
 /** Row from document library APIs (`GET /documents`, upload, detail). */
 export interface Document {
   id: string
@@ -218,6 +209,8 @@ export interface Document {
   file_size_bytes: number | null
   storage_path: string | null
   status: string
+  summary: string | null
+  processing_phase: string | null
   error_message: string | null
   uploaded_by: string | null
   tags: string[]
@@ -227,6 +220,22 @@ export interface Document {
   community_ids: string[]
   embedding_model: string | null
   created_at: string
+}
+
+export interface DocumentChunk {
+  id: string
+  chunk_index: number
+  content: string | null
+  contextualized_content: string | null
+  page_number: number | null
+  section_title: string | null
+}
+
+export interface DocumentConcept {
+  id: string
+  name: string
+  display_name: string | null
+  frequency: number
 }
 
 /** Row from `POST /documents/search`. */

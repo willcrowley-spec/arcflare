@@ -5,12 +5,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
-from app.models.document import Document
-from app.models.knowledge import Community, ProcessDocumentSource
+from app.models.document import Document, DocumentChunk
+from app.models.knowledge import Community, Concept, ProcessDocumentSource
 from app.models.organization import User
 from app.schemas.knowledge import CommunityResponse, ProvenanceResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.document import (
+    DocumentChunkResponse,
+    DocumentConceptResponse,
     DocumentResponse,
     DocumentSearchRequest,
     DocumentSearchResult,
@@ -134,6 +136,55 @@ async def delete_document(
 
     await db.delete(doc)
     await db.commit()
+
+
+@router.get("/{document_id}/chunks", response_model=list[DocumentChunkResponse])
+async def get_document_chunks(
+    document_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> list[DocumentChunkResponse]:
+    doc = await db.get(Document, document_id)
+    if doc is None or doc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    q = await db.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    return [DocumentChunkResponse.model_validate(c) for c in q.scalars().all()]
+
+
+@router.get("/{document_id}/concepts", response_model=list[DocumentConceptResponse])
+async def get_document_concepts(
+    document_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> list[DocumentConceptResponse]:
+    doc = await db.get(Document, document_id)
+    if doc is None or doc.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    q = await db.execute(
+        select(DocumentChunk.concept_ids).where(
+            DocumentChunk.document_id == document_id,
+            DocumentChunk.concept_ids.isnot(None),
+        )
+    )
+    concept_ids: set[str] = set()
+    for row in q.all():
+        concept_ids.update(row[0] or [])
+    if not concept_ids:
+        return []
+    concept_uuids = [UUID(cid) for cid in concept_ids]
+    cq = await db.execute(
+        select(Concept).where(Concept.id.in_(concept_uuids)).order_by(Concept.frequency.desc()).limit(50)
+    )
+    return [
+        DocumentConceptResponse(
+            id=c.id, name=c.name, display_name=c.display_name, frequency=c.frequency,
+        )
+        for c in cq.scalars().all()
+    ]
 
 
 @router.get("/{document_id}/communities", response_model=list[CommunityResponse])

@@ -1598,24 +1598,23 @@ async def run_v2_phase1(
             org_id, db, org_desc, limit=10, prefer_level=0,
         )
 
-        from app.models.knowledge import Community
+        from app.models.document import Document
         doc_summaries: list[dict] = []
         try:
             async with db.begin_nested():
                 dq = await db.execute(
-                    select(Community).where(
-                        Community.org_id == org_id,
-                        Community.source == "document",
-                        Community.summary.isnot(None),
-                        Community.level == 0,
-                    ).limit(5)
+                    select(Document).where(
+                        Document.org_id == org_id,
+                        Document.summary.isnot(None),
+                        Document.status == "indexed",
+                    ).limit(10)
                 )
                 doc_summaries = [
-                    {"label": c.label, "summary": c.summary}
-                    for c in dq.scalars().all()
+                    {"label": d.filename, "summary": d.summary}
+                    for d in dq.scalars().all()
                 ]
         except Exception:
-            logger.warning("v2_phase1_doc_community_failed", exc_info=True)
+            logger.warning("v2_phase1_doc_summary_failed", exc_info=True)
 
         from app.services.processes.prompts import build_v2_phase1_prompt
         prompt = await build_v2_phase1_prompt(

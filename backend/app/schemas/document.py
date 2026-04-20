@@ -13,6 +13,8 @@ class DocumentUploadResponse(BaseModel):
     file_size_bytes: int | None
     storage_path: str | None
     status: str
+    summary: str | None = None
+    processing_phase: str | None = None
     chunk_count: int
     content_hash: str | None = None
     concept_count: int = 0
@@ -31,6 +33,8 @@ class DocumentResponse(BaseModel):
     file_size_bytes: int | None
     storage_path: str | None
     status: str
+    summary: str | None = None
+    processing_phase: str | None = None
     error_message: str | None
     uploaded_by: UUID | None
     tags: list
@@ -40,6 +44,24 @@ class DocumentResponse(BaseModel):
     community_ids: list = Field(default_factory=list)
     embedding_model: str | None = None
     created_at: datetime
+
+
+class DocumentChunkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    chunk_index: int
+    content: str | None
+    contextualized_content: str | None
+    page_number: int | None
+    section_title: str | None
+
+
+class DocumentConceptResponse(BaseModel):
+    id: UUID
+    name: str
+    display_name: str | None
+    frequency: int
 
 
 class DocumentSearchRequest(BaseModel):
