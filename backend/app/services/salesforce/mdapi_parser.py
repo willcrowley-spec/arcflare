@@ -313,6 +313,21 @@ def parse_custom_object(xml_bytes: bytes, filename: str) -> dict[str, Any]:
             }
         )
 
+    business_processes: list[dict[str, Any]] = []
+    for bp in root.findall("md:businessProcesses", NS):
+        values = []
+        for v in bp.findall("md:values", NS):
+            values.append({
+                "name": _text(v, "md:fullName"),
+                "default": (_text(v, "md:default") or "").lower() == "true",
+            })
+        business_processes.append({
+            "developer_name": _text(bp, "md:fullName"),
+            "description": _text(bp, "md:description"),
+            "active": (_text(bp, "md:active") or "").lower() == "true",
+            "values": values,
+        })
+
     return {
         "validation_rules": validation_rules,
         "formula_fields": formula_fields,
@@ -320,6 +335,7 @@ def parse_custom_object(xml_bytes: bytes, filename: str) -> dict[str, Any]:
         "field_sets": field_sets,
         "list_views": list_views,
         "web_links": web_links,
+        "business_processes": business_processes,
         "sharing_model": sharing_model,
         "raw_xml_hash": hashlib.sha256(xml_bytes).hexdigest(),
         "source_filename": filename,

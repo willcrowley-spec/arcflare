@@ -267,6 +267,24 @@ async def build_dependency_graph(connection_id: UUID, org_id: UUID, db: AsyncSes
         for comp in part:
             all_edges.extend(_edges_from_apex_class(comp.api_name, comp.metadata_json or {}))
 
+    bp_stmt = select(MetadataComponent).where(
+        MetadataComponent.connection_id == connection_id,
+        MetadataComponent.component_category == "business_process",
+    )
+    bp_results = (await db.execute(bp_stmt)).scalars().all()
+    for bp in bp_results:
+        if bp.related_object:
+            all_edges.append({
+                "source_type": "business_process",
+                "source_api_name": bp.api_name,
+                "edge_type": "defines_process_for",
+                "target_type": "object",
+                "target_api_name": bp.related_object,
+                "metadata_json": {
+                    "stage_count": (bp.metadata_json or {}).get("stage_count", 0),
+                },
+            })
+
     obj_stmt = select(MetadataObject).where(MetadataObject.connection_id == connection_id).execution_options(
         yield_per=YIELD_PER
     )

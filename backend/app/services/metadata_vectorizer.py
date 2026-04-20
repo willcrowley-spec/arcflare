@@ -194,6 +194,7 @@ def _describe_component(comp: MetadataComponent) -> str:
         "report": "Report",
         "dashboard": "Dashboard",
         "installed_package": "Installed Package",
+        "business_process": "Business Process",
     }
     type_label = cat_labels.get(comp.component_category, comp.component_category)
     lines = [
@@ -281,6 +282,24 @@ def describe_component_chunks(comp: MetadataComponent) -> list[tuple[str, str]]:
             chunks.append((f"method_{mname}", "\n".join(mlines)))
 
         return chunks
+
+    elif comp.component_category == "business_process":
+        lines = [
+            f"Business Process: {comp.label or comp.api_name}",
+            f"API Name: {comp.api_name}",
+            f"Related Object: {comp.related_object or 'Unknown'}",
+            f"Status: {comp.status or 'Unknown'}",
+        ]
+        if meta.get("description"):
+            lines.append(f"Description: {meta['description']}")
+        values = meta.get("values", [])
+        if values:
+            stage_names = [v["name"] for v in values if v.get("name")]
+            lines.append(f"Stages ({len(stage_names)}): {' -> '.join(stage_names)}")
+            default_stages = [v["name"] for v in values if v.get("default")]
+            if default_stages:
+                lines.append(f"Default Stage: {default_stages[0]}")
+        return [("", "\n".join(lines))]
 
     elif comp.component_category == "custom_metadata_type":
         lines = [f"Custom Metadata Type: {comp.api_name}"]

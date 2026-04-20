@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections import defaultdict
 import re
 import urllib.parse
@@ -17,6 +18,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from requests.adapters import HTTPAdapter
 from simple_salesforce import Salesforce
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +40,6 @@ from app.services.connectors.base import (
     UsageData,
 )
 from app.services.salesforce.apex_parser.analyzer import analyze_apex_class, analyze_apex_trigger
-from app.services.salesforce.licensing import snapshot_licensing
 from app.services.salesforce.mdapi_parser import (
     parse_approval_process,
     parse_custom_object,
@@ -50,7 +51,6 @@ from app.services.salesforce.mdapi_retrieve import (
     check_mdapi_access,
     retrieve_metadata,
 )
-from app.services.salesforce.user_velocity import snapshot_user_velocity
 
 if TYPE_CHECKING:
     from app.services.sync_event_log import SyncEventEmitter
@@ -92,7 +92,28 @@ def get_sf_client(instance_url: str, access_token: str) -> Salesforce:
     """Create a Salesforce client using the org's latest API version."""
     instance = instance_url.replace("https://", "").replace("http://", "")
     version = _get_latest_api_version(instance_url, access_token)
-    return Salesforce(instance=instance, session_id=access_token, version=version)
+    sf = Salesforce(instance=instance, session_id=access_token, version=version)
+    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
+    sf.session.mount("https://", adapter)
+    return sf
+
+
+_RETRYABLE_STATUSES = {429, 500, 502, 503}
+
+
+def _sf_request_with_retry(fn, *args, max_retries: int = 3, **kwargs):
+    """Retry on transient Salesforce API errors with exponential backoff."""
+    for attempt in range(max_retries + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            status = getattr(e, "status", None) or getattr(e, "code", None)
+            if attempt < max_retries and status in _RETRYABLE_STATUSES:
+                wait = 2 ** (attempt + 1)
+                logger.warning("sf_retry attempt=%d wait=%ds error=%s", attempt + 1, wait, e)
+                time.sleep(wait)
+            else:
+                raise
 
 
 def _tooling_query_all(sf: Salesforce, soql: str) -> list[dict]:
@@ -168,8 +189,54 @@ def pull_object_list(sf: Salesforce) -> list[dict]:
     return result.get("sobjects", [])
 
 
+_COMPOSITE_BATCH_SIZE = 25
+
+
+def _composite_batch_post(sf: Salesforce, subrequests: list[dict]) -> list[dict]:
+    """POST a composite batch and return the list of subrequest results."""
+    url = f"{sf.base_url}/composite/batch"
+    payload = {"batchRequests": subrequests}
+    resp = _sf_request_with_retry(sf.session.post, url, json=payload, timeout=120)
+    resp.raise_for_status()
+    limit_info = resp.headers.get("Sforce-Limit-Info")
+    if limit_info:
+        logger.info("sf_api_limit_info %s", limit_info)
+    return resp.json().get("results", [])
+
+
+def _parse_describe_result(describe: dict, obj_name: str) -> PlatformObjectMeta | None:
+    """Convert a raw describe response dict into a PlatformObjectMeta."""
+    api_name = describe.get("name", obj_name)
+    is_custom = api_name.endswith("__c")
+    is_managed, namespace = _detect_namespace(api_name)
+    fields = _extract_fields(describe)
+    relationships = _extract_relationships(describe)
+    record_type_infos = [
+        {
+            "name": rt.get("name", ""),
+            "developer_name": rt.get("developerName", ""),
+            "is_active": rt.get("active", False),
+            "is_master": rt.get("master", False),
+            "record_type_id": rt.get("recordTypeId", ""),
+        }
+        for rt in describe.get("recordTypeInfos", [])
+        if not rt.get("master", False)
+    ]
+    return PlatformObjectMeta(
+        api_name=api_name,
+        label=describe.get("label", api_name),
+        field_count=len(fields),
+        is_managed_package=is_managed,
+        namespace_prefix=namespace,
+        is_custom=is_custom,
+        fields=fields,
+        relationships=relationships,
+        record_types=record_type_infos,
+    )
+
+
 def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> list[PlatformObjectMeta]:
-    """Pull describes for all (or specified) objects."""
+    """Pull describes for all (or specified) objects via Composite Batch API."""
     if objects is None:
         all_objects = pull_object_list(sf)
         custom = [
@@ -179,68 +246,47 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
         ]
         objects = DEFAULT_OBJECTS + custom
 
+    ver = sf.sf_version
+    batches: list[list[str]] = [
+        objects[i : i + _COMPOSITE_BATCH_SIZE]
+        for i in range(0, len(objects), _COMPOSITE_BATCH_SIZE)
+    ]
+
     results: list[PlatformObjectMeta] = []
-    for obj_name in objects:
+    for batch_idx, batch_names in enumerate(batches):
+        subrequests = [
+            {"method": "GET", "url": f"v{ver}/sobjects/{name}/describe"}
+            for name in batch_names
+        ]
         try:
-            describe = getattr(sf, obj_name).describe()
-            api_name = describe.get("name", "")
-            is_custom = api_name.endswith("__c")
-            is_managed, namespace = _detect_namespace(api_name)
-            fields = _extract_fields(describe)
-            relationships = _extract_relationships(describe)
-            record_type_infos = [
-                {
-                    "name": rt.get("name", ""),
-                    "developer_name": rt.get("developerName", ""),
-                    "is_active": rt.get("active", False),
-                    "is_master": rt.get("master", False),
-                    "record_type_id": rt.get("recordTypeId", ""),
-                }
-                for rt in describe.get("recordTypeInfos", [])
-                if not rt.get("master", False)  # skip the Master record type
-            ]
-
-            results.append(
-                PlatformObjectMeta(
-                    api_name=api_name,
-                    label=describe.get("label", api_name),
-                    field_count=len(fields),
-                    is_managed_package=is_managed,
-                    namespace_prefix=namespace,
-                    is_custom=is_custom,
-                    fields=fields,
-                    relationships=relationships,
-                    record_types=record_type_infos,
-                )
-            )
+            batch_results = _composite_batch_post(sf, subrequests)
         except Exception as e:
-            logger.warning("sf_describe_failed object=%s error=%s", obj_name, e)
+            logger.warning("sf_describe_batch_failed batch=%d error=%s", batch_idx, e)
+            continue
 
-    logger.info("sf_all_describes_complete count=%d", len(results))
+        for name, sub_result in zip(batch_names, batch_results):
+            status_code = sub_result.get("statusCode", 500)
+            if status_code != 200:
+                logger.warning(
+                    "sf_describe_failed object=%s status=%s",
+                    name,
+                    status_code,
+                )
+                continue
+            try:
+                meta = _parse_describe_result(sub_result.get("result", {}), name)
+                if meta:
+                    results.append(meta)
+            except Exception as e:
+                logger.warning("sf_describe_parse_failed object=%s error=%s", name, e)
+
+    logger.info(
+        "sf_all_describes_complete count=%d batches=%d",
+        len(results),
+        len(batches),
+    )
     return results
 
-
-def _legacy_pull_business_processes(sf: Salesforce) -> list[dict]:
-    """Pull BusinessProcess metadata (SalesProcess, SupportProcess, LeadProcess)."""
-    try:
-        raw = _tooling_query_all(
-            sf,
-            "SELECT Id,Name,TableEnumOrId,IsActive,Description FROM BusinessProcess",
-        )
-        results = []
-        for bp in raw:
-            results.append({
-                "id": bp.get("Id", ""),
-                "name": bp.get("Name", ""),
-                "related_object": bp.get("TableEnumOrId", ""),
-                "is_active": bp.get("IsActive", True),
-                "description": bp.get("Description"),
-            })
-        logger.info("sf_business_processes_pulled count=%d", len(results))
-        return results
-    except Exception as e:
-        logger.warning("sf_business_processes_failed error=%s", e)
-        return []
 
 
 def pull_permission_sets(sf: Salesforce) -> list[PermissionMeta]:
@@ -373,46 +419,78 @@ def pull_custom_metadata_types(sf: Salesforce, objects_list: list[dict]) -> list
     return results
 
 
+def _composite_batch_count_queries(
+    sf: Salesforce,
+    queries: list[tuple[str, str]],
+) -> dict[str, int]:
+    """Run COUNT() SOQL queries via Composite Batch. Returns {obj_name: count}."""
+    ver = sf.sf_version
+    counts: dict[str, int] = {}
+    batches = [
+        queries[i : i + _COMPOSITE_BATCH_SIZE]
+        for i in range(0, len(queries), _COMPOSITE_BATCH_SIZE)
+    ]
+    for batch in batches:
+        subrequests = [
+            {"method": "GET", "url": f"v{ver}/query?q={urllib.parse.quote(soql)}"}
+            for _, soql in batch
+        ]
+        try:
+            results = _composite_batch_post(sf, subrequests)
+        except Exception as e:
+            logger.warning("sf_count_batch_failed error=%s", e)
+            for name, _ in batch:
+                counts.setdefault(name, 0)
+            continue
+        for (name, _), sub in zip(batch, results):
+            if sub.get("statusCode") == 200:
+                counts[name] = sub.get("result", {}).get("totalSize", 0)
+            else:
+                counts.setdefault(name, 0)
+    return counts
+
+
 def pull_usage_data(
     sf: Salesforce,
     object_names: list[str],
     recency_days: int = 365,
     velocity_window_days: int = 30,
 ) -> UsageData:
-    """Query record counts (total and recent) for each object."""
+    """Query record counts using /limits/recordCount + Composite Batch for recency/velocity."""
     total_counts: dict[str, int] = {}
     recent_counts: dict[str, int] = {}
     velocity_counts: dict[str, int] = {}
 
-    for obj_name in object_names:
-        try:
-            result = sf.query(f"SELECT COUNT() FROM {obj_name}")
-            total_counts[obj_name] = result.get("totalSize", 0)
-        except Exception:
-            total_counts[obj_name] = 0
+    try:
+        joined = ",".join(object_names)
+        resp = _sf_request_with_retry(sf.restful, f"limits/recordCount?sObjects={joined}")
+        for entry in resp.get("sObjects", []):
+            total_counts[entry["name"]] = entry.get("count", 0)
+    except Exception as e:
+        logger.warning("sf_record_count_failed error=%s — falling back to composite batch", e)
+        fallback_queries = [(n, f"SELECT COUNT() FROM {n}") for n in object_names]
+        total_counts = _composite_batch_count_queries(sf, fallback_queries)
 
-        try:
-            result = sf.query(
-                f"SELECT COUNT() FROM {obj_name} "
-                f"WHERE LastModifiedDate >= LAST_N_DAYS:{recency_days}"
-            )
-            recent_counts[obj_name] = result.get("totalSize", 0)
-        except Exception:
-            recent_counts[obj_name] = 0
+    for name in object_names:
+        total_counts.setdefault(name, 0)
 
-        if total_counts[obj_name] > 0:
-            try:
-                result = sf.query(
-                    f"SELECT COUNT() FROM {obj_name} "
-                    f"WHERE LastModifiedDate >= LAST_N_DAYS:{velocity_window_days}"
-                )
-                velocity_counts[obj_name] = result.get("totalSize", 0)
-            except Exception:
-                velocity_counts[obj_name] = 0
+    recency_queries = [
+        (name, f"SELECT COUNT() FROM {name} WHERE LastModifiedDate >= LAST_N_DAYS:{recency_days}")
+        for name in object_names
+    ]
+    recent_counts = _composite_batch_count_queries(sf, recency_queries)
+
+    velocity_names = [n for n in object_names if total_counts.get(n, 0) > 0]
+    if velocity_names:
+        velocity_queries = [
+            (name, f"SELECT COUNT() FROM {name} WHERE LastModifiedDate >= LAST_N_DAYS:{velocity_window_days}")
+            for name in velocity_names
+        ]
+        velocity_counts = _composite_batch_count_queries(sf, velocity_queries)
 
     active_user_count = None
     try:
-        result = sf.query("SELECT COUNT() FROM User WHERE IsActive = true")
+        result = _sf_request_with_retry(sf.query, "SELECT COUNT() FROM User WHERE IsActive = true")
         active_user_count = result.get("totalSize", 0)
     except Exception:
         pass
@@ -547,6 +625,27 @@ def _collect_mdapi_zip_results(
             api_name = path.split("/")[-1].replace(".object-meta.xml", "")
             pending_objects_patch[api_name] = parsed
             counts["objects"] += 1
+            for bp in parsed.get("business_processes", []):
+                bp_api_name = f"{api_name}.{bp['developer_name']}"
+                pending_components.append(
+                    MetadataComponent(
+                        org_id=org_id,
+                        connection_id=connection_id,
+                        component_category="business_process",
+                        api_name=bp_api_name,
+                        label=bp["developer_name"],
+                        related_object=api_name,
+                        status="Active" if bp.get("active") else "Inactive",
+                        metadata_json={
+                            "description": bp.get("description"),
+                            "related_object": api_name,
+                            "is_active": bp.get("active"),
+                            "values": bp.get("values", []),
+                            "stage_count": len(bp.get("values", [])),
+                        },
+                    )
+                )
+                counts["business_processes"] = counts.get("business_processes", 0) + 1
         elif lower.endswith(".workflow-meta.xml"):
             file_hash = hashlib.sha256(raw).hexdigest()
             related_object = path.split("/")[-1].replace(".workflow-meta.xml", "")
@@ -715,13 +814,25 @@ async def sync_metadata(
     }
 
     await _emit("phase_start", "Pulling object describes...", phase="objects")
-    objects = pull_object_describes(sf)
+    await _emit("phase_start", "Retrieving metadata via MDAPI...", phase="mdapi_retrieve")
+
+    objects, mdapi_files = await asyncio.gather(
+        asyncio.to_thread(pull_object_describes, sf),
+        _mdapi_retrieve_files(sf),
+    )
     object_names = [o.api_name for o in objects]
+
     await _emit(
         "phase_complete",
         f"Object describes complete — {len(objects)} objects",
         phase="objects",
         detail={"count": len(objects)},
+    )
+    await _emit(
+        "phase_complete",
+        f"MDAPI retrieve complete — {len(mdapi_files)} files",
+        phase="mdapi_retrieve",
+        detail={"file_count": len(mdapi_files)},
     )
 
     org = await db.get(Organization, org_id)
@@ -730,19 +841,12 @@ async def sync_metadata(
         velocity_window_days = org.analysis_config.get("velocity_window_days", 30)
 
     await _emit("item", f"Pulling usage data for {len(object_names)} objects...", phase="objects")
-    usage = pull_usage_data(sf, object_names, velocity_window_days=velocity_window_days)
+    usage = await asyncio.to_thread(
+        pull_usage_data, sf, object_names, velocity_window_days=velocity_window_days,
+    )
     for obj in objects:
         obj.record_count = usage.object_record_counts.get(obj.api_name, 0)
         obj.recent_record_count = usage.object_recent_counts.get(obj.api_name, 0)
-
-    await _emit("phase_start", "Retrieving metadata via MDAPI...", phase="mdapi_retrieve")
-    mdapi_files = await _mdapi_retrieve_files(sf)
-    await _emit(
-        "phase_complete",
-        f"MDAPI retrieve complete — {len(mdapi_files)} files",
-        phase="mdapi_retrieve",
-        detail={"file_count": len(mdapi_files)},
-    )
 
     await _emit("phase_start", "Parsing MDAPI metadata...", phase="mdapi_parse")
     parse_cache_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -816,15 +920,21 @@ async def sync_metadata(
     )
 
     await _emit("phase_start", "Processing permissions...", phase="permissions")
-    permissions = pull_all_permissions(sf)
+    await _emit("phase_start", "Processing UI components...", phase="ui_components")
+
+    objects_list_raw = await asyncio.to_thread(pull_object_list, sf)
+    permissions, packages, cmdts = await asyncio.gather(
+        asyncio.to_thread(pull_all_permissions, sf),
+        asyncio.to_thread(pull_installed_packages, sf),
+        asyncio.to_thread(pull_custom_metadata_types, sf, objects_list_raw),
+    )
+
     await _emit(
         "phase_complete",
         f"Permissions complete — {len(permissions)} items",
         phase="permissions",
         detail={"count": len(permissions)},
     )
-
-    await _emit("phase_start", "Processing UI components...", phase="ui_components")
     flexi_count = mdapi_bundle["counts"]["flexi"]
     await _emit(
         "phase_complete",
@@ -947,7 +1057,6 @@ async def sync_metadata(
         )
 
     await _emit("phase_start", "Processing installed packages...", phase="installed_packages")
-    packages = pull_installed_packages(sf)
     for pkg in packages:
         db.add(
             MetadataComponent(
@@ -970,8 +1079,6 @@ async def sync_metadata(
     )
 
     await _emit("phase_start", "Processing custom metadata types...", phase="custom_metadata_types")
-    objects_list_raw = pull_object_list(sf)
-    cmdts = pull_custom_metadata_types(sf, objects_list_raw)
     for cmdt in cmdts:
         db.add(
             MetadataComponent(
@@ -994,49 +1101,113 @@ async def sync_metadata(
         detail={"count": len(cmdts)},
     )
 
-    business_processes = _legacy_pull_business_processes(sf)
-    for bp in business_processes:
-        db.add(
-            MetadataComponent(
-                org_id=org_id,
-                connection_id=connection_id,
-                component_category="business_process",
-                api_name=bp.get("name", bp.get("id", "")),
-                label=bp.get("name", ""),
-                related_object=bp.get("related_object"),
-                status="Active" if bp.get("is_active") else "Inactive",
-                metadata_json={
-                    "description": bp.get("description"),
-                    "related_object": bp.get("related_object"),
-                    "is_active": bp.get("is_active"),
-                },
-            )
+    await _emit("phase_start", "Capturing licensing snapshot...", phase="licensing")
+    await _emit("phase_start", "Capturing user velocity...", phase="user_velocity")
+    await _emit("phase_start", "Syncing org hierarchy...", phase="entities")
+
+    from app.services.salesforce.licensing import (
+        pull_org_info as _pull_lic_org_info,
+        pull_user_licenses,
+        pull_package_licenses,
+        pull_permission_set_licenses,
+        pull_limits,
+        pull_experience_sites,
+        estimate_annual_spend,
+        COST_METHODOLOGY,
+    )
+    from app.services.salesforce.user_velocity import pull_user_velocity
+
+    async def _fetch_licensing_data():
+        return await asyncio.to_thread(
+            lambda: {
+                "org_info": _pull_lic_org_info(sf),
+                "licenses": pull_user_licenses(sf),
+                "pkg_licenses": pull_package_licenses(sf),
+                "psl": pull_permission_set_licenses(sf),
+                "limits": pull_limits(sf),
+                "experience_sites": pull_experience_sites(sf),
+            }
         )
 
-    await _emit("phase_start", "Capturing licensing snapshot...", phase="licensing")
-    try:
-        await snapshot_licensing(connection_id, org_id, sf, db)
-    except Exception as e:
-        logger.warning("licensing_snapshot_failed connection=%s error=%s", connection_id, e)
-        await _emit("warning", f"Licensing snapshot failed: {e}", phase="licensing", severity="warning")
+    async def _fetch_velocity_data():
+        return await asyncio.to_thread(pull_user_velocity, sf)
+
+    lic_data, vel_data = None, None
+    entity_count = 0
+    lic_error, vel_error, ent_error = None, None, None
+
+    async def _do_licensing():
+        nonlocal lic_data, lic_error
+        try:
+            lic_data = await _fetch_licensing_data()
+        except Exception as e:
+            lic_error = e
+
+    async def _do_velocity():
+        nonlocal vel_data, vel_error
+        try:
+            vel_data = await _fetch_velocity_data()
+        except Exception as e:
+            vel_error = e
+
+    async def _do_entities():
+        nonlocal entity_count, ent_error
+        try:
+            from app.services.entities.profiler import sync_from_salesforce
+            entity_count = await sync_from_salesforce(org_id, connection_id, db)
+        except Exception as e:
+            ent_error = e
+
+    await asyncio.gather(_do_licensing(), _do_velocity(), _do_entities())
+
+    if lic_error:
+        logger.warning("licensing_snapshot_failed connection=%s error=%s", connection_id, lic_error)
+        await _emit("warning", f"Licensing snapshot failed: {lic_error}", phase="licensing", severity="warning")
+    elif lic_data:
+        org_info_lic = lic_data["org_info"]
+        edition = org_info_lic.get("OrganizationType", "")
+        is_sandbox = bool(org_info_lic.get("IsSandbox", False))
+        spend = estimate_annual_spend(edition, lic_data["licenses"])
+        limits_ext = dict(lic_data["limits"])
+        limits_ext["experience_sites"] = lic_data["experience_sites"]
+        limits_ext["cost_methodology"] = COST_METHODOLOGY
+        db.add(OrgLicenseSnapshot(
+            org_id=org_id,
+            connection_id=connection_id,
+            edition=edition,
+            is_sandbox=is_sandbox,
+            licenses_json=lic_data["licenses"],
+            package_licenses_json=lic_data["pkg_licenses"],
+            psl_json=lic_data["psl"],
+            limits_json=limits_ext,
+            estimated_annual_spend=spend,
+        ))
+        await db.flush()
     await _emit("phase_complete", "Licensing snapshot complete", phase="licensing")
 
-    await _emit("phase_start", "Capturing user velocity...", phase="user_velocity")
-    try:
-        await snapshot_user_velocity(connection_id, org_id, sf, db)
-    except Exception as e:
-        logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, e)
-        await _emit("warning", f"User velocity snapshot failed: {e}", phase="user_velocity", severity="warning")
+    if vel_error:
+        logger.warning("user_velocity_snapshot_failed connection=%s error=%s", connection_id, vel_error)
+        await _emit("warning", f"User velocity snapshot failed: {vel_error}", phase="user_velocity", severity="warning")
+    elif vel_data:
+        db.add(UserVelocitySnapshot(
+            org_id=org_id,
+            connection_id=connection_id,
+            active_user_count=vel_data["active_user_count"],
+            internal_active_count=vel_data["internal_active_count"],
+            external_active_count=vel_data["external_active_count"],
+            system_user_count=vel_data["system_user_count"],
+            new_users_this_month=vel_data["new_users_this_month"],
+            deactivated_this_month=vel_data["deactivated_this_month"],
+            by_role_json=vel_data["by_role"],
+            by_profile_json=vel_data["by_profile"],
+            by_created_month_json=vel_data["by_created_month"],
+        ))
+        await db.flush()
     await _emit("phase_complete", "User velocity complete", phase="user_velocity")
 
-    await _emit("phase_start", "Syncing org hierarchy...", phase="entities")
-    try:
-        from app.services.entities.profiler import sync_from_salesforce
-        entity_count = await sync_from_salesforce(org_id, connection_id, db)
-    except Exception as e:
-        logger.warning("entity_sync_failed connection=%s error=%s", connection_id, e)
-        await _emit("warning", f"Entity sync failed: {e}", phase="entities", severity="warning")
-        entity_count = 0
+    if ent_error:
+        logger.warning("entity_sync_failed connection=%s error=%s", connection_id, ent_error)
+        await _emit("warning", f"Entity sync failed: {ent_error}", phase="entities", severity="warning")
     await _emit(
         "phase_complete",
         f"Org hierarchy complete — {entity_count} entities",
@@ -1047,8 +1218,11 @@ async def sync_metadata(
     try:
         org = await db.get(Organization, org_id)
         if org is not None:
-            from app.services.salesforce.licensing import pull_org_info as _pull_org_info
-            org_info = _pull_org_info(sf)
+            if lic_data:
+                org_info = lic_data["org_info"]
+            else:
+                from app.services.salesforce.licensing import pull_org_info as _pull_org_info
+                org_info = _pull_org_info(sf)
             sf_org_name = org_info.get("Name", "")
 
             lic_stmt = select(OrgLicenseSnapshot).where(
