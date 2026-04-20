@@ -44,4 +44,4 @@ USER arcflare
 
 EXPOSE 8000
 
-CMD sh -c 'if [ "$WORKER_MODE" = "true" ]; then celery -A app.workers.celery_app worker --loglevel=info; else alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi'
+CMD sh -c 'if [ "$WORKER_MODE" = "true" ]; then celery -A app.workers.celery_app worker --loglevel=info; else echo "=== PRE-MIGRATION ===" && alembic current && alembic heads && echo "=== RUNNING MIGRATION ===" && alembic upgrade head && echo "=== POST-MIGRATION ===" && alembic current && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi'
