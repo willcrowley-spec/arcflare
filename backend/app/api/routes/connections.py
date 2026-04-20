@@ -178,104 +178,112 @@ async def sync_event_stream(
         raise HTTPException(status_code=404, detail="Connection not found")
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        from app.core.database import async_session_factory
         from app.services.sync_progress import get_redis_client
 
         r = get_redis_client()
         channel = f"sync_events:{connection_id}"
         loop = asyncio.get_running_loop()
 
-        latest_run_q = await db.execute(
-            sa_select(SyncEvent)
-            .where(SyncEvent.connection_id == connection_id)
-            .order_by(SyncEvent.created_at.desc())
-            .limit(1)
-        )
-        latest_event = latest_run_q.scalar_one_or_none()
-        latest_run_id = latest_event.run_id if latest_event else None
-        backfill_events: list[SyncEvent] = []
-        last_seq = 0
-
-        if latest_run_id:
-            backfill_q = await db.execute(
+        async with async_session_factory() as session:
+            latest_run_q = await session.execute(
                 sa_select(SyncEvent)
-                .where(
-                    SyncEvent.connection_id == connection_id,
-                    SyncEvent.run_id == latest_run_id,
-                )
-                .order_by(SyncEvent.sequence)
+                .where(SyncEvent.connection_id == connection_id)
+                .order_by(SyncEvent.created_at.desc())
+                .limit(1)
             )
-            backfill_events = list(backfill_q.scalars().all())
-            last_seq = max((e.sequence for e in backfill_events), default=0)
+            latest_event = latest_run_q.scalar_one_or_none()
+            latest_run_id = latest_event.run_id if latest_event else None
+            backfill_events: list[SyncEvent] = []
+            last_seq = 0
 
-            is_done = any(
-                e.event_type == "run_complete"
-                or (e.event_type == "error" and e.severity == "error")
-                for e in backfill_events
-            )
-
-            fresh = await db.execute(
-                sa_select(PlatformConnection.status)
-                .where(PlatformConnection.id == connection_id)
-            )
-            conn_status = fresh.scalar_one_or_none()
-
-            if is_done and conn_status == "syncing":
-                pass
-            else:
-                backfill_data = [
-                    {
-                        "run_id": str(e.run_id),
-                        "sequence": e.sequence,
-                        "event_type": e.event_type,
-                        "phase": e.phase,
-                        "message": e.message,
-                        "detail": e.detail_json,
-                        "severity": e.severity,
-                        "created_at": e.created_at.isoformat() if e.created_at else None,
-                    }
-                    for e in backfill_events
-                ]
-                yield f"event: backfill\ndata: {json_mod.dumps(backfill_data)}\n\n"
-
-                if is_done:
-                    yield "event: done\ndata: {}\n\n"
-                    return
-
-        pubsub = r.pubsub()
-        pubsub.subscribe(channel)
-        try:
             if latest_run_id:
-                gap_q = await db.execute(
+                backfill_q = await session.execute(
                     sa_select(SyncEvent)
                     .where(
                         SyncEvent.connection_id == connection_id,
                         SyncEvent.run_id == latest_run_id,
-                        SyncEvent.sequence > last_seq,
                     )
                     .order_by(SyncEvent.sequence)
                 )
-                for row in gap_q.scalars().all():
-                    payload = {
-                        "run_id": str(row.run_id),
-                        "connection_id": str(connection_id),
-                        "sequence": row.sequence,
-                        "event_type": row.event_type,
-                        "phase": row.phase,
-                        "message": row.message,
-                        "detail": row.detail_json,
-                        "severity": row.severity,
-                        "created_at": row.created_at.isoformat() if row.created_at else None,
-                    }
-                    yield f"event: sync_event\ndata: {json_mod.dumps(payload)}\n\n"
+                backfill_events = list(backfill_q.scalars().all())
+                last_seq = max((e.sequence for e in backfill_events), default=0)
 
-            last_keepalive = loop.time()
+                is_done = any(
+                    e.event_type == "run_complete"
+                    or (e.event_type == "error" and e.severity == "error")
+                    for e in backfill_events
+                )
 
-            def _is_terminal(parsed: dict) -> bool:
-                et = parsed.get("event_type")
-                if et == "run_complete":
-                    return True
-                return et == "error" and parsed.get("severity") == "error"
+                fresh = await session.execute(
+                    sa_select(PlatformConnection.status)
+                    .where(PlatformConnection.id == connection_id)
+                )
+                conn_status = fresh.scalar_one_or_none()
 
+                if is_done and conn_status == "syncing":
+                    pass
+                else:
+                    backfill_data = [
+                        {
+                            "run_id": str(e.run_id),
+                            "sequence": e.sequence,
+                            "event_type": e.event_type,
+                            "phase": e.phase,
+                            "message": e.message,
+                            "detail": e.detail_json,
+                            "severity": e.severity,
+                            "created_at": e.created_at.isoformat() if e.created_at else None,
+                        }
+                        for e in backfill_events
+                    ]
+                    yield f"event: backfill\ndata: {json_mod.dumps(backfill_data)}\n\n"
+
+                    if is_done:
+                        yield "event: done\ndata: {}\n\n"
+                        return
+
+            # Gap replay — catch events emitted between backfill query and subscribe
+            pubsub = r.pubsub()
+            pubsub.subscribe(channel)
+            try:
+                if latest_run_id:
+                    gap_q = await session.execute(
+                        sa_select(SyncEvent)
+                        .where(
+                            SyncEvent.connection_id == connection_id,
+                            SyncEvent.run_id == latest_run_id,
+                            SyncEvent.sequence > last_seq,
+                        )
+                        .order_by(SyncEvent.sequence)
+                    )
+                    for row in gap_q.scalars().all():
+                        payload = {
+                            "run_id": str(row.run_id),
+                            "connection_id": str(connection_id),
+                            "sequence": row.sequence,
+                            "event_type": row.event_type,
+                            "phase": row.phase,
+                            "message": row.message,
+                            "detail": row.detail_json,
+                            "severity": row.severity,
+                            "created_at": row.created_at.isoformat() if row.created_at else None,
+                        }
+                        yield f"event: sync_event\ndata: {json_mod.dumps(payload)}\n\n"
+            finally:
+                # Session only needed for DB queries; close before entering
+                # the long-lived Redis poll loop so the connection returns to pool.
+                await session.close()
+
+        last_keepalive = loop.time()
+
+        def _is_terminal(parsed: dict) -> bool:
+            et = parsed.get("event_type")
+            if et == "run_complete":
+                return True
+            return et == "error" and parsed.get("severity") == "error"
+
+        try:
             while True:
                 msg = await asyncio.to_thread(
                     pubsub.get_message, ignore_subscribe_messages=True, timeout=1.0
