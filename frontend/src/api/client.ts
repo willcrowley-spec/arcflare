@@ -314,6 +314,17 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+    updateProfile: (data: Record<string, unknown>) =>
+      request<unknown>('/organization/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    startResearch: () =>
+      request<{ task_id: string }>('/organization/research', { method: 'POST' }),
+    researchStatus: () =>
+      request<{ status: string; phase: string | null; progress: number; message: string | null; error: string | null }>('/organization/research/status'),
+    researchLatest: () =>
+      request<unknown>('/organization/research/latest'),
     reanalyze: () => request<unknown>('/organization/reanalyze', { method: 'POST' }),
     processMapSettings: () =>
       request<ProcessMapSettings>('/organization/process-map-settings'),

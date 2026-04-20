@@ -1,22 +1,25 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Building2,
+  CheckCircle2,
   Cloud,
   Database,
   FileSpreadsheet,
   Globe,
-  Landmark,
   Layers,
   Loader2,
   Map as MapIcon,
+  Plus,
   Plug,
-  Sparkles,
+  Search,
   Users,
   Wrench,
+  X,
+  XCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useProcessMapSettings, useReanalyze, useUpdateOrgSettings, useUpdateProcessMapSettings } from '@/hooks/useApi'
+import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useProcessMapSettings, useReanalyze, useResearchStatus, useStartResearch, useUpdateOrgProfile, useUpdateOrgSettings, useUpdateProcessMapSettings } from '@/hooks/useApi'
 import { PromptsSection } from '@/components/PromptEditor/PromptsSection'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
@@ -209,6 +212,10 @@ export default function OrganizationPage() {
   const mapSettingsQuery = useProcessMapSettings()
   const updateMapSettings = useUpdateProcessMapSettings()
 
+  const updateProfile = useUpdateOrgProfile()
+  const startResearch = useStartResearch()
+  const [researchPolling, setResearchPolling] = useState(true)
+  const researchStatusQuery = useResearchStatus(researchPolling)
   const [reanalyzeBanner, setReanalyzeBanner] = useState<string | null>(null)
 
   const profile = useMemo(() => parseProfile(profileQuery.data), [profileQuery.data])
@@ -216,6 +223,42 @@ export default function OrganizationPage() {
 
   const displayCompanyName = company.company_name?.trim() || profile.name || '—'
   const displayIndustry = company.industry?.trim() || '—'
+
+  // Domain editing
+  const [domainDraft, setDomainDraft] = useState('')
+  const domainInputRef = useRef<HTMLInputElement>(null)
+
+  const addDomain = useCallback(() => {
+    const raw = domainDraft.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '')
+    if (!raw) return
+    if (company.domains.includes(raw)) { setDomainDraft(''); return }
+    updateProfile.mutate({ domains: [...company.domains, raw] })
+    setDomainDraft('')
+    domainInputRef.current?.focus()
+  }, [domainDraft, company.domains, updateProfile])
+
+  const removeDomain = useCallback((d: string) => {
+    updateProfile.mutate({ domains: company.domains.filter((x) => x !== d) })
+  }, [company.domains, updateProfile])
+
+  // Research / Enrich
+  const researchStatus = researchStatusQuery.data as { status?: string; phase?: string | null; progress?: number; message?: string | null; error?: string | null } | undefined
+  const isResearchRunning = researchStatus?.status === 'running'
+
+  useEffect(() => {
+    if (researchStatus?.status === 'completed' || researchStatus?.status === 'failed') {
+      setResearchPolling(false)
+    }
+  }, [researchStatus?.status])
+
+  const onEnrich = useCallback(() => {
+    setResearchPolling(true)
+    startResearch.mutate(undefined, {
+      onSuccess: () => {
+        setResearchPolling(true)
+      },
+    })
+  }, [startResearch])
 
   const connections = connectionsQuery.data?.items ?? []
 
@@ -321,13 +364,22 @@ export default function OrganizationPage() {
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-navy-900">Company profile</h2>
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-amber-200/80 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-900 ring-1 ring-amber-900/5"
-            title="Inline editing will be available when profile updates are supported."
-          >
-            <Sparkles className="h-3 w-3" aria-hidden />
-            Editing coming soon
-          </span>
+          {isResearchRunning ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200/80 bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-800 ring-1 ring-indigo-900/5">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              Enriching…
+            </span>
+          ) : researchStatus?.status === 'completed' ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200/80 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-800 ring-1 ring-emerald-900/5">
+              <CheckCircle2 className="h-3 w-3" aria-hidden />
+              Enriched
+            </span>
+          ) : researchStatus?.status === 'failed' ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-red-200/80 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-800 ring-1 ring-red-900/5">
+              <XCircle className="h-3 w-3" aria-hidden />
+              Enrichment failed
+            </span>
+          ) : null}
         </div>
         {profileQuery.isError ? (
           <ErrorState message="Could not load organization profile." />
@@ -341,30 +393,59 @@ export default function OrganizationPage() {
               <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-navy-50 text-navy-800 ring-1 ring-navy-900/5">
                 <Building2 className="h-5 w-5" aria-hidden />
               </span>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Read-only</p>
+              <div className="min-w-0 flex-1">
                 <p className="text-base font-semibold text-navy-900">{displayCompanyName}</p>
                 {profile.plan_tier ? <p className="text-xs text-slate-500">Plan: {profile.plan_tier}</p> : null}
               </div>
             </div>
+
             <div className="divide-y divide-slate-100 rounded-lg border border-slate-100 bg-slate-50/40 px-4">
               <ProfileRow label="Company name">{displayCompanyName}</ProfileRow>
               <ProfileRow label="Domains / websites">
-                {company.domains.length ? (
-                  <div className="flex flex-wrap justify-end gap-1.5 sm:justify-end">
-                    {company.domains.map((d) => (
-                      <span
-                        key={d}
-                        className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-navy-800 ring-1 ring-slate-200/80"
-                      >
-                        <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
-                        {d}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-slate-400">—</span>
-                )}
+                <div className="flex flex-col items-end gap-2">
+                  {company.domains.length > 0 && (
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      {company.domains.map((d) => (
+                        <span
+                          key={d}
+                          className="group/chip inline-flex max-w-full items-center gap-1 truncate rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-navy-800 ring-1 ring-slate-200/80"
+                        >
+                          <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-hidden />
+                          {d}
+                          <button
+                            type="button"
+                            onClick={() => removeDomain(d)}
+                            className="ml-0.5 rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-400"
+                            aria-label={`Remove ${d}`}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <form
+                    className="flex w-full items-center gap-1.5 sm:max-w-sm sm:justify-end"
+                    onSubmit={(e) => { e.preventDefault(); addDomain() }}
+                  >
+                    <input
+                      ref={domainInputRef}
+                      type="text"
+                      value={domainDraft}
+                      onChange={(e) => setDomainDraft(e.target.value)}
+                      placeholder="acme.com"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-navy-900 shadow-sm outline-none ring-slate-900/5 transition placeholder:text-slate-400 focus:border-navy-400 focus:ring-2 focus:ring-navy-200"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!domainDraft.trim() || updateProfile.isPending}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-navy-700 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm ring-1 ring-navy-900/10 hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Plus className="h-3 w-3" aria-hidden />
+                      Add
+                    </button>
+                  </form>
+                </div>
               </ProfileRow>
               <ProfileRow label="Industry">{displayIndustry}</ProfileRow>
               <ProfileRow label="Estimated headcount">
@@ -381,6 +462,53 @@ export default function OrganizationPage() {
                   <span className="text-slate-400">—</span>
                 )}
               </ProfileRow>
+            </div>
+
+            {/* Enrich / Research section */}
+            <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-5">
+              {isResearchRunning ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium text-indigo-700">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    {researchStatus?.message || `Running: ${researchStatus?.phase ?? 'initializing'}…`}
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-500 ease-out"
+                      style={{ width: `${Math.max(2, (researchStatus?.progress ?? 0) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onEnrich}
+                    disabled={company.domains.length === 0 || startResearch.isPending}
+                    className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm ring-1 ring-indigo-700/10 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {startResearch.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Search className="h-4 w-4" aria-hidden />
+                    )}
+                    Enrich Organization
+                  </button>
+                  {company.domains.length === 0 && (
+                    <p className="text-xs text-slate-500">Add at least one domain to enable enrichment.</p>
+                  )}
+                  {startResearch.isError && (
+                    <p className="text-xs text-red-600">
+                      {(startResearch.error as Error)?.message?.includes('409')
+                        ? 'Enrichment already running.'
+                        : 'Could not start enrichment. Try again.'}
+                    </p>
+                  )}
+                  {researchStatus?.status === 'failed' && researchStatus?.error && (
+                    <p className="text-xs text-red-600">{researchStatus.error}</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

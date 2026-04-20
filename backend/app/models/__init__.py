@@ -13,6 +13,7 @@ from app.models.knowledge import (
 from app.models.entity import BusinessEntity
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataDependency, MetadataField, MetadataObject, RecordTelemetry
+from app.models.org_research import OrgResearchProfile
 from app.models.organization import Organization, User
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.models.prompt import PromptBlock, PromptOptimizationRun
@@ -41,6 +42,7 @@ __all__ = [
     "MetadataObject",
     "Organization",
     "OrgLicenseSnapshot",
+    "OrgResearchProfile",
     "PlatformConnection",
     "ProcessDocumentSource",
     "ProcessEdge",

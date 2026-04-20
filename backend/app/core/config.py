@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = Field(default="gemini-embedding-2-preview", description="Gemini embedding model name")
     EMBEDDING_DIMS: int = Field(default=768, description="Embedding vector dimensions (MRL-truncated from 3072)")
 
+    SERPAPI_KEY: str = Field(default="", description="SerpAPI key for org research web search")
+
     SALESFORCE_CLIENT_ID: str = Field(default="")
     SALESFORCE_CLIENT_SECRET: str = Field(default="")
     SALESFORCE_REDIRECT_URI: str = Field(

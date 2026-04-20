@@ -25,5 +25,6 @@ celery_app.conf.include = [
     "app.workers.vectorization",
     "app.workers.analysis",
     "app.workers.process_discovery",
+    "app.workers.org_research",
     "app.services.prompts.optimize",
 ]

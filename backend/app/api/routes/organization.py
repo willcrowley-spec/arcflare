@@ -12,6 +12,7 @@ from app.models.connection import PlatformConnection
 from app.models.entity import BusinessEntity
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
 from app.schemas.common import PaginatedResponse
+from app.models.org_research import OrgResearchProfile
 from app.schemas.organization import (
     CostModelResponse,
     EntityCreate,
@@ -21,6 +22,9 @@ from app.schemas.organization import (
     HierarchyResponse,
     LicenseSnapshotResponse,
     OrgProfileResponse,
+    OrgProfileUpdate,
+    OrgResearchResponse,
+    OrgResearchStatusResponse,
     UserVelocityResponse,
 )
 from app.schemas.settings import AnalysisConfig, AnalysisConfigUpdate
@@ -161,6 +165,25 @@ async def reanalyze(
 async def get_org_profile(
     org: CurrentOrg,
 ) -> OrgProfileResponse:
+    return OrgProfileResponse.model_validate(org)
+
+
+@router.patch("/profile", response_model=OrgProfileResponse)
+async def update_org_profile(
+    body: OrgProfileUpdate,
+    db: DbSession,
+    org: CurrentOrg,
+) -> OrgProfileResponse:
+    """Update org profile fields stored in settings_json."""
+    s = dict(org.settings_json or {})
+    for key, val in body.model_dump(exclude_unset=True).items():
+        if key == "domains" and val is not None:
+            s["domains"] = [d.strip() for d in val if d.strip()]
+        else:
+            s[key] = val
+    org.settings_json = s
+    await db.commit()
+    await db.refresh(org)
     return OrgProfileResponse.model_validate(org)
 
 
@@ -336,3 +359,97 @@ async def get_user_velocity(
         )
     ).scalars().all()
     return [UserVelocityResponse.model_validate(r) for r in rows]
+
+
+# ── Org Research ──────────────────────────────────────────────────────
+
+
+@router.post("/research", status_code=status.HTTP_202_ACCEPTED)
+async def start_org_research(
+    org: CurrentOrg,
+) -> dict[str, str]:
+    """Enqueue the org research pipeline. Requires domains in settings_json."""
+    domains = (org.settings_json or {}).get("domains", [])
+    if not domains:
+        raise HTTPException(
+            status_code=400,
+            detail="No domains configured. Add domains to organization settings first.",
+        )
+
+    from app.services.sync_progress import get_redis_client
+    r = get_redis_client()
+    run_key = f"org_research:{org.id}"
+    current = r.hget(run_key, "status")
+    if current and (current.decode() if isinstance(current, bytes) else str(current)) == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Research pipeline already running for this organization.",
+        )
+
+    from app.workers.org_research import org_research_task
+    org_research_task.delay(str(org.id))
+
+    return {"status": "accepted", "message": "Org research pipeline started"}
+
+
+@router.get("/research/status", response_model=OrgResearchStatusResponse)
+async def get_research_status(org: CurrentOrg) -> OrgResearchStatusResponse:
+    """Get real-time progress of a running org research pipeline."""
+    from app.services.sync_progress import get_redis_client
+
+    r = get_redis_client()
+    run_key = f"org_research:{org.id}"
+
+    raw_status = r.hget(run_key, "status")
+    if not raw_status:
+        return OrgResearchStatusResponse(status="idle")
+
+    status_str = raw_status.decode() if isinstance(raw_status, bytes) else str(raw_status)
+    profile_id_raw = r.hget(run_key, "profile_id")
+    profile_id = (
+        profile_id_raw.decode() if isinstance(profile_id_raw, bytes) else str(profile_id_raw or "")
+    ) or None
+
+    error_raw = r.hget(run_key, "error")
+    error = (error_raw.decode() if isinstance(error_raw, bytes) else None) if error_raw else None
+
+    from app.workers.org_research import PHASES
+
+    phases: dict = {}
+    for phase in PHASES:
+        ps = r.hget(run_key, f"phase:{phase}:status")
+        pc = r.hget(run_key, f"phase:{phase}:count")
+        pt = r.hget(run_key, f"phase:{phase}:total")
+        phases[phase] = {
+            "status": ps.decode() if isinstance(ps, bytes) else str(ps or "waiting"),
+            "count": int(pc or 0),
+            "total": int(pt or 0),
+        }
+
+    return OrgResearchStatusResponse(
+        status=status_str,
+        profile_id=profile_id if profile_id else None,
+        phases=phases,
+        error=error,
+    )
+
+
+@router.get("/research/latest", response_model=OrgResearchResponse | None)
+async def get_latest_research(
+    db: DbSession,
+    org: CurrentOrg,
+) -> OrgResearchResponse | None:
+    """Get the most recent completed research profile."""
+    result = await db.execute(
+        select(OrgResearchProfile)
+        .where(
+            OrgResearchProfile.org_id == org.id,
+            OrgResearchProfile.status == "completed",
+        )
+        .order_by(OrgResearchProfile.completed_at.desc())
+        .limit(1)
+    )
+    profile = result.scalar_one_or_none()
+    if profile is None:
+        return None
+    return OrgResearchResponse.model_validate(profile)

@@ -199,6 +199,46 @@ export function useUpdateOrgSettings() {
   })
 }
 
+export function useUpdateOrgProfile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) => api.organization.updateProfile(data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['organization', 'profile'] })
+    },
+  })
+}
+
+export function useStartResearch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.organization.startResearch(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['organization', 'research-status'] })
+    },
+  })
+}
+
+export function useResearchStatus(enabled: boolean) {
+  return useQuery({
+    queryKey: ['organization', 'research-status'],
+    queryFn: () => api.organization.researchStatus(),
+    enabled,
+    refetchInterval: (query) => {
+      const data = query.state.data as { status?: string } | undefined
+      if (data?.status === 'running') return 3000
+      return false
+    },
+  })
+}
+
+export function useResearchLatest() {
+  return useQuery({
+    queryKey: ['organization', 'research-latest'],
+    queryFn: () => api.organization.researchLatest(),
+  })
+}
+
 export function useReanalyze() {
   const qc = useQueryClient()
   return useMutation({

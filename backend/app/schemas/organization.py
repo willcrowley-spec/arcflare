@@ -113,3 +113,39 @@ class UserVelocityResponse(BaseModel):
     deactivated_this_month: int
     by_role_json: dict
     by_profile_json: dict
+
+
+class OrgProfileUpdate(BaseModel):
+    """Updatable fields on the org profile (stored in settings_json)."""
+    company_name: str | None = None
+    domains: list[str] | None = None
+    industry: str | None = None
+    description: str | None = None
+    headcount: int | None = None
+    annual_revenue: float | None = None
+
+
+class OrgResearchResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    org_id: UUID
+    status: str
+    profile_json: dict
+    sources_json: list
+    facts_json: list
+    research_log_json: dict
+    company_summary: str | None
+    industry: str | None
+    employee_range: str | None
+    revenue_range: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class OrgResearchStatusResponse(BaseModel):
+    status: str
+    profile_id: str | None = None
+    phases: dict = Field(default_factory=dict)
+    error: str | None = None
