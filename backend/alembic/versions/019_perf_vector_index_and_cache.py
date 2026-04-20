@@ -15,12 +15,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_hnsw "
-        "ON document_chunks USING hnsw (embedding vector_cosine_ops) "
-        "WITH (m = 16, ef_construction = 64)"
-    )
-
     op.create_table(
         "discovery_cache",
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), primary_key=True),
@@ -39,6 +33,15 @@ def upgrade() -> None:
         "discovery_cache",
         ["org_id", "prompt_hash", "operation"],
         unique=False,
+    )
+
+    # HNSW index requires CONCURRENTLY to avoid blocking reads for minutes.
+    # CONCURRENTLY can't run inside a transaction, so we commit first.
+    op.execute("COMMIT")
+    op.execute(
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_document_chunks_embedding_hnsw "
+        "ON document_chunks USING hnsw (embedding vector_cosine_ops) "
+        "WITH (m = 16, ef_construction = 64)"
     )
 
 
