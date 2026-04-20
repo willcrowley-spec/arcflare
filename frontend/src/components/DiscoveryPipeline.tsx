@@ -11,17 +11,31 @@ type StageDef = {
   legacySourceKeys?: readonly DiscoveryProgressPhaseKey[]
 }
 
-const NEW_PIPELINE_MARKERS = new Set([
-  'context_gathering',
+const V2_PIPELINE_MARKERS = new Set([
+  'evidence_assembly',
+  'extraction',
+  'verification',
+])
+
+const V1_PIPELINE_MARKERS = new Set([
   'structural_decomposition',
   'step_enrichment',
   'flow_analysis',
   'validation',
-  'quality_scoring',
-  'graph_generation',
 ])
 
-const PIPELINE_STAGES: StageDef[] = [
+const V2_PIPELINE_STAGES: StageDef[] = [
+  { key: 'context_gathering', label: DISCOVERY_PHASE_LABELS.context_gathering, passNum: 1 },
+  { key: 'domain_discovery', label: DISCOVERY_PHASE_LABELS.domain_discovery, passNum: 2 },
+  { key: 'evidence_assembly', label: DISCOVERY_PHASE_LABELS.evidence_assembly, passNum: 3 },
+  { key: 'extraction', label: DISCOVERY_PHASE_LABELS.extraction, passNum: 4 },
+  { key: 'verification', label: DISCOVERY_PHASE_LABELS.verification, passNum: 5 },
+  { key: 'cross_domain_synthesis', label: DISCOVERY_PHASE_LABELS.cross_domain_synthesis, passNum: 6 },
+  { key: 'quality_scoring', label: DISCOVERY_PHASE_LABELS.quality_scoring, passNum: 7 },
+  { key: 'graph_generation', label: DISCOVERY_PHASE_LABELS.graph_generation, passNum: 8 },
+]
+
+const V1_PIPELINE_STAGES: StageDef[] = [
   { key: 'context_gathering', label: DISCOVERY_PHASE_LABELS.context_gathering, passNum: 1 },
   { key: 'domain_discovery', label: DISCOVERY_PHASE_LABELS.domain_discovery, passNum: 2 },
   {
@@ -51,9 +65,10 @@ const LEGACY_PIPELINE_STAGES: StageDef[] = [
 
 function pickStages(phases: Record<string, DiscoveryPhase | undefined>): StageDef[] {
   const keys = Object.keys(phases)
-  if (keys.length === 0) return PIPELINE_STAGES
-  const usesNewPipeline = keys.some((k) => NEW_PIPELINE_MARKERS.has(k))
-  return usesNewPipeline ? PIPELINE_STAGES : LEGACY_PIPELINE_STAGES
+  if (keys.length === 0) return V2_PIPELINE_STAGES
+  if (keys.some((k) => V2_PIPELINE_MARKERS.has(k))) return V2_PIPELINE_STAGES
+  if (keys.some((k) => V1_PIPELINE_MARKERS.has(k))) return V1_PIPELINE_STAGES
+  return LEGACY_PIPELINE_STAGES
 }
 
 function resolvePhase(

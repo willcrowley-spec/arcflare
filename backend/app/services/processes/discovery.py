@@ -1771,7 +1771,7 @@ async def run_v2_phase4(
 
         prompt = await build_v2_phase4_prompt(org_id, db, pairs)
         result, parsed = await _async_llm_call(
-            prompt=prompt, max_tokens=4000, tier="fast",
+            prompt=prompt, max_tokens=6000, tier="fast",
             operation="discovery_v2_verification",
             label=f"v2_phase4_{extraction.get('domain', {}).get('name', '?')}",
             model_config=model_config,
@@ -2143,37 +2143,140 @@ async def run_v2_quality_scoring(
     run_id: UUID,
     db: AsyncSession,
 ) -> dict:
-    """v2 Phase 6: Quality scoring with evidence coverage metrics."""
-    base_scores = await run_stage7(org_id, run_id, db)
-
+    """v2 Phase 6: Quality scoring using evidence_sources instead of v1 touchpoints."""
     all_procs_q = await db.execute(
         select(BusinessProcess).where(
             BusinessProcess.org_id == org_id,
             BusinessProcess.discovery_run_id == run_id,
             BusinessProcess.level.in_(["process", "subprocess", "step"]),
+            BusinessProcess.status != "rejected",
         )
     )
     all_procs = all_procs_q.scalars().all()
 
-    if all_procs:
-        with_evidence = sum(1 for p in all_procs if p.evidence_sources)
-        evidence_coverage = with_evidence / len(all_procs)
+    objects_q = await db.execute(
+        select(MetadataObject).where(
+            MetadataObject.org_id == org_id,
+            MetadataObject.record_count > 0,
+        )
+    )
+    all_objects = objects_q.scalars().all()
+    all_object_names = {o.api_name for o in all_objects}
+
+    autos_q = await db.execute(
+        select(MetadataAutomation).where(MetadataAutomation.org_id == org_id)
+    )
+    all_auto_names = {a.api_name for a in autos_q.scalars().all()}
+    total_artifacts = len(all_object_names) + len(all_auto_names)
+
+    referenced_objects: set[str] = set()
+    referenced_autos: set[str] = set()
+    for p in all_procs:
+        for ev in (p.evidence_sources or []):
+            if not isinstance(ev, dict):
+                continue
+            etype = ev.get("type", "")
+            api = ev.get("api_name", "")
+            if etype == "metadata_object" and api:
+                referenced_objects.add(api)
+            elif etype == "automation" and api:
+                referenced_autos.add(api)
+
+    covered = len(referenced_objects & all_object_names) + len(referenced_autos & all_auto_names)
+    metadata_coverage = covered / total_artifacts if total_artifacts > 0 else 0.0
+
+    with_evidence = sum(1 for p in all_procs if p.evidence_sources) if all_procs else 0
+    evidence_coverage = with_evidence / len(all_procs) if all_procs else 0.0
+
+    with_desc = sum(
+        1 for p in all_procs
+        if p.description and len(p.description) >= 20
+    )
+    description_quality = with_desc / len(all_procs) if all_procs else 0.0
+
+    with_value = sum(1 for p in all_procs if p.value_classification)
+    value_coverage = with_value / len(all_procs) if all_procs else 0.0
+
+    handoffs_q = await db.execute(
+        select(ProcessHandoff).where(
+            ProcessHandoff.org_id == org_id,
+            ProcessHandoff.discovery_run_id == run_id,
+        )
+    )
+    handoffs = handoffs_q.scalars().all()
+    grounded = sum(1 for h in handoffs if h.handoff_type not in ("unknown", "inferred"))
+    handoff_grounding = grounded / len(handoffs) if handoffs else 0.0
+
+    domains_q = await db.execute(
+        select(BusinessProcess).where(
+            BusinessProcess.org_id == org_id,
+            BusinessProcess.discovery_run_id == run_id,
+            BusinessProcess.level == "domain",
+        )
+    )
+    domains = domains_q.scalars().all()
+    id_to_proc = {p.id: p for p in all_procs}
+    id_to_proc.update({d.id: d for d in domains})
+
+    depths_per_domain: list[int] = []
+    if len(domains) > 1:
+        for dom in domains:
+            max_d = 0
+            for p in all_procs:
+                current = p
+                under = False
+                while current:
+                    if current.id == dom.id:
+                        under = True
+                        break
+                    current = id_to_proc.get(current.parent_id)
+                if under:
+                    d = 0
+                    c = p
+                    while c and c.parent_id:
+                        d += 1
+                        c = id_to_proc.get(c.parent_id)
+                    max_d = max(max_d, d)
+            depths_per_domain.append(max_d)
+
+    if len(depths_per_domain) > 1:
+        mean_d = statistics.mean(depths_per_domain)
+        std_d = statistics.stdev(depths_per_domain)
+        hierarchy_consistency = max(0.0, 1.0 - (std_d / mean_d if mean_d > 0 else 0.0))
     else:
-        evidence_coverage = 0.0
+        hierarchy_consistency = 1.0
 
-    base_scores["evidence_coverage"] = round(evidence_coverage, 3)
+    overall = (
+        metadata_coverage * 0.15 +
+        evidence_coverage * 0.25 +
+        handoff_grounding * 0.15 +
+        hierarchy_consistency * 0.10 +
+        value_coverage * 0.10 +
+        description_quality * 0.15 +
+        (1.0 if len(domains) >= 2 else 0.5) * 0.10
+    )
 
-    overall = base_scores.get("overall", 0.0)
-    base_scores["overall"] = round(overall * 0.8 + evidence_coverage * 0.2, 3)
+    quality_scores = {
+        "metadata_coverage": round(metadata_coverage, 3),
+        "evidence_coverage": round(evidence_coverage, 3),
+        "handoff_grounding": round(handoff_grounding, 3),
+        "hierarchy_consistency": round(hierarchy_consistency, 3),
+        "value_coverage": round(value_coverage, 3),
+        "description_quality": round(description_quality, 3),
+        "overall": round(overall, 3),
+    }
 
     run = await db.get(DiscoveryRun, run_id)
     if run:
-        run.quality_scores = base_scores
+        run.quality_scores = quality_scores
     await db.flush()
 
-    langfuse_score(name="discovery_evidence_coverage", value=evidence_coverage)
+    logger.info("v2_quality_complete org_id=%s run_id=%s scores=%s", org_id, run_id, quality_scores)
 
-    return base_scores
+    for metric, value in quality_scores.items():
+        langfuse_score(name=f"discovery_{metric}", value=value)
+
+    return quality_scores
 
 
 async def cleanup_previous_run(org_id: UUID, db: AsyncSession) -> None:

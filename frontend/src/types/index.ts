@@ -443,6 +443,9 @@ export type DiscoveryProgressPhaseKey =
   | 'cross_domain_synthesis'
   | 'quality_scoring'
   | 'graph_generation'
+  | 'evidence_assembly'
+  | 'extraction'
+  | 'verification'
 
 /** Human-readable labels for discovery progress phases (status API / Redis). */
 export const DISCOVERY_PHASE_LABELS: Record<DiscoveryProgressPhaseKey, string> = {
@@ -456,6 +459,9 @@ export const DISCOVERY_PHASE_LABELS: Record<DiscoveryProgressPhaseKey, string> =
   cross_domain_synthesis: 'Cross-Domain Synthesis',
   quality_scoring: 'Quality Scoring',
   graph_generation: 'Graph Generation',
+  evidence_assembly: 'Evidence Assembly',
+  extraction: 'Process Extraction',
+  verification: 'Evidence Verification',
 }
 
 export interface DiscoveryStatus {
