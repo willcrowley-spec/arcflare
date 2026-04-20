@@ -15,8 +15,9 @@ from app.core.observability import langfuse_score, langfuse_span as _lf_span
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.metadata import MetadataAutomation, MetadataObject
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
-from app.services.ai.router import LLMResult, llm_call, parse_json_response
+from app.services.ai.router import LLMResult, PromptParts, llm_call, parse_json_response
 from app.services.processes.context import (
+    batch_semantic_search,
     gather_dependency_subgraph,
     gather_document_summary,
     gather_metadata_for_domain,
@@ -30,6 +31,7 @@ from app.services.processes.prompts import (
     build_pass3_prompt,
     build_stage2_prompt,
     build_stage3_prompt,
+    build_stage3_4_prompt,
     build_stage4_prompt,
     build_stage5_prompt,
 )
@@ -66,12 +68,19 @@ def _safe_parse(text: str, label: str) -> dict:
 TOKEN_BUDGET_LIMIT = 100_000
 
 
-_RETRYABLE_ERROR_TYPES = {"RateLimitError", "InternalServerError", "ServiceUnavailableError", "APIConnectionError"}
+import litellm.exceptions as _llm_exc
+
+_RETRYABLE_ERRORS = (
+    _llm_exc.RateLimitError,
+    _llm_exc.InternalServerError,
+    _llm_exc.ServiceUnavailableError,
+    _llm_exc.APIConnectionError,
+)
 _BACKOFF_CAP = 60
 
 
 def _call_with_retry(
-    prompt: str,
+    prompt: str | PromptParts,
     max_tokens: int,
     tier: str,
     operation: str,
@@ -92,14 +101,15 @@ def _call_with_retry(
     import random as _random
     import time as _time
 
-    est = _estimate_tokens(prompt)
+    flat = prompt.as_flat() if isinstance(prompt, PromptParts) else prompt
+    est = _estimate_tokens(flat)
     if est > TOKEN_BUDGET_LIMIT:
         logger.warning(
             "prompt_truncated label=%s est_tokens=%d limit=%d",
             label, est, TOKEN_BUDGET_LIMIT,
         )
         char_limit = TOKEN_BUDGET_LIMIT * 4
-        truncated = prompt[:char_limit]
+        truncated = flat[:char_limit]
         last_section = truncated.rfind("\n## ")
         if last_section > char_limit // 2:
             truncated = truncated[:last_section]
@@ -113,9 +123,8 @@ def _call_with_retry(
                 operation=operation, model_config=model_config,
             )
         except Exception as exc:
-            exc_type = type(exc).__name__
-            is_retryable = any(t in exc_type for t in _RETRYABLE_ERROR_TYPES)
-            is_rate_limit = "RateLimitError" in exc_type or "rate_limit" in str(exc).lower()
+            is_retryable = isinstance(exc, _RETRYABLE_ERRORS)
+            is_rate_limit = isinstance(exc, _llm_exc.RateLimitError)
 
             logger.error(
                 "llm_call_failed label=%s attempt=%d retryable=%s error=%s",
@@ -177,7 +186,9 @@ async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     model = resolve_model(operation=operation, tier=tier)
     limiter = get_limiter(model)
 
-    est_input = _estimate_tokens(kwargs.get("prompt", ""))
+    prompt_val = kwargs.get("prompt", "")
+    flat_text = prompt_val.as_flat() if isinstance(prompt_val, PromptParts) else prompt_val
+    est_input = _estimate_tokens(flat_text)
     await limiter.acquire(est_input)
 
     return await asyncio.to_thread(_call_with_retry, **kwargs)
@@ -231,7 +242,8 @@ async def run_stage1(
             org_id, db, org_ctx, meta_summary, doc_chunks, document_index=doc_index,
         )
 
-        result, parsed = _call_with_retry(
+        result, parsed = await asyncio.to_thread(
+            _call_with_retry,
             prompt=prompt, max_tokens=8000, tier="strong",
             operation="discovery_domain", label="stage1",
             model_config=model_config,
@@ -321,7 +333,8 @@ async def run_stage2(
         domains = domains_q.scalars().all()
         total_processes = 0
 
-        domain_contexts: list[tuple[BusinessProcess, dict, list[dict]]] = []
+        domain_meta_details: list[dict] = []
+        domain_queries: list[str] = []
         for domain in domains:
             meta_json = domain.metadata_json or {}
             object_names = _as_list(meta_json.get("associated_objects"))
@@ -332,10 +345,15 @@ async def run_stage2(
             meta_detail = await gather_metadata_for_domain(
                 org_id, db, str_objects, str_automations
             )
-            doc_chunks = await semantic_document_search(
-                org_id, db, f"{domain.name}: {domain.description or ''}", limit=20
-            )
-            domain_contexts.append((domain, meta_detail, doc_chunks))
+            domain_meta_details.append(meta_detail)
+            domain_queries.append(f"{domain.name}: {domain.description or ''}")
+
+        all_doc_chunks = await batch_semantic_search(org_id, db, domain_queries, limit=20)
+
+        domain_contexts: list[tuple[BusinessProcess, dict, list[dict]]] = []
+        for i, domain in enumerate(domains):
+            doc_chunks = all_doc_chunks[i] if i < len(all_doc_chunks) else []
+            domain_contexts.append((domain, domain_meta_details[i], doc_chunks))
 
         domain_prompts: list[tuple[BusinessProcess, str]] = []
         for domain, meta_detail, doc_chunks in domain_contexts:
@@ -434,6 +452,259 @@ async def run_stage2(
             progress_cb("structural_decomposition", "done", len(domains), len(domains))
 
         return total_processes
+
+
+async def run_stage3_4(
+    org_id: UUID,
+    run_id: UUID,
+    db: AsyncSession,
+    progress_cb: ProgressCallback = None,
+    model_config: dict | None = None,
+) -> tuple[int, int]:
+    """Stage 3+4 merged: Enrichment + Flow in a single LLM pass per domain.
+
+    Returns (enriched_count, handoff_count).
+    """
+    start = time.time()
+    enriched_count = 0
+    total_handoffs = 0
+
+    with _lf_span("stage3_4_enrichment_flow", metadata={"org_id": str(org_id), "run_id": str(run_id)}):
+        if progress_cb:
+            progress_cb("step_enrichment", "running", 0, 1)
+
+        domains_q = await db.execute(
+            select(BusinessProcess).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.level == "domain",
+                BusinessProcess.status != "rejected",
+            )
+        )
+        domains = domains_q.scalars().all()
+
+        all_procs_q = await db.execute(
+            select(BusinessProcess).where(
+                BusinessProcess.org_id == org_id,
+                BusinessProcess.discovery_run_id == run_id,
+                BusinessProcess.status != "rejected",
+            )
+        )
+        all_procs = all_procs_q.scalars().all()
+        id_to_proc = {p.id: p for p in all_procs}
+
+        domain_payloads: list[tuple[BusinessProcess, list[BusinessProcess], str]] = []
+
+        for domain in domains:
+            domain_procs = _get_procs_under_domain(domain.id, all_procs, id_to_proc)
+            domain_steps = [p for p in domain_procs if p.level == "step"]
+
+            if not domain_steps:
+                continue
+
+            all_obj_names: set[str] = set()
+            all_auto_names: set[str] = set()
+            for step in domain_steps:
+                for a in (step.artifacts or []):
+                    if a.get("type") == "object":
+                        all_obj_names.add(a.get("api_name", ""))
+                    elif a.get("type") in ("flow", "validation_rule"):
+                        all_auto_names.add(a.get("api_name", ""))
+            for p in domain_procs:
+                for tp in (p.system_touchpoints or []):
+                    if isinstance(tp, dict) and tp.get("object_api_name"):
+                        all_obj_names.add(tp["object_api_name"])
+                for art in (p.artifacts or []):
+                    if isinstance(art, dict) and art.get("type") == "object":
+                        all_obj_names.add(art.get("api_name", ""))
+
+            domain_meta = await gather_metadata_for_domain(
+                org_id, db, list(all_obj_names), list(all_auto_names)
+            )
+            obj_meta_by_name = {o["api_name"]: o for o in domain_meta.get("objects", [])}
+            auto_meta_by_name = {a["api_name"]: a for a in domain_meta.get("automations", [])}
+
+            steps_data = []
+            metadata_per_step: dict[str, dict] = {}
+            docs_per_step: dict[str, list[dict]] = {}
+
+            for step in domain_steps:
+                step_artifacts = step.artifacts or []
+                step_objs = [a.get("api_name", "") for a in step_artifacts if a.get("type") == "object"]
+                step_autos = [a.get("api_name", "") for a in step_artifacts if a.get("type") in ("flow", "validation_rule")]
+                metadata_per_step[step.name] = {
+                    "objects": [obj_meta_by_name[n] for n in step_objs if n in obj_meta_by_name],
+                    "automations": [auto_meta_by_name[n] for n in step_autos if n in auto_meta_by_name],
+                }
+                docs = await semantic_document_search(
+                    org_id, db, f"{step.name}: {step.description or ''}", limit=5
+                )
+                docs_per_step[step.name] = docs
+                steps_data.append({
+                    "name": step.name,
+                    "description": step.description,
+                    "artifacts": step_artifacts,
+                })
+
+            def build_tree_dict(proc: BusinessProcess, _dp: list = domain_procs) -> dict:
+                return {
+                    "name": proc.name,
+                    "level": proc.level,
+                    "description": proc.description,
+                    "system_touchpoints": proc.system_touchpoints or [],
+                    "trigger_conditions": proc.trigger_conditions or [],
+                    "actors": proc.actors or [],
+                    "children": [
+                        build_tree_dict(c, _dp) for c in _dp if c.parent_id == proc.id
+                    ],
+                }
+
+            enriched_tree = [
+                build_tree_dict(p, domain_procs) for p in domain_procs if p.parent_id == domain.id
+            ]
+
+            relationships = await gather_metadata_relationships(org_id, db, list(all_obj_names))
+            dep_graph = await gather_dependency_subgraph(org_id, db, list(all_obj_names))
+
+            prompt = await build_stage3_4_prompt(
+                org_id, db, steps_data, metadata_per_step, docs_per_step,
+                enriched_tree, relationships, dep_graph,
+            )
+            domain_payloads.append((domain, domain_procs, prompt))
+
+        async def _enrich_flow_domain(domain: BusinessProcess, prompt) -> tuple[LLMResult, dict]:
+            return await _async_llm_call(
+                prompt=prompt, max_tokens=14000, tier="strong",
+                operation="discovery_enrichment_flow",
+                label=f"stage3_4_{domain.name}",
+                model_config=model_config,
+            )
+
+        llm_results = await asyncio.gather(
+            *[_enrich_flow_domain(d, p) for d, _dp, p in domain_payloads]
+        )
+
+        for (domain, domain_procs, _prompt), (_result, parsed) in zip(domain_payloads, llm_results):
+            domain_steps = [p for p in domain_procs if p.level == "step"]
+            name_to_step = {s.name: s for s in domain_steps}
+            name_to_id: dict[str, UUID] = {p.name: p.id for p in domain_procs}
+            name_to_proc: dict[str, BusinessProcess] = {p.name: p for p in domain_procs}
+
+            for es in _as_list(parsed.get("enriched_steps")):
+                if not isinstance(es, dict):
+                    continue
+                step_name = str(es.get("name", ""))
+                bp = name_to_step.get(step_name)
+                if not bp:
+                    continue
+
+                bp.trigger_conditions = _as_list(es.get("trigger_conditions"))
+                bp.decision_logic = _as_list(es.get("decision_logic"))
+                bp.system_touchpoints = _as_list(es.get("system_touchpoints"))
+                bp.actors = _as_list(es.get("actors"))
+                bp.success_criteria = _as_list(es.get("success_criteria"))
+                bp.failure_modes = _as_list(es.get("failure_modes"))
+                bp.value_classification = es.get("value_classification")
+                bp.complexity_score = es.get("complexity_score")
+                bp.automation_potential = es.get("automation_potential")
+                bp.estimated_duration = es.get("estimated_duration")
+                bp.estimated_frequency = es.get("estimated_frequency")
+
+                if es.get("confidence") is not None:
+                    bp.confidence_score = float(es["confidence"])
+                if es.get("needs_review") is not None:
+                    bp.needs_review = bool(es["needs_review"])
+
+                enriched_count += 1
+
+            step_flows = _as_list(parsed.get("step_flows"))
+            ep_raw = parsed.get("entry_points")
+            entry_points = set(ep_raw) if isinstance(ep_raw, list) else set()
+            tp_raw = parsed.get("terminal_points")
+            terminal_points = set(tp_raw) if isinstance(tp_raw, list) else set()
+            parallel_groups = {
+                step_name: pg.get("group_name", "")
+                for pg in _as_list(parsed.get("parallel_groups"))
+                if isinstance(pg, dict)
+                for step_name in _as_list(pg.get("step_names"))
+            }
+
+            sequencing_map: dict[str, dict] = {}
+            for p in domain_procs:
+                if p.level == "step":
+                    sequencing_map[p.name] = {
+                        "predecessors": [],
+                        "successors": [],
+                        "parallel_group": parallel_groups.get(p.name),
+                        "is_entry_point": p.name in entry_points,
+                        "is_terminal": p.name in terminal_points,
+                    }
+
+            for sf in step_flows:
+                if not isinstance(sf, dict):
+                    continue
+                src = str(sf.get("source_step", ""))
+                tgt = str(sf.get("target_step", ""))
+                condition = sf.get("condition")
+                src_id = name_to_id.get(src)
+                tgt_id = name_to_id.get(tgt)
+
+                if src in sequencing_map and tgt_id:
+                    sequencing_map[src]["successors"].append(
+                        {"step_id": str(tgt_id), "condition": condition}
+                    )
+                if tgt in sequencing_map and src_id:
+                    sequencing_map[tgt]["predecessors"].append(
+                        {"step_id": str(src_id), "condition": condition}
+                    )
+
+            for step_name, seq in sequencing_map.items():
+                bp = name_to_proc.get(step_name)
+                if bp:
+                    bp.sequencing = seq
+
+            process_name_to_id: dict[str, UUID] = {}
+            for p in domain_procs:
+                if p.level in ("process", "subprocess"):
+                    process_name_to_id[p.name] = p.id
+
+            for ho in _as_list(parsed.get("handoffs")):
+                if not isinstance(ho, dict):
+                    continue
+                src_id = process_name_to_id.get(str(ho.get("source", "")))
+                tgt_id = process_name_to_id.get(str(ho.get("target", "")))
+                if src_id and tgt_id:
+                    confidence = float(ho.get("confidence", 0.5))
+                    db.add(ProcessHandoff(
+                        org_id=org_id,
+                        source_process_id=src_id,
+                        target_process_id=tgt_id,
+                        handoff_type=str(ho.get("type", "unknown"))[:50],
+                        description=ho.get("description"),
+                        confidence_score=confidence,
+                        is_gap=False,
+                        needs_review=confidence < NEEDS_REVIEW_CONFIDENCE,
+                        discovery_run_id=run_id,
+                        metadata_json={
+                            "data_transferred": _as_list(ho.get("data_transferred")),
+                            "transfer_mechanism": ho.get("transfer_mechanism"),
+                            "source_process": ho.get("source"),
+                            "target_process": ho.get("target"),
+                        },
+                    ))
+                    total_handoffs += 1
+
+            await db.flush()
+
+        if progress_cb:
+            progress_cb("step_enrichment", "done", enriched_count, max(enriched_count, 1))
+            progress_cb("flow_analysis", "done", total_handoffs, max(total_handoffs, 1))
+
+        logger.info(
+            "stage3_4_complete org_id=%s run_id=%s enriched=%d handoffs=%d dur_ms=%d",
+            org_id, run_id, enriched_count, total_handoffs, int((time.time() - start) * 1000),
+        )
+        return enriched_count, total_handoffs
 
 
 async def run_stage3(
@@ -1045,7 +1316,8 @@ async def run_stage6(
             org_id, db, org_ctx, all_domains_data, orphaned,
         )
 
-        result, parsed = _call_with_retry(
+        result, parsed = await asyncio.to_thread(
+            _call_with_retry,
             prompt=prompt, max_tokens=8000, tier="strong",
             operation="discovery_synthesis", label="stage6",
             model_config=model_config,

@@ -220,6 +220,65 @@ async def gather_document_chunks_for_domain(
     ]
 
 
+async def batch_semantic_search(
+    org_id: UUID,
+    db: AsyncSession,
+    queries: list[str],
+    limit: int = 10,
+) -> list[list[dict]]:
+    """Batch-embed multiple queries and run vector search for each.
+
+    Returns one result list per query, in the same order as the input.
+    Falls back to sequential calls on embedding failure.
+    """
+    if not queries:
+        return []
+
+    from app.services.ai.router import get_embedding_provider
+    from app.services.documents.vectorizer import _embed_batch
+
+    client = get_embedding_provider()
+
+    try:
+        embeddings = await _embed_batch(client, queries)
+    except Exception as exc:
+        logger.error("batch_embedding_failed org_id=%s error=%s", org_id, exc)
+        return [
+            await gather_document_chunks_for_domain(org_id, db, q, limit)
+            for q in queries
+        ]
+
+    docs_q = await db.execute(
+        select(Document.id).where(Document.org_id == org_id, Document.status == "indexed")
+    )
+    doc_ids = [row[0] for row in docs_q.all()]
+    if not doc_ids:
+        return [[] for _ in queries]
+
+    results: list[list[dict]] = []
+    for emb in embeddings:
+        q = await db.execute(
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.document_id.in_(doc_ids),
+                DocumentChunk.embedding.isnot(None),
+            )
+            .order_by(DocumentChunk.embedding.cosine_distance(emb))
+            .limit(limit)
+        )
+        chunks = list(q.scalars().all())
+        results.append([
+            {
+                "content": c.content or "",
+                "document_id": str(c.document_id),
+                "section_title": c.section_title,
+                "chunk_id": str(c.id),
+            }
+            for c in chunks
+        ])
+    return results
+
+
 async def semantic_document_search(
     org_id: UUID,
     db: AsyncSession,
@@ -231,9 +290,6 @@ async def semantic_document_search(
     from app.services.documents.vectorizer import _embed
 
     client = get_embedding_provider()
-    if client is None:
-        logger.warning("no_embedding_provider org_id=%s", org_id)
-        return await gather_document_chunks_for_domain(org_id, db, query_text, limit)
 
     try:
         query_embedding = await _embed(client, query_text)

@@ -70,8 +70,7 @@ def process_discovery_task(org_id: str) -> str:
             cleanup_previous_run,
             run_stage1,
             run_stage2,
-            run_stage3,
-            run_stage4,
+            run_stage3_4,
             run_stage5,
             run_stage6,
             run_stage7,
@@ -120,7 +119,8 @@ def process_discovery_task(org_id: str) -> str:
                     )
 
                     _update("step_enrichment", "pulling", 0, 1)
-                    enriched_count = await run_stage3(
+                    _update("flow_analysis", "pulling", 0, 1)
+                    enriched_count, handoff_count = await run_stage3_4(
                         UUID(org_id), run_id, session,
                         progress_cb=_discovery_progress_cb, model_config=org_config,
                     )
@@ -129,13 +129,6 @@ def process_discovery_task(org_id: str) -> str:
                         "step_enrichment", "done",
                         enriched_count, max(enriched_count, 1),
                     )
-
-                    _update("flow_analysis", "pulling", 0, 1)
-                    handoff_count = await run_stage4(
-                        UUID(org_id), run_id, session,
-                        progress_cb=_discovery_progress_cb, model_config=org_config,
-                    )
-                    await session.commit()
                     _update(
                         "flow_analysis", "done",
                         handoff_count, max(handoff_count, 1),
@@ -182,8 +175,8 @@ def process_discovery_task(org_id: str) -> str:
                         "executive_summary": synthesis.get("executive_summary", ""),
                     }
                     run.stage_results = {
-                        "stage3_enriched": enriched_count,
-                        "stage4_handoffs": handoff_count,
+                        "stage3_4_enriched": enriched_count,
+                        "stage3_4_handoffs": handoff_count,
                         "stage5_critique_count": critique_n,
                         "stage7_quality": quality,
                     }

@@ -122,7 +122,8 @@ _limiters: dict[str, AdaptiveTokenRateLimiter] = {}
 
 def get_limiter(model: str) -> AdaptiveTokenRateLimiter:
     """Return the rate limiter for the given model's provider."""
-    provider = model.split("/")[0] if "/" in model else "default"
+    from app.services.ai.router import _provider_from_model
+    provider = _provider_from_model(model)
     if provider not in _limiters:
         _limiters[provider] = AdaptiveTokenRateLimiter()
         logger.info("rate_limiter_created provider=%s default_tpm=%d", provider, _DEFAULT_INPUT_TPM)

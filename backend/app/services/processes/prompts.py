@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.ai.router import PromptParts
 from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
@@ -400,7 +401,7 @@ async def build_pass1_prompt(
     metadata_summary: dict,
     document_summary: list[dict],
     document_index: list[dict] | None = None,
-) -> str:
+) -> PromptParts:
     blocks = await resolve_prompt_blocks("discovery_domain", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
     protocol = (blocks.get("protocol") or "").strip()
@@ -417,7 +418,11 @@ async def build_pass1_prompt(
         )
         protocol = _FALLBACK_PASS1_PROTOCOL
     middle = _pass1_dynamic_sections(org_context, metadata_summary, document_summary, document_index)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=middle,
+        variable="",
+    )
 
 
 async def build_stage2_prompt(
@@ -427,7 +432,7 @@ async def build_stage2_prompt(
     domain: dict,
     metadata_detail: dict,
     document_chunks: list[dict],
-) -> str:
+) -> PromptParts:
     """Stage 2: Structural Decomposition prompt."""
     blocks = await resolve_prompt_blocks("discovery_structure", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -438,8 +443,13 @@ async def build_stage2_prompt(
     if not protocol:
         logger.warning("discovery_prompt_fallback stage=2 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE2_PROTOCOL
-    middle = _stage2_dynamic_sections(org_context, domain, metadata_detail, document_chunks)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    org_section = f"## Organization Context\n{json.dumps(org_context, indent=2)}"
+    domain_section = _stage2_dynamic_sections(org_context, domain, metadata_detail, document_chunks)
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=org_section,
+        variable=domain_section,
+    )
 
 
 async def build_stage3_prompt(
@@ -448,7 +458,7 @@ async def build_stage3_prompt(
     steps: list[dict],
     metadata_per_step: dict[str, dict],
     document_chunks_per_step: dict[str, list[dict]],
-) -> str:
+) -> PromptParts:
     """Stage 3: Step Enrichment prompt."""
     blocks = await resolve_prompt_blocks("discovery_enrichment", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -460,7 +470,11 @@ async def build_stage3_prompt(
         logger.warning("discovery_prompt_fallback stage=3 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE3_PROTOCOL
     middle = _stage3_dynamic_sections(steps, metadata_per_step, document_chunks_per_step)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context="",
+        variable=middle,
+    )
 
 
 async def build_stage4_prompt(
@@ -469,7 +483,7 @@ async def build_stage4_prompt(
     enriched_tree: list[dict],
     metadata_relationships: dict,
     dependency_graph: list[dict] | None = None,
-) -> str:
+) -> PromptParts:
     """Stage 4: Flow & Handoff Analysis prompt."""
     blocks = await resolve_prompt_blocks("discovery_flow", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -481,7 +495,11 @@ async def build_stage4_prompt(
         logger.warning("discovery_prompt_fallback stage=4 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE4_PROTOCOL
     middle = _stage4_dynamic_sections(enriched_tree, metadata_relationships, dependency_graph)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context="",
+        variable=middle,
+    )
 
 
 async def build_stage5_prompt(
@@ -491,7 +509,7 @@ async def build_stage5_prompt(
     flow_data: dict,
     raw_metadata: dict,
     document_chunks: list[dict],
-) -> str:
+) -> PromptParts:
     """Stage 5: Validation & Refinement prompt."""
     blocks = await resolve_prompt_blocks("discovery_validation", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
@@ -502,8 +520,129 @@ async def build_stage5_prompt(
     if not protocol:
         logger.warning("discovery_prompt_fallback stage=5 block=protocol org_id=%s", org_id)
         protocol = _FALLBACK_STAGE5_PROTOCOL
-    middle = _stage5_dynamic_sections(complete_tree, flow_data, raw_metadata, document_chunks)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    metadata_section = f"## Raw Metadata (for validation)\n{json.dumps(raw_metadata, indent=2)}"
+    tree_and_flow = (
+        f"## Complete Enriched Process Map\n{json.dumps(complete_tree, indent=2)}\n\n"
+        f"## Flow Analysis Results\n{json.dumps(flow_data, indent=2)}\n\n"
+        f"## Document Evidence\n"
+        + (json.dumps([c['content'][:500] for c in document_chunks[:15]], indent=2) if document_chunks else "None")
+    )
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=metadata_section,
+        variable=tree_and_flow,
+    )
+
+
+_FALLBACK_STAGE3_4_INSTRUCTIONS = """You are a senior business process analyst performing step-level enrichment AND flow analysis in a single pass.
+
+## Part A: Step Enrichment
+For each step provided, determine agent-grade operational details using the metadata and documents provided.
+
+### Reasoning Instructions
+For each step, trace backward from its artifacts:
+1. What event or state change triggers this step?
+2. What data does it read or write (specific Object.Field)?
+3. What decisions or rules are applied?
+4. What constitutes success or failure?
+
+### Evidence Rules
+- For system_touchpoints, reference SPECIFIC Object.Field names from the metadata provided. Do NOT invent field names.
+- If you cannot identify specific fields for a step, set system_touchpoints to an empty array and set needs_review to true.
+- Do NOT assign value_classification "VA" to internal administrative steps. VA means the step directly produces something the external customer receives or experiences.
+
+### Enrichment Fields Per Step
+1. trigger_conditions — what event or state change initiates this step
+2. decision_logic — what rules or judgments are applied
+3. system_touchpoints — which Object.Field combinations are read/written/created
+4. actors — who performs this (user role, integration, automation)
+5. success_criteria — what does "done correctly" look like
+6. failure_modes — what can go wrong and how is it recovered
+7. value_classification — VA (customer-facing value), BVA (business-necessary), NVA (waste/rework)
+8. complexity_score — low (single system, rule-based), medium (multi-system or some judgment), high (cross-system, significant judgment)
+9. automation_potential — high (fully rule-based, data available), medium (mostly rule-based, some exceptions), low (judgment-heavy), none (inherently human)
+10. estimated_duration — minutes, hours, or days per execution
+11. estimated_frequency — per_transaction, daily, weekly, or monthly
+
+## Part B: Flow & Handoff Analysis
+After enriching the steps, identify how they connect to each other and how processes hand off work.
+
+### Flow Reasoning
+Trace the data flow in two passes:
+1. **Evidence-based connections:** step A writes to an object that step B reads, or an automation triggers after step A and modifies data for step B.
+2. **Inferred connections:** steps that logically must be sequential but have no metadata evidence — mark type as "inferred" with confidence < 0.5.
+
+### Parallel Detection
+If two steps read from the same trigger but write to different objects with no dependency between them, they may execute in parallel. Group them.
+
+### Handoff Data Contracts
+For each handoff between processes, identify what data transfers — list specific Object.Field combinations that cross the boundary."""
+
+_FALLBACK_STAGE3_4_PROTOCOL = """Return a JSON object matching the enforced schema containing BOTH enriched_steps (with all enrichment fields) AND step_flows/handoffs/parallel_groups/entry_points/terminal_points."""
+
+
+def _stage3_4_dynamic_sections(
+    steps: list[dict],
+    metadata_per_step: dict[str, dict],
+    document_chunks_per_step: dict[str, list[dict]],
+    enriched_tree: list[dict],
+    metadata_relationships: dict,
+    dependency_graph: list[dict] | None = None,
+) -> str:
+    step_sections = []
+    for step in steps:
+        name = step["name"]
+        meta = json.dumps(metadata_per_step.get(name, {}), indent=2)
+        docs = json.dumps(
+            [c["content"] for c in document_chunks_per_step.get(name, [])[:5]],
+            indent=2,
+        )
+        step_sections.append(f"""### Step: "{name}"
+Artifacts: {json.dumps(step.get("artifacts", []))}
+Relevant metadata:
+{meta}
+Relevant documents:
+{docs}""")
+
+    flow_sections = [
+        f"## Enriched Process Hierarchy\n{json.dumps(enriched_tree, indent=2)}",
+        f"## Metadata Relationships (lookups, automations)\n{json.dumps(metadata_relationships, indent=2)}",
+    ]
+    if dependency_graph:
+        flow_sections.append(
+            f"## Dependency Graph (flows, triggers, apex DML, business processes)\n"
+            f"{json.dumps(dependency_graph, indent=2)}"
+        )
+    return "## Steps to Enrich\n\n" + "\n\n".join(step_sections) + "\n\n" + "\n\n".join(flow_sections)
+
+
+async def build_stage3_4_prompt(
+    org_id: UUID,
+    db: AsyncSession,
+    steps: list[dict],
+    metadata_per_step: dict[str, dict],
+    document_chunks_per_step: dict[str, list[dict]],
+    enriched_tree: list[dict],
+    metadata_relationships: dict,
+    dependency_graph: list[dict] | None = None,
+) -> PromptParts:
+    """Stage 3+4 merged: Enrichment + Flow prompt."""
+    blocks = await resolve_prompt_blocks("discovery_enrichment_flow", org_id, db)
+    instructions = (blocks.get("instructions") or "").strip()
+    protocol = (blocks.get("protocol") or "").strip()
+    if not instructions:
+        instructions = _FALLBACK_STAGE3_4_INSTRUCTIONS
+    if not protocol:
+        protocol = _FALLBACK_STAGE3_4_PROTOCOL
+    middle = _stage3_4_dynamic_sections(
+        steps, metadata_per_step, document_chunks_per_step,
+        enriched_tree, metadata_relationships, dependency_graph,
+    )
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context="",
+        variable=middle,
+    )
 
 
 async def build_pass3_prompt(
@@ -512,7 +651,7 @@ async def build_pass3_prompt(
     org_context: dict,
     all_domains: list[dict],
     orphaned_artifacts: list[dict],
-) -> str:
+) -> PromptParts:
     blocks = await resolve_prompt_blocks("discovery_synthesis", org_id, db)
     instructions = (blocks.get("instructions") or "").strip()
     protocol = (blocks.get("protocol") or "").strip()
@@ -529,4 +668,8 @@ async def build_pass3_prompt(
         )
         protocol = _FALLBACK_PASS3_PROTOCOL
     middle = _pass3_dynamic_sections(org_context, all_domains, orphaned_artifacts)
-    return f"{instructions}\n\n{middle}\n\n{protocol}"
+    return PromptParts(
+        system=f"{instructions}\n\n{protocol}",
+        context=middle,
+        variable="",
+    )

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, DbSession
+from app.services.ai.router import _provider_from_model
 from app.models.connection import PlatformConnection
 from app.models.entity import BusinessEntity
 from app.models.licensing import OrgLicenseSnapshot, UserVelocitySnapshot
@@ -75,7 +76,7 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
             effective_model = f"gemini/{settings.EMBEDDING_MODEL}"
         else:
             effective_model = resolve_model(operation=op_id, model_config=org_config, tier=meta["tier"])
-        effective_provider = effective_model.split("/")[0] if "/" in effective_model else "unknown"
+        effective_provider = _provider_from_model(effective_model)
         operations.append({
             "id": op_id,
             "label": meta["label"],

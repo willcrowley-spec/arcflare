@@ -393,10 +393,19 @@ async def vectorize_org_metadata(
         )
     ).scalars().all()
 
-    for obj in objects:
-        fields = (
-            await db.execute(select(MetadataField).where(MetadataField.object_id == obj.id))
+    obj_ids = [obj.id for obj in objects]
+    fields_by_obj: dict = {oid: [] for oid in obj_ids}
+    if obj_ids:
+        all_fields = (
+            await db.execute(select(MetadataField).where(MetadataField.object_id.in_(obj_ids)))
         ).scalars().all()
+        for f in all_fields:
+            bucket = fields_by_obj.get(f.object_id)
+            if bucket is not None:
+                bucket.append(f)
+
+    for obj in objects:
+        fields = fields_by_obj.get(obj.id, [])
         text = _describe_object(obj, fields)
         chunks.append({
             "chunk_index": idx,

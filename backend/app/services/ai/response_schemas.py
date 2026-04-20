@@ -347,11 +347,136 @@ DISCOVERY_SYNTHESIS_SCHEMA: dict = {
 }
 
 
+DISCOVERY_ENRICHMENT_FLOW_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "enriched_steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "trigger_conditions": {"type": "array", "items": _TRIGGER_CONDITION},
+                    "decision_logic": {"type": "array", "items": _DECISION_LOGIC},
+                    "system_touchpoints": {"type": "array", "items": _SYSTEM_TOUCHPOINT},
+                    "actors": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string", "enum": ["user", "integration", "system"]},
+                            },
+                            "required": ["name", "type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "success_criteria": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "criterion": {"type": "string"},
+                                "measurable": {"type": "boolean"},
+                            },
+                            "required": ["criterion"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "failure_modes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "mode": {"type": "string"},
+                                "impact": {"type": "string"},
+                                "recovery": {"type": "string"},
+                            },
+                            "required": ["mode"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+                    "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                    "estimated_duration": {"type": "string", "enum": ["minutes", "hours", "days"]},
+                    "estimated_frequency": {"type": "string", "enum": ["per_transaction", "daily", "weekly", "monthly"]},
+                    "confidence": {"type": "number"},
+                    "needs_review": {"type": "boolean"},
+                },
+                "required": ["name"],
+                "additionalProperties": False,
+            },
+        },
+        "step_flows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_step": {"type": "string"},
+                    "target_step": {"type": "string"},
+                    "condition": {"type": ["string", "null"]},
+                    "evidence": {"type": "string"},
+                    "type": {"type": "string", "enum": ["automated", "manual", "integration", "inferred"]},
+                },
+                "required": ["source_step", "target_step", "type"],
+                "additionalProperties": False,
+            },
+        },
+        "parallel_groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "group_name": {"type": "string"},
+                    "step_names": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["group_name", "step_names"],
+                "additionalProperties": False,
+            },
+        },
+        "handoffs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                    "description": {"type": "string"},
+                    "confidence": {"type": "number"},
+                    "data_transferred": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "object": {"type": "string"},
+                                "fields": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["object"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "transfer_mechanism": {"type": ["string", "null"]},
+                },
+                "required": ["source", "target", "type"],
+                "additionalProperties": False,
+            },
+        },
+        "entry_points": {"type": "array", "items": {"type": "string"}},
+        "terminal_points": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["enriched_steps", "step_flows"],
+    "additionalProperties": False,
+}
+
+
 OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_domain": DISCOVERY_DOMAIN_SCHEMA,
     "discovery_structure": DISCOVERY_STRUCTURE_SCHEMA,
     "discovery_enrichment": DISCOVERY_ENRICHMENT_SCHEMA,
     "discovery_flow": DISCOVERY_FLOW_SCHEMA,
+    "discovery_enrichment_flow": DISCOVERY_ENRICHMENT_FLOW_SCHEMA,
     "discovery_validation": DISCOVERY_VALIDATION_SCHEMA,
     "discovery_synthesis": DISCOVERY_SYNTHESIS_SCHEMA,
 }

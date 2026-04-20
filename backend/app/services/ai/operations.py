@@ -74,6 +74,15 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "group": "discovery",
         "description": "Stage 4: identifies step-to-step flows, parallel groups, and within-domain handoffs.",
     },
+    "discovery_enrichment_flow": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "tier": "strong",
+        "thinking_budget": 8192,
+        "output_format": "json",
+        "label": "Enrichment + Flow (Merged)",
+        "group": "discovery",
+        "description": "Stage 3+4 merged: enriches steps with operational details and identifies flows/handoffs in a single pass.",
+    },
     "discovery_validation": {
         "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
