@@ -19,7 +19,8 @@ import {
   XCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useProcessMapSettings, useReanalyze, useResearchStatus, useStartResearch, useUpdateOrgProfile, useUpdateOrgSettings, useUpdateProcessMapSettings } from '@/hooks/useApi'
+import { useConnections, useModelCatalog, useOrgProfile, useOrgSettings, useProcessMapSettings, useReanalyze, useResearchLatest, useResearchStatus, useStartResearch, useUpdateOrgProfile, useUpdateOrgSettings, useUpdateProcessMapSettings } from '@/hooks/useApi'
+import { EnrichmentProfile } from '@/components/EnrichmentProfile'
 import { PromptsSection } from '@/components/PromptEditor/PromptsSection'
 import { StatusBadge } from '@/components/StatusBadge'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
@@ -108,13 +109,19 @@ function parseProfile(data: unknown): OrgProfileData {
 }
 
 function readCompanyFromSettings(settings: Record<string, unknown> | undefined) {
+  const enrichment = settings?.enrichment && typeof settings.enrichment === 'object'
+    ? (settings.enrichment as Record<string, unknown>)
+    : undefined
   const company_name = typeof settings?.company_name === 'string' ? settings.company_name : undefined
   const domains = Array.isArray(settings?.domains)
     ? (settings.domains as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
     : []
-  const industry = typeof settings?.industry === 'string' ? settings.industry : undefined
+  const industry = typeof settings?.industry === 'string' ? settings.industry
+    : typeof enrichment?.industry === 'string' ? enrichment.industry : undefined
   const headcount = readNumber(settings, ['headcount', 'estimated_headcount'])
+    ?? readNumber(enrichment, ['headcount', 'estimated_headcount'])
   const annual_revenue = readNumber(settings, ['annual_revenue', 'estimated_annual_revenue'])
+    ?? readNumber(enrichment, ['annual_revenue', 'estimated_annual_revenue'])
   return { company_name, domains, industry, headcount, annual_revenue }
 }
 
@@ -216,6 +223,7 @@ export default function OrganizationPage() {
   const startResearch = useStartResearch()
   const [researchPolling, setResearchPolling] = useState(true)
   const researchStatusQuery = useResearchStatus(researchPolling)
+  const researchLatestQuery = useResearchLatest()
   const [reanalyzeBanner, setReanalyzeBanner] = useState<string | null>(null)
 
   const profile = useMemo(() => parseProfile(profileQuery.data), [profileQuery.data])
@@ -248,8 +256,12 @@ export default function OrganizationPage() {
   useEffect(() => {
     if (researchStatus?.status === 'completed' || researchStatus?.status === 'failed') {
       setResearchPolling(false)
+      if (researchStatus.status === 'completed') {
+        void researchLatestQuery.refetch()
+        void profileQuery.refetch()
+      }
     }
-  }, [researchStatus?.status])
+  }, [researchStatus?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onEnrich = useCallback(() => {
     setResearchPolling(true)
@@ -513,6 +525,11 @@ export default function OrganizationPage() {
           </div>
         )}
       </section>
+
+      {/* Section 1b: Enrichment Intelligence */}
+      {researchLatestQuery.data ? (
+        <EnrichmentProfile data={researchLatestQuery.data as Record<string, unknown>} />
+      ) : null}
 
       {/* Section 2: Connected platforms */}
       <section className="space-y-3">
