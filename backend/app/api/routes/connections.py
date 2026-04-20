@@ -221,7 +221,11 @@ async def sync_event_stream(
                 )
                 conn_status = fresh.scalar_one_or_none()
 
-                if is_done and conn_status == "syncing":
+                actively_syncing = conn_status == "syncing"
+
+                if is_done and actively_syncing:
+                    # Previous run complete but a new sync just started — skip
+                    # stale backfill and fall through to Redis subscribe.
                     pass
                 else:
                     backfill_data = [
@@ -239,7 +243,10 @@ async def sync_event_stream(
                     ]
                     yield f"event: backfill\ndata: {json_mod.dumps(backfill_data)}\n\n"
 
-                    if is_done:
+                    if is_done or not actively_syncing:
+                        # Run finished normally, OR the run is orphaned (task
+                        # crashed without emitting a terminal event and the
+                        # connection is no longer syncing). Either way, close.
                         yield "event: done\ndata: {}\n\n"
                         return
 
