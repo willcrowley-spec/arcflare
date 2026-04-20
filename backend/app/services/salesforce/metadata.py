@@ -946,21 +946,6 @@ async def sync_metadata(
             )
         )
 
-    for comp in ui_components:
-        db.add(
-            MetadataComponent(
-                org_id=org_id,
-                connection_id=connection_id,
-                component_category=comp.component_type,
-                api_name=comp.api_name,
-                label=comp.label,
-                related_object=getattr(comp, "related_object", None),
-                metadata_json={
-                    "description": getattr(comp, "description", None),
-                },
-            )
-        )
-
     await _emit("phase_start", "Processing installed packages...", phase="installed_packages")
     packages = pull_installed_packages(sf)
     for pkg in packages:
