@@ -178,9 +178,6 @@ async def sync_event_stream(
         raise HTTPException(status_code=404, detail="Connection not found")
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        import logging as _logging
-        _log = _logging.getLogger("sync_event_stream")
-
         from app.services.sync_progress import get_redis_client
 
         r = get_redis_client()
@@ -221,10 +218,6 @@ async def sync_event_stream(
                 .where(PlatformConnection.id == connection_id)
             )
             conn_status = fresh.scalar_one_or_none()
-            _log.info(
-                "sse_backfill_decision connection=%s is_done=%s conn_status=%s events=%d",
-                connection_id, is_done, conn_status, len(backfill_events),
-            )
 
             if is_done and conn_status == "syncing":
                 pass
