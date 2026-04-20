@@ -14,7 +14,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    print(">>> MIGRATION 020: STARTING community_summaries upgrade <<<")
     op.execute(
         "ALTER TABLE communities "
         "ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'document'"
