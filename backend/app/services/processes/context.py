@@ -329,9 +329,17 @@ async def semantic_document_search(
             for comm in communities_q.scalars().all():
                 if not comm.member_concept_ids:
                     continue
+                uuid_ids = []
+                for c in comm.member_concept_ids:
+                    try:
+                        uuid_ids.append(UUID(c))
+                    except (ValueError, AttributeError):
+                        continue
+                if not uuid_ids:
+                    continue
                 concept_names_q = await db.execute(
                     select(Concept.name).where(
-                        Concept.id.in_([UUID(c) for c in comm.member_concept_ids if c])
+                        Concept.id.in_(uuid_ids)
                     )
                 )
                 comm_names = {r[0] for r in concept_names_q.all()}
