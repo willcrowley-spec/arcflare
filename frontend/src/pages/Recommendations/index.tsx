@@ -1,39 +1,107 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Layers, Radar, Shield, Sparkles } from 'lucide-react'
+import { ArrowDownWideNarrow, Layers, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
-import { useGenerateRecommendations, useRecommendations, useRecommendationSummary } from '@/hooks/useApi'
+import {
+  useGenerateRecommendations,
+  useRecommendations,
+  useUpdateRecommendationStatus,
+} from '@/hooks/useApi'
 import { PortfolioDashboard } from './PortfolioDashboard'
 import { usePortfolio } from './usePortfolio'
+import { RecommendationCard } from './RecommendationCard'
+import { RecommendationDetail } from './RecommendationDetail'
+import type { Recommendation } from './RecommendationCard'
 
-type RecRow = {
-  id: string
-  title: string
-  description?: string | null
-  category?: string | null
-  priority?: string | null
-  status: string
-  automation_type?: string | null
-  estimated_roi?: number | string | null
-  composite_score?: number | null
-  analysis_inputs_json?: unknown[]
-  actions_json?: unknown[]
-  impact_json?: Record<string, unknown>
-  architecture_health_json?: Record<string, unknown>
+type StatusTab = 'active' | 'accepted' | 'dismissed'
+type SortKey = 'score' | 'npv' | 'priority' | 'title'
+type AutomationKey = 'deterministic' | 'agentic' | 'hybrid'
+
+const PAGE_SIZE = 12
+
+function sortApiParam(key: SortKey): string {
+  switch (key) {
+    case 'score':
+      return '-composite_score'
+    case 'npv':
+      return '-estimated_roi'
+    case 'priority':
+      return '-priority'
+    case 'title':
+      return 'title'
+    default:
+      return '-composite_score'
+  }
 }
 
-type Summary = {
-  total?: number
-  active?: number
-  implemented?: number
-  avg_roi?: number | null
-  top_category?: string | null
+function normalizeRecommendation(raw: unknown): Recommendation | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.title !== 'string') return null
+  const id = r.id != null ? String(r.id) : ''
+  if (!id) return null
+
+  const recType = r.recommendation_type === 'synthesized' ? 'synthesized' : 'discovered'
+  const autoRaw = typeof r.automation_type === 'string' ? r.automation_type.toLowerCase() : 'hybrid'
+  const automation_type: Recommendation['automation_type'] =
+    autoRaw === 'deterministic' || autoRaw === 'agentic' || autoRaw === 'hybrid' ? autoRaw : 'hybrid'
+
+  const actionsRaw = Array.isArray(r.actions_json) ? r.actions_json : []
+  const actions_json = actionsRaw.map((x, i) => {
+    if (x && typeof x === 'object' && !Array.isArray(x)) {
+      const o = x as Record<string, unknown>
+      return {
+        step: typeof o.step === 'number' ? o.step : i + 1,
+        action:
+          typeof o.action === 'string' ? o.action : typeof o.title === 'string' ? o.title : 'Action',
+        effort: typeof o.effort === 'string' ? o.effort : '—',
+      }
+    }
+    return { step: i + 1, action: typeof x === 'string' ? x : 'Action', effort: '—' }
+  })
+
+  const linked =
+    Array.isArray(r.linked_process_ids) ?
+      r.linked_process_ids.map((x) => String(x)).filter(Boolean)
+    : []
+
+  const enrichment_log = Array.isArray(r.enrichment_log) ? (r.enrichment_log as Record<string, unknown>[]) : []
+
+  return {
+    id,
+    title: r.title,
+    description: typeof r.description === 'string' ? r.description : null,
+    category: typeof r.category === 'string' ? r.category : null,
+    priority: typeof r.priority === 'string' ? r.priority : null,
+    status: typeof r.status === 'string' ? r.status : 'active',
+    recommendation_type: recType,
+    automation_type,
+    composite_score: typeof r.composite_score === 'number' ? r.composite_score : null,
+    base_score: typeof r.base_score === 'number' ? r.base_score : null,
+    llm_score: typeof r.llm_score === 'number' ? r.llm_score : null,
+    llm_rationale: typeof r.llm_rationale === 'string' ? r.llm_rationale : null,
+    score_divergence_flag: Boolean(r.score_divergence_flag),
+    estimated_roi:
+      r.estimated_roi != null && Number.isFinite(Number(r.estimated_roi)) ? Number(r.estimated_roi) : null,
+    assumptions_json:
+      r.assumptions_json && typeof r.assumptions_json === 'object' && !Array.isArray(r.assumptions_json) ?
+        (r.assumptions_json as Record<string, unknown>)
+      : {},
+    scenarios_json:
+      r.scenarios_json && typeof r.scenarios_json === 'object' && !Array.isArray(r.scenarios_json) ?
+        (r.scenarios_json as Record<string, unknown>)
+      : {},
+    actions_json,
+    linked_process_ids: linked,
+    enrichment_log,
+    analysis_inputs_json: Array.isArray(r.analysis_inputs_json) ? r.analysis_inputs_json : undefined,
+  }
 }
 
-function normalizeList(data: unknown): { items: RecRow[]; total: number; page: number; page_size: number } {
-  if (!data || typeof data !== 'object') return { items: [], total: 0, page: 1, page_size: 50 }
+function normalizeList(data: unknown): { items: Recommendation[]; total: number; page: number; page_size: number } {
+  if (!data || typeof data !== 'object') return { items: [], total: 0, page: 1, page_size: PAGE_SIZE }
   const d = data as {
     items?: unknown[]
     total?: number
@@ -41,149 +109,136 @@ function normalizeList(data: unknown): { items: RecRow[]; total: number; page: n
     page_size?: number
   }
   const items = Array.isArray(d.items)
-    ? (d.items as RecRow[]).filter((r) => r && typeof r.id === 'string' && typeof r.title === 'string')
+    ? (d.items.map(normalizeRecommendation).filter(Boolean) as Recommendation[])
     : []
   return {
     items,
     total: typeof d.total === 'number' ? d.total : items.length,
     page: typeof d.page === 'number' ? d.page : 1,
-    page_size: typeof d.page_size === 'number' ? d.page_size : 50,
+    page_size: typeof d.page_size === 'number' ? d.page_size : PAGE_SIZE,
   }
 }
 
-function normalizeSummary(data: unknown): Summary {
-  if (!data || typeof data !== 'object') return {}
-  const s = data as Summary
-  return s
+function useGridColumns() {
+  const [cols, setCols] = useState(1)
+  useEffect(() => {
+    const update = () => {
+      if (window.matchMedia('(min-width: 1024px)').matches) setCols(3)
+      else if (window.matchMedia('(min-width: 768px)').matches) setCols(2)
+      else setCols(1)
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  return cols
 }
 
-function formatMoney(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(Number(n))) return '—'
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(n))
-}
-
-function actionToString(a: unknown): string {
-  if (typeof a === 'string') return a
-  if (a && typeof a === 'object' && 'title' in a && typeof (a as { title: unknown }).title === 'string') {
-    return (a as { title: string }).title
+function chunkRows<T>(arr: T[], size: number): T[][] {
+  if (size < 1) return [arr]
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size))
   }
-  if (a && typeof a === 'object' && 'type' in a && typeof (a as { type: unknown }).type === 'string') {
-    return (a as { type: string }).type.replace(/_/g, ' ')
-  }
-  return 'Action'
+  return out
 }
 
-function inputToString(x: unknown): string {
-  if (typeof x === 'string') return x
-  if (x && typeof x === 'object') return JSON.stringify(x).slice(0, 120)
-  return String(x)
+const AUTOMATION_LABEL: Record<AutomationKey, string> = {
+  deterministic: 'Deterministic',
+  agentic: 'Agentic',
+  hybrid: 'Hybrid',
 }
-
-const PAGE_SIZE = 6
 
 export default function RecommendationsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const tabParam = (searchParams.get('status') || 'active').toLowerCase()
-  const statusFilter = tabParam === 'implemented' ? 'implemented' : 'active'
+  const tabRaw = (searchParams.get('status') || 'active').toLowerCase()
+  const statusTab: StatusTab =
+    tabRaw === 'accepted' ? 'accepted' : tabRaw === 'dismissed' ? 'dismissed' : 'active'
+  const statusFilter = statusTab
 
   const [page, setPage] = useState(1)
   const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('score')
+  const [automationFilters, setAutomationFilters] = useState<Set<AutomationKey>>(() => new Set())
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const { data: listData, isLoading: listLoading, isError: listError, error: listErr, refetch } = useRecommendations({
-    page,
-    page_size: PAGE_SIZE,
-    status: statusFilter,
-  })
-  const { data: summaryData, isLoading: sumLoading } = useRecommendationSummary()
+  const gridCols = useGridColumns()
+
+  const apiAutomationType = automationFilters.size === 1 ? [...automationFilters][0] : undefined
+
+  const { data: listData, isLoading: listLoading, isError: listError, error: listErr, refetch } =
+    useRecommendations({
+      page,
+      page_size: PAGE_SIZE,
+      status: statusFilter,
+      sort: sortApiParam(sortKey),
+      automation_type: apiAutomationType,
+    })
+
   const generateMutation = useGenerateRecommendations()
+  const updateStatusMutation = useUpdateRecommendationStatus()
 
   const { items, total, page_size } = useMemo(() => normalizeList(listData), [listData])
-  const summary = useMemo(() => normalizeSummary(summaryData), [summaryData])
   const portfolio = usePortfolio(total)
 
-  const setTab = (next: 'active' | 'implemented') => {
+  const setTab = (next: StatusTab) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.set('status', next)
       return p
     })
     setPage(1)
+    setExpandedId(null)
   }
 
   useEffect(() => {
     setPage(1)
-  }, [q])
+  }, [q, sortKey, automationFilters])
 
-  const filteredCards = useMemo(() => {
-    if (!q.trim()) return items
+  const filteredItems = useMemo(() => {
+    let next = items
+    if (automationFilters.size > 0 && automationFilters.size < 3) {
+      next = next.filter((r) => automationFilters.has(r.automation_type))
+    }
+    if (!q.trim()) return next
     const qq = q.toLowerCase()
-    return items.filter(
+    return next.filter(
       (c) =>
         c.title.toLowerCase().includes(qq) ||
         (c.category ?? '').toLowerCase().includes(qq) ||
         (c.description ?? '').toLowerCase().includes(qq),
     )
-  }, [items, q])
+  }, [items, q, automationFilters])
 
-  const featured = useMemo(() => {
-    const pool = filteredCards
-    if (!pool.length) return null
-    const sorted = [...pool].sort((a, b) => {
-      const ar = Number(a.estimated_roi ?? 0)
-      const br = Number(b.estimated_roi ?? 0)
-      if (br !== ar) return br - ar
-      return (b.composite_score ?? 0) - (a.composite_score ?? 0)
-    })
-    return sorted[0]
-  }, [filteredCards, items])
-
-  const inputs = useMemo(() => {
-    if (!featured?.analysis_inputs_json?.length) return []
-    return featured.analysis_inputs_json.slice(0, 6).map(inputToString)
-  }, [featured])
-
-  const actions = useMemo(() => {
-    if (!featured?.actions_json?.length) return []
-    return featured.actions_json.map(actionToString)
-  }, [featured])
-
-  const roiDisplay = featured?.estimated_roi != null ? formatMoney(Number(featured.estimated_roi)) : formatMoney(summary.avg_roi ?? null)
-
-  const arch = useMemo(() => {
-    for (const r of items) {
-      const h = r.architecture_health_json
-      if (h && typeof h === 'object' && Object.keys(h).length) return h
-    }
-    return null
-  }, [items])
-
-  const metaSync = useMemo(() => {
-    const v = arch?.metadata_sync_pct ?? arch?.metadata_sync
-    if (typeof v === 'number' && v >= 0 && v <= 100) return v
-    if (summary.total && summary.total > 0) {
-      return Math.min(100, Math.round(((summary.active ?? 0) / summary.total) * 100))
-    }
-    return null
-  }, [arch, summary])
-
-  const procOpt = useMemo(() => {
-    const v = arch?.process_optimization_pct ?? arch?.process_optimization
-    if (typeof v === 'number' && v >= 0 && v <= 100) return v
-    const avgComp =
-      items.length > 0
-        ? items.reduce((a, b) => a + (b.composite_score ?? 0), 0) / items.length
-        : null
-    if (avgComp != null) return Math.min(100, Math.round(avgComp * 100))
-    return null
-  }, [arch, items])
+  const rowChunks = useMemo(() => chunkRows(filteredItems, gridCols), [filteredItems, gridCols])
 
   const totalPages = Math.max(1, Math.ceil(total / page_size))
   const startIdx = total === 0 ? 0 : (page - 1) * page_size + 1
   const endIdx = total === 0 ? 0 : Math.min(page * page_size, total)
 
-  const loading = listLoading || sumLoading
+  const toggleAutomation = (key: AutomationKey) => {
+    setAutomationFilters((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
-  if (loading) {
+  const handleExpand = (id: string) => {
+    setExpandedId((cur) => (cur === id ? null : id))
+  }
+
+  const handleStatusChange = (id: string, status: string) => {
+    updateStatusMutation.mutate(
+      { id, status },
+      {
+        onSuccess: () => setExpandedId(null),
+      },
+    )
+  }
+
+  if (listLoading) {
     return (
       <div className="space-y-8">
         <div>
@@ -240,183 +295,109 @@ export default function RecommendationsPage() {
 
       <PortfolioDashboard portfolio={portfolio} />
 
-      {featured ? (
-        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-md ring-1 ring-slate-900/5">
-          <div className="border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 px-6 py-5">
-            <div className="flex flex-wrap items-center gap-2">
-              {featured.priority ? (
-                <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-red-800 ring-1 ring-red-200">
-                  {featured.priority}
-                </span>
-              ) : null}
-              {featured.category || summary.top_category ? (
-                <span className="rounded-full bg-navy-50 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-navy-800 ring-1 ring-navy-200">
-                  {(featured.category ?? summary.top_category ?? '').replace(/_/g, ' ')}
-                </span>
-              ) : null}
-              <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-900 ring-1 ring-orange-200">
-                <Sparkles className="h-3.5 w-3.5" />
-                Top recommendation
-              </span>
-            </div>
-            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-navy-900">{featured.title}</h2>
-            <p className="mt-3 max-w-4xl text-sm leading-relaxed text-slate-600">
-              {featured.description ?? 'No description provided for this recommendation.'}
-            </p>
-            <div className="mt-6 grid gap-6 lg:grid-cols-3">
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">Estimated ROI</p>
-                <p className="mt-2 text-3xl font-semibold text-emerald-900">
-                  {roiDisplay === '—' ? '—' : `${roiDisplay}/yr`}
-                </p>
-                <p className="mt-1 text-xs text-emerald-800/90">Modeled from catalog averages when item ROI is blank</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Analysis inputs</p>
-                <ul className="mt-3 space-y-2 text-sm text-slate-800">
-                  {(inputs.length ? inputs : ['Connected platform signals']).map((i) => (
-                    <li key={i} className="flex items-center gap-2">
-                      <Layers className="h-4 w-4 shrink-0 text-navy-600" />
-                      <span className="min-w-0 break-words">{i}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Required multi-step action</p>
-                <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-800">
-                  {(actions.length ? actions : ['Review details in downstream systems']).map((a) => (
-                    <li key={a}>{a}</li>
-                  ))}
-                </ol>
-              </div>
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                disabled
-                title="Coming soon"
-                className="inline-flex items-center justify-center rounded-lg bg-navy-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Initialize Deployment
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Coming soon"
-                className="inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Analysis Details
-              </button>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      <section className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-4 rounded-2xl border border-slate-200/80 bg-navy-800 p-6 text-white shadow-md ring-1 ring-black/10">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold">Multi-system impact</h2>
-              <p className="mt-1 text-sm text-slate-200">Aggregate signals from the current recommendation catalog</p>
-            </div>
-            <Radar className="h-7 w-7 text-orange-300" />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <ImpactStat
-              label="Active recommendations"
-              value={String(summary.active ?? 0)}
-              hint={`${summary.total ?? 0} total in org`}
-            />
-            <ImpactStat
-              label="Implemented"
-              value={String(summary.implemented ?? 0)}
-              hint="Closed-loop remediations"
-            />
-            <ImpactStat
-              label="Avg modeled ROI"
-              value={formatMoney(summary.avg_roi ?? null)}
-              hint="Mean of estimated ROI across catalog"
-            />
-          </div>
-          <button
-            type="button"
-            disabled
-            title="Coming soon"
-            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-white/10 px-4 py-2.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-          >
-            Review Full Audit
-          </button>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
-          <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-navy-700" />
-            <h2 className="text-lg font-semibold text-navy-900">Architecture health</h2>
-          </div>
-          <div className="mt-5 space-y-5">
-            {metaSync != null ? (
-              <HealthBar label="Metadata sync" value={metaSync} color="bg-emerald-500" />
-            ) : (
-              <p className="text-sm text-slate-500">Metadata sync scores appear when analysis populates health JSON.</p>
-            )}
-            {procOpt != null ? (
-              <HealthBar label="Process optimization" value={procOpt} color="bg-amber-400" />
-            ) : (
-              <p className="text-sm text-slate-500">Process optimization inferred from composite scores when available.</p>
-            )}
-          </div>
-          <p className="mt-4 text-xs text-slate-500">
-            Health scores combine drift detection, test coverage signals, and operational SLO adherence.
-          </p>
-        </div>
-      </section>
-
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Recommendation status filter">
-          {(['active', 'implemented'] as const).map((t) => (
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Recommendation status">
+          {(
+            [
+              ['active', 'Active'],
+              ['accepted', 'Accepted'],
+              ['dismissed', 'Dismissed'],
+            ] as const
+          ).map(([key, label]) => (
             <button
-              key={t}
+              key={key}
               type="button"
               role="tab"
-              aria-selected={statusFilter === t}
-              onClick={() => setTab(t)}
+              aria-selected={statusTab === key}
+              onClick={() => setTab(key)}
               className={clsx(
                 'rounded-full px-4 py-2 text-sm font-semibold ring-1 ring-inset transition-colors',
-                statusFilter === t ? 'bg-navy-800 text-white ring-navy-800' : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
+                statusTab === key ?
+                  'bg-navy-800 text-white ring-navy-800'
+                : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
               )}
             >
-              {t === 'active' ? 'Active' : 'Implemented'}
+              {label}
             </button>
           ))}
         </div>
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center lg:w-auto">
+
+        <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-end xl:w-auto">
+          <div className="relative flex min-w-[200px] items-center gap-2">
+            <ArrowDownWideNarrow className="pointer-events-none absolute left-3 h-4 w-4 text-slate-400" aria-hidden />
+            <select
+              aria-label="Sort recommendations"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              className="w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-8 text-sm font-semibold text-navy-900 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-200"
+            >
+              <option value="score">Score</option>
+              <option value="npv">NPV</option>
+              <option value="priority">Priority</option>
+              <option value="title">Title</option>
+            </select>
+          </div>
+
           <SearchBar
             value={q}
             onChange={setQ}
             placeholder="Search recommendations…"
-            className="sm:min-w-[320px]"
+            className="lg:min-w-[280px]"
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => portfolio.selectAll(filteredCards.map((c) => c.id))}
-              disabled={filteredCards.length === 0}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Select visible
-            </button>
-            <button
-              type="button"
-              onClick={() => portfolio.clearAll()}
-              disabled={portfolio.selectedIds.size === 0}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Clear portfolio
-            </button>
-          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automation</span>
+          {(['deterministic', 'agentic', 'hybrid'] as const).map((key) => {
+            const on = automationFilters.has(key)
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleAutomation(key)}
+                className={clsx(
+                  'rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors',
+                  key === 'deterministic' &&
+                    (on ?
+                      'bg-emerald-50 text-emerald-900 ring-emerald-200'
+                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                  key === 'agentic' &&
+                    (on ?
+                      'bg-orange-50 text-orange-900 ring-orange-200'
+                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                  key === 'hybrid' &&
+                    (on ?
+                      'bg-blue-50 text-blue-900 ring-blue-200'
+                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                )}
+              >
+                {AUTOMATION_LABEL[key]}
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => portfolio.selectAll(filteredItems.map((c) => c.id))}
+            disabled={filteredItems.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Layers className="h-3.5 w-3.5" aria-hidden />
+            Select visible
+          </button>
+          <button
+            type="button"
+            onClick={() => portfolio.clearAll()}
+            disabled={portfolio.selectedIds.size === 0}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Clear portfolio
+          </button>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Viewing {total === 0 ? 0 : `${startIdx}-${endIdx}`} of {total} recommendations
+            Viewing {total === 0 ? 0 : `${startIdx}-${endIdx}`} of {total}
           </p>
         </div>
       </div>
@@ -427,65 +408,39 @@ export default function RecommendationsPage() {
           title="No recommendations in this view"
           description="Generate recommendations after connecting a platform."
         />
-      ) : filteredCards.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <EmptyState
           icon={<Sparkles className="h-10 w-10" />}
           title="No matches"
-          description="Try a different search term."
+          description="Try different filters or search terms."
         />
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-3">
-            {filteredCards.map((c) => (
-              <article
-                key={c.id}
-                className="flex flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
-              >
-                <div className="flex flex-1 items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={portfolio.isSelected(c.id)}
-                    onChange={() => portfolio.toggle(c.id)}
-                    aria-label={`Include ${c.title} in portfolio projections`}
-                    className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-navy-800 focus:ring-navy-700"
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                      {(c.category ?? 'General').replace(/_/g, ' ')}
-                    </p>
-                    <h3 className="mt-2 text-lg font-semibold text-navy-900">{c.title}</h3>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {[
-                        c.automation_type,
-                        c.priority,
-                        c.status,
-                        c.estimated_roi != null ? formatMoney(Number(c.estimated_roi)) : null,
-                      ]
-                        .filter(Boolean)
-                        .map((t) => (
-                          <span
-                            key={String(t)}
-                            className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80"
-                          >
-                            {String(t).replace(/_/g, ' ')}
-                          </span>
-                        ))}
-                    </div>
-                    <div className="mt-auto pt-6">
-                      <button
-                        type="button"
-                        disabled
-                        title="Coming soon"
-                        className="w-full rounded-lg bg-navy-800 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {c.status === 'implemented' ? 'Review' : 'Implement'}
-                      </button>
-                    </div>
+          <div className="space-y-6">
+            {rowChunks.map((row, rowIdx) => {
+              const expanded = row.find((r) => r.id === expandedId) ?? null
+              return (
+                <Fragment key={row.map((r) => r.id).join('|') || String(rowIdx)}>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {row.map((rec) => (
+                      <RecommendationCard
+                        key={rec.id}
+                        rec={rec}
+                        isSelected={portfolio.isSelected(rec.id)}
+                        onToggleSelect={portfolio.toggle}
+                        onExpand={handleExpand}
+                        isExpanded={expandedId === rec.id}
+                      />
+                    ))}
                   </div>
-                </div>
-              </article>
-            ))}
+                  {expanded ?
+                    <RecommendationDetail rec={expanded} onStatusChange={handleStatusChange} />
+                  : null}
+                </Fragment>
+              )
+            })}
           </div>
+
           {totalPages > 1 ? (
             <div className="flex items-center justify-center gap-4">
               <button
@@ -511,37 +466,6 @@ export default function RecommendationsPage() {
           ) : null}
         </>
       )}
-    </div>
-  )
-}
-
-function ImpactStat({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return (
-    <div className="rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
-      <p className="text-xs uppercase tracking-wide text-slate-200">{label}</p>
-      <p className="mt-2 text-2xl font-semibold">{value}</p>
-      <p className="mt-1 text-xs text-slate-300">{hint}</p>
-    </div>
-  )
-}
-
-function HealthBar({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="font-medium text-slate-700">{label}</span>
-        <span className="font-semibold text-navy-900">{value}%</span>
-      </div>
-      <div
-        className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200/80"
-        role="progressbar"
-        aria-valuenow={value}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={label}
-      >
-        <div className={clsx('h-full rounded-full', color)} style={{ width: `${value}%` }} />
-      </div>
     </div>
   )
 }

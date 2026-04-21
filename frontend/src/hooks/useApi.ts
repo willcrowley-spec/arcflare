@@ -272,7 +272,15 @@ export function useGenerateProcesses() {
   })
 }
 
-export function useRecommendations(params?: { page?: number; page_size?: number; status?: string }) {
+export function useRecommendations(params?: {
+  page?: number
+  page_size?: number
+  status?: string
+  category?: string
+  recommendation_type?: string
+  automation_type?: string
+  sort?: string
+}) {
   return useQuery({
     queryKey: ['recommendations', params],
     queryFn: () => api.recommendations.list(params),
@@ -291,6 +299,35 @@ export function useGenerateRecommendations() {
   return useMutation({
     mutationFn: () => api.recommendations.generate(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recommendations'] }),
+  })
+}
+
+export function useRecalculateRecommendation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, overrides }: { id: string; overrides: Record<string, unknown> }) =>
+      api.recommendations.recalculate(id, { overrides }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
+    },
+  })
+}
+
+export function useRecommendationRuns(params?: { page?: number; page_size?: number }) {
+  return useQuery({
+    queryKey: ['recommendations', 'runs', params],
+    queryFn: () => api.recommendations.runs(params),
+  })
+}
+
+export function useUpdateRecommendationStatus() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      api.recommendations.updateStatus(id, status),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
+    },
   })
 }
 

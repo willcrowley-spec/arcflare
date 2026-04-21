@@ -280,10 +280,24 @@ export const api = {
       request<void>(`/discovery/${id}/reject`, { method: 'POST' }),
   },
   recommendations: {
-    list: (params?: { page?: number; page_size?: number; status?: string }) =>
-      request<PaginatedResponse<Recommendation>>(withQuery('/recommendations', params)),
+    list: (params?: {
+      page?: number
+      page_size?: number
+      status?: string
+      category?: string
+      recommendation_type?: string
+      automation_type?: string
+      sort?: string
+    }) => request<PaginatedResponse<Recommendation>>(withQuery('/recommendations', params)),
     get: (id: string) => request<Recommendation>(`/recommendations/${id}`),
     generate: () => request<void>('/recommendations/generate', { method: 'POST' }),
+    runs: (params?: { page?: number; page_size?: number }) =>
+      request<PaginatedResponse<Record<string, unknown>>>(withQuery('/recommendations/runs', params)),
+    recalculate: (id: string, body: { overrides: Record<string, unknown> }) =>
+      request<unknown>(`/recommendations/${id}/recalculate`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     updateStatus: (id: string, status: string) =>
       request<void>(`/recommendations/${id}/status`, {
         method: 'PATCH',
