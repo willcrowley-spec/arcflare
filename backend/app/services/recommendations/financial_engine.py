@@ -14,6 +14,68 @@ from typing import Any
 SCENARIO_MULTIPLIERS = {"optimistic": 1.3, "expected": 1.0, "conservative": 0.7}
 DEFAULT_PROJECTION_YEARS = 5
 
+_DEFAULT_RAMP = [0.1, 0.5, 0.85, 0.95, 1.0]
+
+# When the LLM returns thin assumptions, fill gaps from automation class so
+# projections are directionally meaningful instead of all zeros.
+_DEFAULTS_BY_TYPE: dict[str, dict[str, Any]] = {
+    "deterministic": {
+        "technology_cost": 15000,
+        "change_management_factor": 0.35,
+        "efficiency_gain": 0.6,
+        "hard_savings_pct": 0.8,
+        "annual_operational_cost": 3000,
+        "hours_per_week": 12,
+        "actor_count": 1,
+        "productivity_dip": 0.04,
+        "discount_rate": 0.10,
+        "adoption_ramp": list(_DEFAULT_RAMP),
+    },
+    "agentic": {
+        "technology_cost": 40000,
+        "change_management_factor": 0.45,
+        "efficiency_gain": 0.4,
+        "hard_savings_pct": 0.3,
+        "annual_operational_cost": 12000,
+        "hours_per_week": 10,
+        "actor_count": 1,
+        "productivity_dip": 0.08,
+        "discount_rate": 0.10,
+        "adoption_ramp": list(_DEFAULT_RAMP),
+    },
+    "hybrid": {
+        "technology_cost": 25000,
+        "change_management_factor": 0.4,
+        "efficiency_gain": 0.5,
+        "hard_savings_pct": 0.5,
+        "annual_operational_cost": 7500,
+        "hours_per_week": 11,
+        "actor_count": 1,
+        "productivity_dip": 0.06,
+        "discount_rate": 0.10,
+        "adoption_ramp": list(_DEFAULT_RAMP),
+    },
+}
+
+
+def _norm_automation_type_for_engine(value: object | None) -> str:
+    s = (str(value).strip().lower() if value is not None else "") or "hybrid"
+    if s in _DEFAULTS_BY_TYPE:
+        return s
+    return "hybrid"
+
+
+def _assumptions_with_type_defaults(
+    assumptions: dict, automation_type: str | None
+) -> dict:
+    t = _norm_automation_type_for_engine(automation_type)
+    defaults = _DEFAULTS_BY_TYPE[t]
+    out = dict(assumptions)
+    for key, val in defaults.items():
+        if key not in out or out[key] is None:
+            out[key] = list(val) if key == "adoption_ramp" and isinstance(val, list) else val
+    return out
+
 
 def resolve_assumption(assumptions: dict, key: str) -> Any:
     overrides = assumptions.get("overrides", {})
@@ -105,10 +167,13 @@ def compute_scenario(
     }
 
 
-def compute_projections(assumptions: dict) -> dict:
+def compute_projections(
+    assumptions: dict, automation_type: str | None = None
+) -> dict:
+    merged = _assumptions_with_type_defaults(assumptions, automation_type)
     scenarios = {}
     for name, mult in SCENARIO_MULTIPLIERS.items():
-        scenarios[name] = compute_scenario(assumptions, mult)
+        scenarios[name] = compute_scenario(merged, mult)
 
     return {
         **scenarios,

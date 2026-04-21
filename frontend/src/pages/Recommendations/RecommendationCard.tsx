@@ -34,6 +34,22 @@ export interface RecommendationCardProps {
   isExpanded: boolean
 }
 
+function extractNpvRange(scenarios: Record<string, unknown>): {
+  conservative: number | null
+  expected: number | null
+  optimistic: number | null
+} {
+  const get = (key: string) => {
+    const s = scenarios[key]
+    if (s && typeof s === 'object' && !Array.isArray(s)) {
+      const npv = (s as Record<string, unknown>).npv
+      return typeof npv === 'number' ? npv : null
+    }
+    return null
+  }
+  return { conservative: get('conservative'), expected: get('expected'), optimistic: get('optimistic') }
+}
+
 function formatCompactUsd(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return '—'
   const v = Number(n)
@@ -73,6 +89,17 @@ export function RecommendationCard({
       : rec.automation_type === 'agentic'
         ? 'bg-orange-50 text-orange-900 ring-orange-200'
         : 'bg-blue-50 text-blue-900 ring-blue-200'
+
+  const npvRange = extractNpvRange(rec.scenarios_json)
+  const hasNpvBand =
+    npvRange.conservative != null &&
+    npvRange.optimistic != null &&
+    Number.isFinite(npvRange.conservative) &&
+    Number.isFinite(npvRange.optimistic)
+  const npvTitle =
+    hasNpvBand && npvRange.expected != null && Number.isFinite(npvRange.expected) ?
+      `Expected NPV: ${formatCompactUsd(npvRange.expected)}`
+    : undefined
 
   return (
     <article
@@ -137,8 +164,13 @@ export function RecommendationCard({
           Score: <span className="text-navy-900">{formatScore(rec.composite_score)}</span>
         </span>
         <span className="text-slate-400">·</span>
-        <span className="font-medium tabular-nums">
-          NPV: <span className="text-emerald-800">{formatCompactUsd(rec.estimated_roi)}</span>
+        <span className="font-medium tabular-nums" title={npvTitle}>
+          NPV:{' '}
+          <span className="text-emerald-800">
+            {hasNpvBand ?
+              `${formatCompactUsd(npvRange.conservative)}–${formatCompactUsd(npvRange.optimistic)}`
+            : formatCompactUsd(rec.estimated_roi)}
+          </span>
         </span>
         {rec.score_divergence_flag ? (
           <span className="inline-flex items-center gap-1 text-amber-600" title="Heuristic vs. AI score mismatch">

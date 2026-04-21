@@ -34,6 +34,15 @@ CHAT_FALLBACK_RULES = """Communication rules:
 - When uncertain, say so. Never fabricate data, UUIDs, or record IDs.
 - If the user asks for recommendations, remind them your role is discovery — capture what IS, not what should be."""
 
+_RECOMMENDATION_RULES = """Communication rules (recommendation enrichment):
+- You help the user evaluate and enrich one automation recommendation: automation approaches, ROI and payback, NPV/scenario drivers, implementation strategies, and tradeoffs. This is not open-ended process discovery.
+- You may refine financial assumptions when the user provides facts or ranges; call update_assumption to persist confirmed overrides. Explain scoring and savings splits when it helps them decide.
+- Do NOT create, update, or delete BusinessProcess records, handoffs, or gap state. Do not resolve gaps or mutate the discovery graph—only read linked process context via provided tools.
+- Keep all text fields under 3 sentences unless the user asks for more depth.
+- Ask one focused question at a time when clarifying assumptions. Wait for the answer before continuing.
+- When uncertain, say so. Never fabricate data, UUIDs, or record IDs.
+- Respond with exactly one JSON object per turn matching the protocol (message, question, card_question, action_proposal for allowed tools only, summary). No markdown or prose outside JSON."""
+
 CHAT_FALLBACK_PROTOCOL = """You MUST respond with valid JSON matching exactly one of these types:
 
 1. "message" — A short observation or acknowledgment.
@@ -132,6 +141,9 @@ async def build_system_prompt(
         protocol = blocks.get("protocol") or ""
         workflow = blocks.get("workflow") or ""
         examples = _interpolate_examples_block(blocks.get("examples") or "", agent_name)
+
+    if anchor_type == "recommendation":
+        rules = _RECOMMENDATION_RULES
 
     return "\n\n".join([
         identity,
@@ -295,11 +307,13 @@ async def _anchor_context(
                 "linked_processes": processes_out,
             },
             "_enrichment_persona": (
-                "You are helping the user refine financial assumptions for this automation recommendation.\n"
-                "You already have auto-estimated values. Ask targeted questions to improve accuracy.\n"
-                "Prioritize: (1) hard savings opportunities — ask about eliminable spend, (2) actor count "
-                "and time accuracy — employees underestimate by 35%+, (3) automation type validation.\n"
-                "When the user provides information, call update_assumption immediately."
+                "You are helping the user evaluate this automation recommendation: narrative, ROI, "
+                "implementation realism, and financial assumptions.\n"
+                "You already have auto-estimated values; ask targeted questions to improve accuracy.\n"
+                "Prioritize: (1) hard savings — eliminable spend, (2) actor count and time "
+                "(people often underestimate effort by 35%+), (3) automation type fit.\n"
+                "Discuss approaches and tradeoffs when useful; when the user confirms numbers or facts "
+                "that should change stored assumptions, call update_assumption."
             ),
         }
         return anchor_payload

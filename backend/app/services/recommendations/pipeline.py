@@ -107,9 +107,10 @@ def _build_recommendation(
         analysis_inputs_json=[
             {
                 "recommendation_type": rec_type,
-                "signals": candidate.get("signals"),
+                "signals": candidate.get("signals") or {},
                 "gate_score": candidate.get("gate_score"),
                 "refinement_score": candidate.get("refinement_score"),
+                "llm_incomplete": bool(candidate.get("llm_incomplete")),
             }
         ],
         actions_json=actions,
@@ -192,6 +193,11 @@ async def run_recommendation_pipeline(
             "discovered_count": len(discovered),
             "synthesized_count": len(synthesized),
         }
+        pipeline_discovery_run_id: UUID | None = None
+        if discovered:
+            raw_dr = discovered[0].get("discovery_run_id")
+            if raw_dr is not None:
+                pipeline_discovery_run_id = raw_dr if isinstance(raw_dr, UUID) else UUID(str(raw_dr))
         logger.info(
             "pipeline_stage_done org=%s run=%s stage=1 discovered=%d synthesized=%d elapsed=%.1fs",
             org_id, run_id, len(discovered), len(synthesized), time.perf_counter() - t0,
@@ -248,9 +254,14 @@ async def run_recommendation_pipeline(
         for c in llm_out:
             base = float(c.get("base_score") or 0.0)
             llm = c.get("llm_score")
-            llm_part = float(llm) if llm is not None else base
-            c["composite_score"] = round(base * 0.7 + llm_part * 0.3, 6)
-            c["score_divergence_flag"] = llm is not None and abs(base - float(llm)) > 0.25
+            if llm is not None:
+                c["composite_score"] = round(base * 0.7 + float(llm) * 0.3, 6)
+                c["score_divergence_flag"] = abs(base - float(llm)) > 0.25
+                c.pop("llm_incomplete", None)
+            else:
+                c["composite_score"] = base
+                c["score_divergence_flag"] = False
+                c["llm_incomplete"] = True
 
         await db.execute(
             delete(Recommendation).where(
@@ -264,9 +275,15 @@ async def run_recommendation_pipeline(
         created_count = 0
         for c in llm_out:
             assumptions = c.get("assumptions_json")
-            if not isinstance(assumptions, dict):
-                assumptions = {}
-            projections = compute_projections(assumptions)
+            if not isinstance(assumptions, dict) or not assumptions.get("fte_annual_cost"):
+                logger.warning(
+                    "pipeline_skip_incomplete name=%s",
+                    c.get("name") or c.get("title"),
+                )
+                continue
+            projections = compute_projections(
+                assumptions, automation_type=c.get("automation_type")
+            )
             rec = _build_recommendation(c, org_id, run_id, projections)
             db.add(rec)
             created_count += 1
@@ -285,7 +302,14 @@ async def run_recommendation_pipeline(
                 completed_at=datetime.now(timezone.utc),
                 stage_results=stage_results,
                 error=None,
-                config={},
+                config={
+                    "discovery_run_id": str(pipeline_discovery_run_id)
+                    if pipeline_discovery_run_id
+                    else None,
+                    "model": "anthropic/claude-sonnet-4-6",
+                    "heuristic_weights": {"gate": 0.7, "refinement": 0.3},
+                    "blend_weights": {"base": 0.7, "llm": 0.3},
+                },
             )
         )
         await db.commit()

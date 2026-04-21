@@ -19,8 +19,9 @@ import { RecommendationDetail } from './RecommendationDetail'
 import type { Recommendation } from './RecommendationCard'
 
 type StatusTab = 'active' | 'accepted' | 'dismissed'
-type SortKey = 'score' | 'npv' | 'priority' | 'title'
+type SortKey = 'score' | 'npv' | 'title'
 type AutomationKey = 'deterministic' | 'agentic' | 'hybrid'
+type RecommendationTypeKey = 'discovered' | 'synthesized'
 
 const PAGE_SIZE = 12
 
@@ -30,8 +31,6 @@ function sortApiParam(key: SortKey): string {
       return '-composite_score'
     case 'npv':
       return '-estimated_roi'
-    case 'priority':
-      return '-priority'
     case 'title':
       return 'title'
     default:
@@ -156,6 +155,11 @@ const AUTOMATION_LABEL: Record<AutomationKey, string> = {
   hybrid: 'Hybrid',
 }
 
+const RECOMMENDATION_TYPE_LABEL: Record<RecommendationTypeKey, string> = {
+  discovered: 'Discovered',
+  synthesized: 'Synthesized',
+}
+
 const STAGE_LABELS: Record<string, string> = {
   stage_1_candidates: 'Discovering candidates…',
   stage_2_scoring: 'Scoring candidates…',
@@ -214,11 +218,16 @@ export default function RecommendationsPage() {
   const [q, setQ] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('score')
   const [automationFilters, setAutomationFilters] = useState<Set<AutomationKey>>(() => new Set())
+  const [recommendationTypeFilters, setRecommendationTypeFilters] = useState<Set<RecommendationTypeKey>>(
+    () => new Set(),
+  )
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const gridCols = useGridColumns()
 
   const apiAutomationType = automationFilters.size === 1 ? [...automationFilters][0] : undefined
+  const apiRecommendationType =
+    recommendationTypeFilters.size === 1 ? [...recommendationTypeFilters][0] : undefined
 
   const { data: listData, isLoading: listLoading, isError: listError, error: listErr, refetch } =
     useRecommendations({
@@ -227,6 +236,7 @@ export default function RecommendationsPage() {
       status: statusFilter,
       sort: sortApiParam(sortKey),
       automation_type: apiAutomationType,
+      recommendation_type: apiRecommendationType,
     })
 
   const queryClient = useQueryClient()
@@ -263,12 +273,15 @@ export default function RecommendationsPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [q, sortKey, automationFilters])
+  }, [q, sortKey, automationFilters, recommendationTypeFilters])
 
   const filteredItems = useMemo(() => {
     let next = items
     if (automationFilters.size > 0 && automationFilters.size < 3) {
       next = next.filter((r) => automationFilters.has(r.automation_type))
+    }
+    if (recommendationTypeFilters.size === 1) {
+      next = next.filter((r) => recommendationTypeFilters.has(r.recommendation_type))
     }
     if (!q.trim()) return next
     const qq = q.toLowerCase()
@@ -278,7 +291,7 @@ export default function RecommendationsPage() {
         (c.category ?? '').toLowerCase().includes(qq) ||
         (c.description ?? '').toLowerCase().includes(qq),
     )
-  }, [items, q, automationFilters])
+  }, [items, q, automationFilters, recommendationTypeFilters])
 
   const rowChunks = useMemo(() => chunkRows(filteredItems, gridCols), [filteredItems, gridCols])
 
@@ -288,6 +301,15 @@ export default function RecommendationsPage() {
 
   const toggleAutomation = (key: AutomationKey) => {
     setAutomationFilters((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleRecommendationType = (key: RecommendationTypeKey) => {
+    setRecommendationTypeFilters((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -423,7 +445,6 @@ export default function RecommendationsPage() {
             >
               <option value="score">Score</option>
               <option value="npv">NPV</option>
-              <option value="priority">Priority</option>
               <option value="title">Title</option>
             </select>
           </div>
@@ -438,35 +459,63 @@ export default function RecommendationsPage() {
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automation</span>
-          {(['deterministic', 'agentic', 'hybrid'] as const).map((key) => {
-            const on = automationFilters.has(key)
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => toggleAutomation(key)}
-                className={clsx(
-                  'rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors',
-                  key === 'deterministic' &&
-                    (on ?
-                      'bg-emerald-50 text-emerald-900 ring-emerald-200'
-                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
-                  key === 'agentic' &&
-                    (on ?
-                      'bg-orange-50 text-orange-900 ring-orange-200'
-                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
-                  key === 'hybrid' &&
-                    (on ?
-                      'bg-blue-50 text-blue-900 ring-blue-200'
-                    : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
-                )}
-              >
-                {AUTOMATION_LABEL[key]}
-              </button>
-            )
-          })}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</span>
+            {(['discovered', 'synthesized'] as const).map((key) => {
+              const on = recommendationTypeFilters.has(key)
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => toggleRecommendationType(key)}
+                  className={clsx(
+                    'rounded-full px-3 py-1.5 text-xs font-semibold capitalize ring-1 ring-inset transition-colors',
+                    key === 'discovered' &&
+                      (on ?
+                        'bg-navy-50 text-navy-900 ring-navy-200'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                    key === 'synthesized' &&
+                      (on ?
+                        'bg-purple-50 text-purple-900 ring-purple-200'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                  )}
+                >
+                  {RECOMMENDATION_TYPE_LABEL[key]}
+                </button>
+              )
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automation</span>
+            {(['deterministic', 'agentic', 'hybrid'] as const).map((key) => {
+              const on = automationFilters.has(key)
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => toggleAutomation(key)}
+                  className={clsx(
+                    'rounded-full px-3 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors',
+                    key === 'deterministic' &&
+                      (on ?
+                        'bg-emerald-50 text-emerald-900 ring-emerald-200'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                    key === 'agentic' &&
+                      (on ?
+                        'bg-orange-50 text-orange-900 ring-orange-200'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                    key === 'hybrid' &&
+                      (on ?
+                        'bg-blue-50 text-blue-900 ring-blue-200'
+                      : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
+                  )}
+                >
+                  {AUTOMATION_LABEL[key]}
+                </button>
+              )
+            })}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button

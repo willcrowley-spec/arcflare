@@ -163,6 +163,11 @@ Be internally consistent: assumptions should align with actors, complexity, touc
 
 
 def _merge_llm_row(candidate: dict, row: dict) -> None:
+    """Merge LLM output into *candidate* in place.
+
+    Heuristic-only keys (e.g. ``signals``, ``gate_score``, ``refinement_score``) are not
+    read from *row* and are left unchanged on *candidate*.
+    """
     raw_score = row.get("llm_score")
     try:
         llm_score = float(raw_score) if raw_score is not None else None

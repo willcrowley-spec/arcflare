@@ -25,7 +25,7 @@ export interface ValueChartProps {
   className?: string
 }
 
-const YEAR_LABELS = ['Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5'] as const
+const YEAR_LABELS = ['Investment', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const
 
 const COLORS = {
   optimistic: '#10b981', // emerald-500

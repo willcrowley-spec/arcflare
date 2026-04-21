@@ -242,7 +242,9 @@ async def execute_update_assumption(
     if isinstance(rec.scenarios_json, dict):
         prev_npv = (rec.scenarios_json.get("npv") or {}).get("expected")
 
-    projections = compute_projections(assumptions)
+    projections = compute_projections(
+        assumptions, automation_type=rec.automation_type
+    )
     new_npv = projections["npv"]["expected"]
     rec.scenarios_json = projections
     rec.estimated_roi = Decimal(str(new_npv))

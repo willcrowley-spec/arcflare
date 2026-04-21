@@ -329,7 +329,9 @@ async def recalculate_recommendation(
     assumptions["overrides"] = overrides
     rec.assumptions_json = assumptions
 
-    projections = compute_projections(assumptions)
+    projections = compute_projections(
+        assumptions, automation_type=rec.automation_type
+    )
     previous_roi = rec.estimated_roi
     new_npv = projections["npv"]["expected"]
     rec.scenarios_json = projections

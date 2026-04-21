@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-#: Tools available for all chat threads. Recommendation enrichment tools are merged in
-#: ``tools.__init__`` when ``anchor_type == "recommendation"``.
+#: Tools for discovery-anchored chat threads. Recommendation threads use a subset via
+#: ``tools.__init__.tools_for_anchor``.
 BASE_TOOL_REGISTRY: list[dict] = [
     {
         "name": "search_knowledge",
