@@ -315,6 +315,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    recalculateAll: () =>
+      request<{ updated: number; total: number }>('/recommendations/recalculate-all', { method: 'POST' }),
     updateStatus: (id: string, status: string) =>
       request<void>(`/recommendations/${id}/status`, {
         method: 'PATCH',

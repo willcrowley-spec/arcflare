@@ -1,13 +1,14 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowDownWideNarrow, Layers, Loader2, Sparkles, X } from 'lucide-react'
+import { ArrowDownWideNarrow, BarChart3, Layers, Loader2, Sparkles, X } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import {
   useCancelRecommendations,
   useGenerateRecommendations,
+  useRecalculateAll,
   useRecommendationPipelineStatus,
   useRecommendations,
   useUpdateRecommendationStatus,
@@ -242,6 +243,7 @@ export default function RecommendationsPage() {
   const queryClient = useQueryClient()
   const generateMutation = useGenerateRecommendations()
   const cancelMutation = useCancelRecommendations()
+  const recalcAllMutation = useRecalculateAll()
   const updateStatusMutation = useUpdateRecommendationStatus()
   const { data: pipelineStatus } = useRecommendationPipelineStatus()
 
@@ -374,17 +376,26 @@ export default function RecommendationsPage() {
             Prioritized remediation and automation opportunities ranked by ROI, blast radius, and architectural fit.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={pipelineBusy}
-          onClick={() => generateMutation.mutate()}
-          className="inline-flex items-center gap-2 self-start rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {pipelineBusy ?
-            <Loader2 className="h-4 w-4 animate-spin" />
-          : <Sparkles className="h-4 w-4" />}
-          {pipelineBusy ? 'Generating…' : 'Generate'}
-        </button>
+        <div className="flex items-center gap-2 self-start">
+          <button
+            type="button"
+            disabled={pipelineBusy || recalcAllMutation.isPending}
+            onClick={() => recalcAllMutation.mutate()}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {recalcAllMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
+            {recalcAllMutation.isPending ? 'Recalculating…' : 'Refresh Projections'}
+          </button>
+          <button
+            type="button"
+            disabled={pipelineBusy}
+            onClick={() => generateMutation.mutate()}
+            className="inline-flex items-center gap-2 rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pipelineBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {pipelineBusy ? 'Generating…' : 'Generate'}
+          </button>
+        </div>
       </div>
 
       {pipelineBusy ? (

@@ -339,6 +339,16 @@ export function useRecalculateRecommendation() {
   })
 }
 
+export function useRecalculateAll() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.recommendations.recalculateAll(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
+    },
+  })
+}
+
 export function useRecommendationRuns(params?: { page?: number; page_size?: number }) {
   return useQuery({
     queryKey: ['recommendations', 'runs', params],
