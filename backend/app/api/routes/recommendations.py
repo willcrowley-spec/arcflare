@@ -1,19 +1,45 @@
-from uuid import UUID
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, cast, func, select
 
 from app.api.deps import CurrentOrg, DbSession
 from app.models.recommendation import Recommendation
+from app.models.recommendation_run import RecommendationRun
 from app.schemas.common import PaginatedResponse
 from app.schemas.recommendation import (
+    PortfolioProjectionRequest,
+    PortfolioProjectionResponse,
+    RecalculateRequest,
     RecommendationResponse,
+    RecommendationRunResponse,
     RecommendationStatusUpdate,
     RecommendationSummary,
+)
+from app.services.recommendations.financial_engine import (
+    compute_portfolio_projections,
+    compute_projections,
 )
 from app.workers.analysis import generate_recommendations_task
 
 router = APIRouter()
+
+_SORTABLE = {
+    "composite_score": Recommendation.composite_score,
+    "generated_at": Recommendation.generated_at,
+    "estimated_roi": Recommendation.estimated_roi,
+    "title": Recommendation.title,
+    "priority": Recommendation.priority,
+}
+
+
+def _parse_sort(sort: str) -> tuple[str, bool]:
+    sort = sort.strip()
+    if sort.startswith("-"):
+        return sort[1:], True
+    return sort, False
 
 
 @router.get("/summary", response_model=RecommendationSummary)
@@ -37,6 +63,11 @@ async def recommendation_summary(
     avg_roi = await db.scalar(
         select(func.avg(Recommendation.estimated_roi)).where(Recommendation.org_id == org.id)
     )
+    avg_npv = await db.scalar(
+        select(
+            func.avg(cast(Recommendation.scenarios_json["expected"]["npv"].astext, Numeric))
+        ).where(Recommendation.org_id == org.id)
+    )
     cnt = func.count().label("cnt")
     top_cat = await db.execute(
         select(Recommendation.category, cnt)
@@ -47,12 +78,83 @@ async def recommendation_summary(
     )
     row = top_cat.first()
     top_category = row[0] if row else None
+
+    by_type_rows = await db.execute(
+        select(Recommendation.automation_type, func.count())
+        .where(Recommendation.org_id == org.id)
+        .group_by(Recommendation.automation_type)
+    )
+    by_automation_type = {r[0]: int(r[1]) for r in by_type_rows.all()}
+    if not by_automation_type:
+        by_automation_type = None
+
     return RecommendationSummary(
         total=int(total or 0),
         active=int(active or 0),
         implemented=int(implemented or 0),
         avg_roi=float(avg_roi) if avg_roi is not None else None,
+        avg_npv=float(avg_npv) if avg_npv is not None else None,
         top_category=top_category,
+        by_automation_type=by_automation_type,
+    )
+
+
+@router.get("/runs", response_model=PaginatedResponse[RecommendationRunResponse])
+async def list_recommendation_runs(
+    db: DbSession,
+    org: CurrentOrg,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+) -> PaginatedResponse[RecommendationRunResponse]:
+    filters = [RecommendationRun.org_id == org.id]
+    total = await db.scalar(select(func.count()).select_from(RecommendationRun).where(*filters))
+    total = int(total or 0)
+    q = await db.execute(
+        select(RecommendationRun)
+        .where(*filters)
+        .order_by(RecommendationRun.started_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = q.scalars().all()
+    items = [RecommendationRunResponse.model_validate(r) for r in rows]
+    pages = max((total + page_size - 1) // page_size, 1)
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
+
+
+@router.get("/runs/{run_id}", response_model=RecommendationRunResponse)
+async def get_recommendation_run(
+    run_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> RecommendationRunResponse:
+    run = await db.get(RecommendationRun, run_id)
+    if run is None or run.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Recommendation run not found")
+    return RecommendationRunResponse.model_validate(run)
+
+
+@router.post("/portfolio-projection", response_model=PortfolioProjectionResponse)
+async def portfolio_projection(
+    body: PortfolioProjectionRequest,
+    db: DbSession,
+    org: CurrentOrg,
+) -> PortfolioProjectionResponse:
+    assumptions_list: list[dict] = []
+    for rid in body.recommendation_ids:
+        rec = await db.get(Recommendation, rid)
+        if rec is None or rec.org_id != org.id:
+            raise HTTPException(status_code=404, detail=f"Recommendation not found: {rid}")
+        assumptions_list.append(dict(rec.assumptions_json) if rec.assumptions_json else {})
+
+    raw = compute_portfolio_projections(assumptions_list, body.global_overrides or None)
+    return PortfolioProjectionResponse(
+        optimistic=raw["optimistic"],
+        expected=raw["expected"],
+        conservative=raw["conservative"],
+        npv=raw["npv"],
+        payback_month=raw["payback_month"],
+        recommendation_count=raw["recommendation_count"],
     )
 
 
@@ -64,22 +166,36 @@ async def list_recommendations(
     page_size: int = Query(50, ge=1, le=200),
     status_filter: str | None = Query(None, alias="status"),
     category: str | None = None,
+    recommendation_type: str | None = None,
+    automation_type: str | None = None,
+    sort: str = Query("-composite_score", description="Field name, prefix - for descending"),
 ) -> PaginatedResponse[RecommendationResponse]:
     filters = [Recommendation.org_id == org.id]
     if status_filter:
         filters.append(Recommendation.status == status_filter)
     if category:
         filters.append(Recommendation.category == category)
+    if recommendation_type:
+        filters.append(Recommendation.recommendation_type == recommendation_type)
+    if automation_type:
+        filters.append(Recommendation.automation_type == automation_type)
+
+    sort_field, sort_desc = _parse_sort(sort)
+    col = _SORTABLE.get(sort_field, Recommendation.composite_score)
+    if sort_field not in _SORTABLE:
+        sort_desc = True
 
     total = await db.scalar(select(func.count()).select_from(Recommendation).where(*filters))
     total = int(total or 0)
-    q = await db.execute(
-        select(Recommendation)
-        .where(*filters)
-        .order_by(Recommendation.generated_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    stmt = (
+        select(Recommendation).where(*filters).offset((page - 1) * page_size).limit(page_size)
     )
+    if sort_desc:
+        stmt = stmt.order_by(col.desc().nullslast())
+    else:
+        stmt = stmt.order_by(col.asc().nullslast())
+
+    q = await db.execute(stmt)
     rows = q.scalars().all()
     items = [RecommendationResponse.model_validate(r) for r in rows]
     pages = max((total + page_size - 1) // page_size, 1)
@@ -91,7 +207,50 @@ async def generate_recommendations(
     org: CurrentOrg,
 ) -> dict[str, str]:
     generate_recommendations_task.delay(str(org.id))
-    return {"status": "queued", "org_id": str(org.id)}
+    run_id = uuid4()
+    return {"status": "queued", "org_id": str(org.id), "run_id": str(run_id)}
+
+
+@router.post("/{recommendation_id}/recalculate", response_model=RecommendationResponse)
+async def recalculate_recommendation(
+    recommendation_id: UUID,
+    body: RecalculateRequest,
+    db: DbSession,
+    org: CurrentOrg,
+) -> RecommendationResponse:
+    rec = await db.get(Recommendation, recommendation_id)
+    if rec is None or rec.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+    overrides = dict(assumptions.get("overrides", {}))
+    overrides.update(body.overrides)
+    assumptions["overrides"] = overrides
+    rec.assumptions_json = assumptions
+
+    projections = compute_projections(assumptions)
+    previous_roi = rec.estimated_roi
+    new_npv = projections["npv"]["expected"]
+    rec.scenarios_json = projections
+    rec.estimated_roi = Decimal(str(new_npv))
+
+    log = list(rec.enrichment_log or [])
+    log.append(
+        {
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+            "source": "api",
+            "changes": dict(body.overrides),
+            "roi_impact": {
+                "before": float(previous_roi) if previous_roi is not None else None,
+                "after": float(new_npv),
+            },
+        }
+    )
+    rec.enrichment_log = log
+
+    await db.commit()
+    await db.refresh(rec)
+    return RecommendationResponse.model_validate(rec)
 
 
 @router.get("/{recommendation_id}", response_model=RecommendationResponse)
