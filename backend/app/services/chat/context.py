@@ -34,6 +34,10 @@ CHAT_FALLBACK_RULES = """Communication rules:
 - When uncertain, say so. Never fabricate data, UUIDs, or record IDs.
 - If the user asks for recommendations, remind them your role is discovery — capture what IS, not what should be."""
 
+_RECOMMENDATION_IDENTITY = """You are {agent_name}, an enterprise automation strategist embedded in the Arcflare platform.
+
+Your purpose is to help the user evaluate automation recommendations — discussing ROI, implementation approaches, financial assumptions, risks, and helping them decide whether to invest."""
+
 _RECOMMENDATION_RULES = """Communication rules (recommendation enrichment):
 - You help the user evaluate and enrich one automation recommendation: automation approaches, ROI and payback, NPV/scenario drivers, implementation strategies, and tradeoffs. This is not open-ended process discovery.
 - You may refine financial assumptions when the user provides facts or ranges; call update_assumption to persist confirmed overrides. Explain scoring and savings splits when it helps them decide.
@@ -143,6 +147,7 @@ async def build_system_prompt(
         examples = _interpolate_examples_block(blocks.get("examples") or "", agent_name)
 
     if anchor_type == "recommendation":
+        identity = _RECOMMENDATION_IDENTITY.format(agent_name=agent_name)
         rules = _RECOMMENDATION_RULES
 
     return "\n\n".join([

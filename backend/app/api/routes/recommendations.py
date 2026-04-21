@@ -356,6 +356,30 @@ async def recalculate_recommendation(
     return RecommendationResponse.model_validate(rec)
 
 
+@router.post("/recalculate-all")
+async def recalculate_all_recommendations(
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Recalculate financial projections for all active recommendations using current engine."""
+    q = await db.execute(
+        select(Recommendation).where(
+            Recommendation.org_id == org.id,
+            Recommendation.status == "active",
+        )
+    )
+    recs = list(q.scalars().all())
+    updated = 0
+    for rec in recs:
+        assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+        projections = compute_projections(assumptions, automation_type=rec.automation_type)
+        rec.scenarios_json = projections
+        rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
+        updated += 1
+    await db.commit()
+    return {"updated": updated, "total": len(recs)}
+
+
 @router.get("/{recommendation_id}", response_model=RecommendationResponse)
 async def get_recommendation(
     recommendation_id: UUID,

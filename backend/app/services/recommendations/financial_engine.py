@@ -20,37 +20,40 @@ _DEFAULT_RAMP = [0.1, 0.5, 0.85, 0.95, 1.0]
 # projections are directionally meaningful instead of all zeros.
 _DEFAULTS_BY_TYPE: dict[str, dict[str, Any]] = {
     "deterministic": {
-        "technology_cost": 15000,
-        "change_management_factor": 0.35,
-        "efficiency_gain": 0.6,
+        "fte_annual_cost": 75000,
+        "technology_cost": 12000,
+        "change_management_factor": 0.25,
+        "efficiency_gain": 0.7,
         "hard_savings_pct": 0.8,
-        "annual_operational_cost": 3000,
-        "hours_per_week": 12,
-        "actor_count": 1,
+        "annual_operational_cost": 2000,
+        "hours_per_week": 10,
+        "actor_count": 2,
         "productivity_dip": 0.04,
         "discount_rate": 0.10,
         "adoption_ramp": list(_DEFAULT_RAMP),
     },
     "agentic": {
-        "technology_cost": 40000,
-        "change_management_factor": 0.45,
+        "fte_annual_cost": 95000,
+        "technology_cost": 35000,
+        "change_management_factor": 0.40,
         "efficiency_gain": 0.4,
         "hard_savings_pct": 0.3,
-        "annual_operational_cost": 12000,
-        "hours_per_week": 10,
-        "actor_count": 1,
+        "annual_operational_cost": 8000,
+        "hours_per_week": 20,
+        "actor_count": 3,
         "productivity_dip": 0.08,
         "discount_rate": 0.10,
         "adoption_ramp": list(_DEFAULT_RAMP),
     },
     "hybrid": {
-        "technology_cost": 25000,
-        "change_management_factor": 0.4,
+        "fte_annual_cost": 85000,
+        "technology_cost": 20000,
+        "change_management_factor": 0.30,
         "efficiency_gain": 0.5,
         "hard_savings_pct": 0.5,
-        "annual_operational_cost": 7500,
-        "hours_per_week": 11,
-        "actor_count": 1,
+        "annual_operational_cost": 5000,
+        "hours_per_week": 15,
+        "actor_count": 2,
         "productivity_dip": 0.06,
         "discount_rate": 0.10,
         "adoption_ramp": list(_DEFAULT_RAMP),
@@ -126,12 +129,9 @@ def compute_scenario(
 
         if n == 0:
             j_curve_drag = base_savings * productivity_dip
-            inv_hit = total_investment / multiplier
-            op_cost = annual_op_cost / multiplier
-            net = gross - j_curve_drag - inv_hit - op_cost
+            net = gross - j_curve_drag - total_investment - annual_op_cost
         else:
-            op_cost = annual_op_cost / multiplier
-            net = gross - op_cost
+            net = gross - annual_op_cost
 
         annual_savings.append(round(net))
         running_cumulative += net

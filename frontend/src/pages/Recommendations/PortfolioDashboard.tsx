@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { BarChart3 } from 'lucide-react'
 import { ValueChart, type ValueChartScenarios } from './ValueChart'
@@ -60,8 +60,6 @@ const TYPE_ORDER = ['deterministic', 'agentic', 'hybrid'] as const
 
 export function PortfolioDashboard({ portfolio }: PortfolioDashboardProps) {
   const { projections, isLoading, selectedIds, listTotal } = portfolio
-  const [showHardSoft, setShowHardSoft] = useState(false)
-
   const chartScenarios = useMemo(
     () => (projections ? toChartScenarios(projections) : null),
     [projections],
@@ -89,31 +87,7 @@ export function PortfolioDashboard({ portfolio }: PortfolioDashboardProps) {
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-300">View</span>
-          <button
-            type="button"
-            onClick={() => setShowHardSoft(false)}
-            className={clsx(
-              'rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition-colors',
-              !showHardSoft
-                ? 'bg-white text-navy-900 ring-white'
-                : 'bg-white/10 text-slate-100 ring-white/20 hover:bg-white/15',
-            )}
-          >
-            Total
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowHardSoft(true)}
-            className={clsx(
-              'rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 transition-colors',
-              showHardSoft
-                ? 'bg-white text-navy-900 ring-white'
-                : 'bg-white/10 text-slate-100 ring-white/20 hover:bg-white/15',
-            )}
-          >
-            Hard / soft
-          </button>
+          <span className="text-xs font-medium text-slate-300">3-scenario projection</span>
         </div>
       </div>
 
@@ -130,7 +104,7 @@ export function PortfolioDashboard({ portfolio }: PortfolioDashboardProps) {
                   Loading projections…
                 </div>
               ) : (
-                <ValueChart scenarios={chartScenarios} showHardSoftSplit={showHardSoft} height={320} />
+                <ValueChart scenarios={chartScenarios} height={320} />
               )}
             </div>
           </div>

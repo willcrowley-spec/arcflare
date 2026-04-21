@@ -403,13 +403,18 @@ export function ChatPanel() {
             )}
 
             {streamingText ? (() => {
-              let parsed: ArcResponse | null = null
+              let displayText = ''
               try {
                 const obj = JSON.parse(streamingText)
-                if (obj && typeof obj === 'object' && 'type' in obj) parsed = obj as ArcResponse
-              } catch { /* partial JSON — not parseable yet */ }
+                if (obj && typeof obj === 'object' && 'type' in obj) displayText = (obj as ArcResponse).text ?? ''
+              } catch {
+                const texts: string[] = []
+                for (const m of streamingText.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+                  texts.push(m[1].replace(/\\"/g, '"').replace(/\\n/g, '\n'))
+                }
+                displayText = texts.join('') || streamingText.replace(/\{[^}]*\}/g, '').trim()
+              }
 
-              const displayText = parsed?.text
               if (!displayText) return null
 
               return (

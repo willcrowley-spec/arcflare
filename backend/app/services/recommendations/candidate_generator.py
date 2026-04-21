@@ -16,8 +16,18 @@ from app.models.process import BusinessProcess
 logger = logging.getLogger(__name__)
 
 _RULE_KEYWORDS = ("if", "when", "rule", "formula", "threshold")
-_JUDGMENT_KEYWORDS = ("judgment", "assess", "evaluate", "interpret", "ambiguous")
-_CONTEXT_TRIGGER_KEYWORDS = ("unstructured", "contextual")
+_JUDGMENT_KEYWORDS = (
+    "judgment", "assess", "evaluate", "interpret", "ambiguous",
+    "review", "approve", "decide", "prioritize", "escalat",
+    "exception", "complex", "nuance", "discretion", "negotiate",
+    "recommend", "classify", "triage", "route", "assign",
+    "analyze", "investigat", "diagnos", "resolv",
+)
+_CONTEXT_TRIGGER_KEYWORDS = (
+    "unstructured", "contextual", "email", "natural language",
+    "free text", "conversation", "chat", "request", "ticket",
+    "case", "inquiry", "inbound",
+)
 
 
 def _jsonb_list_as_texts(value: object) -> list[str]:
@@ -37,7 +47,7 @@ def _jsonb_list_as_texts(value: object) -> list[str]:
 
 
 def classify_automation_type(process: dict) -> str:
-    """Classify automation style from decision_logic and trigger_conditions heuristics."""
+    """Classify automation style from structured fields + narrative heuristics."""
     raw_dl = process.get("decision_logic")
     raw_tc = process.get("trigger_conditions")
     if isinstance(raw_dl, dict):
@@ -57,18 +67,37 @@ def classify_automation_type(process: dict) -> str:
     dl_text = " ".join(t.lower() for t in _jsonb_list_as_texts(dl_items))
     tc_text = " ".join(t.lower() for t in _jsonb_list_as_texts(tc_items))
 
+    desc = (process.get("description") or "").lower()
+    narrative = (process.get("narrative") or "").lower()
+    full_text = f"{dl_text} {tc_text} {desc} {narrative}"
+
+    actors_raw = process.get("actors") or []
+    actor_text = " ".join(
+        t.lower() for t in _jsonb_list_as_texts(actors_raw if isinstance(actors_raw, list) else [actors_raw])
+    )
+    full_text = f"{full_text} {actor_text}"
+
     if any(k in dl_text for k in _JUDGMENT_KEYWORDS):
         return "agentic"
     if any(k in tc_text for k in _CONTEXT_TRIGGER_KEYWORDS):
         return "agentic"
 
+    if any(k in full_text for k in _JUDGMENT_KEYWORDS):
+        return "agentic"
+    if any(k in full_text for k in _CONTEXT_TRIGGER_KEYWORDS):
+        return "agentic"
+
+    complexity = (process.get("complexity_score") or "").lower()
+    if complexity == "high":
+        return "hybrid"
+
     if not dl_items:
-        dl_rule_based = True
-    else:
-        dl_rule_based = all(
-            any(k in _jsonb_list_as_texts([item])[0].lower() for k in _RULE_KEYWORDS)
-            for item in dl_items
-        )
+        return "hybrid"
+
+    dl_rule_based = all(
+        any(k in _jsonb_list_as_texts([item])[0].lower() for k in _RULE_KEYWORDS)
+        for item in dl_items
+    )
 
     triggers_bounded = not any(k in tc_text for k in _CONTEXT_TRIGGER_KEYWORDS)
 

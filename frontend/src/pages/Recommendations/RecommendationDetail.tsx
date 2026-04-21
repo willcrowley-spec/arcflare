@@ -306,7 +306,7 @@ function OverviewTab({ rec, analysis }: { rec: Recommendation; analysis: Record<
         <h4 className="text-xs font-bold uppercase tracking-wide text-navy-900">Value projection</h4>
         <p className="mt-1 text-xs text-slate-500">Modeled cumulative savings by scenario (from current assumptions).</p>
         <div className="mt-4">
-          <ValueChart scenarios={scenarios} showHardSoftSplit height={260} />
+          <ValueChart scenarios={scenarios} height={260} />
         </div>
       </section>
 

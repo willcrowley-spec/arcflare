@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -20,33 +21,21 @@ export interface ValueChartScenarios {
 
 export interface ValueChartProps {
   scenarios: ValueChartScenarios | null
-  showHardSoftSplit?: boolean
   height?: number
   className?: string
 }
 
-const YEAR_LABELS = ['Investment', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const
+const YEAR_LABELS = ['Year 0', 'Year 1', 'Year 2', 'Year 3', 'Year 4'] as const
 
 const COLORS = {
   optimistic: '#10b981', // emerald-500
   expected: '#4c6ef5', // navy-600
   conservative: '#94a3b8', // slate-400
-  hard: '#4c6ef5',
-  soft: 'rgba(16, 185, 129, 0.35)',
 } as const
 
 function atYear(arr: number[] | undefined, i: number): number {
   if (!arr?.length) return 0
   return arr[Math.min(i, arr.length - 1)] ?? 0
-}
-
-function cumulativePrefixSum(arr: number[] | undefined, i: number): number {
-  if (!arr?.length) return 0
-  let s = 0
-  for (let y = 0; y <= Math.min(i, arr.length - 1); y++) {
-    s += arr[y] ?? 0
-  }
-  return s
 }
 
 function buildRows(scenarios: ValueChartScenarios) {
@@ -55,18 +44,8 @@ function buildRows(scenarios: ValueChartScenarios) {
     const exp = atYear(scenarios.expected.cumulative, i)
     const cons = atYear(scenarios.conservative.cumulative, i)
     const bandDelta = Math.max(0, opt - cons)
-    const cumHard = cumulativePrefixSum(scenarios.expected.hard_savings, i)
-    const cumSoft = cumulativePrefixSum(scenarios.expected.soft_savings, i)
 
-    return {
-      yearLabel,
-      optimistic: opt,
-      expected: exp,
-      conservative: cons,
-      bandDelta,
-      cumHard,
-      cumSoft,
-    }
+    return { yearLabel, optimistic: opt, expected: exp, conservative: cons, bandDelta }
   })
 }
 
@@ -108,23 +87,15 @@ function ValueTooltip({
   active,
   payload,
   label,
-  showHardSoftSplit,
 }: {
   active?: boolean
   payload?: TooltipPayloadItem[]
   label?: string
-  showHardSoftSplit?: boolean
 }) {
   if (!active || !payload?.length) return null
 
   const row = payload[0]?.payload as
-    | {
-        optimistic?: number
-        expected?: number
-        conservative?: number
-        cumHard?: number
-        cumSoft?: number
-      }
+    | { optimistic?: number; expected?: number; conservative?: number }
     | undefined
 
   const byKey = Object.fromEntries(
@@ -134,38 +105,6 @@ function ValueTooltip({
   const opt = row?.optimistic ?? byKey.optimistic
   const exp = row?.expected ?? byKey.expected
   const cons = row?.conservative ?? byKey.conservative
-
-  if (showHardSoftSplit) {
-    const h = row?.cumHard ?? byKey.cumHard
-    const s = row?.cumSoft ?? byKey.cumSoft
-    return (
-      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg ring-1 ring-slate-900/5">
-        <p className="font-semibold text-navy-900">{label}</p>
-        <ul className="mt-2 space-y-1 text-slate-700">
-          <li className="flex justify-between gap-6">
-            <span className="text-emerald-600">Optimistic</span>
-            <span className="font-medium tabular-nums">{formatTooltipMoney(opt ?? 0)}</span>
-          </li>
-          <li className="flex justify-between gap-6">
-            <span className="text-navy-700">Expected (total)</span>
-            <span className="font-medium tabular-nums">{formatTooltipMoney(exp ?? 0)}</span>
-          </li>
-          <li className="flex justify-between gap-6">
-            <span className="text-navy-700">Hard (cumulative)</span>
-            <span className="font-medium tabular-nums">{formatTooltipMoney(h ?? 0)}</span>
-          </li>
-          <li className="flex justify-between gap-6">
-            <span className="text-emerald-700/80">Soft (cumulative)</span>
-            <span className="font-medium tabular-nums">{formatTooltipMoney(s ?? 0)}</span>
-          </li>
-          <li className="flex justify-between gap-6">
-            <span className="text-slate-500">Conservative</span>
-            <span className="font-medium tabular-nums">{formatTooltipMoney(cons ?? 0)}</span>
-          </li>
-        </ul>
-      </div>
-    )
-  }
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-lg ring-1 ring-slate-900/5">
@@ -188,7 +127,7 @@ function ValueTooltip({
   )
 }
 
-export function ValueChart({ scenarios, showHardSoftSplit = false, height = 320, className }: ValueChartProps) {
+export function ValueChart({ scenarios, height = 320, className }: ValueChartProps) {
   if (!scenarios) {
     return (
       <div
@@ -216,8 +155,9 @@ export function ValueChart({ scenarios, showHardSoftSplit = false, height = 320,
             axisLine={{ stroke: '#cbd5e1' }}
             width={56}
           />
+          <ReferenceLine y={0} stroke="#475569" strokeWidth={1.5} strokeDasharray="4 2" label={{ value: 'Break-even', position: 'insideTopRight', fontSize: 10, fill: '#475569' }} />
           <Tooltip
-            content={<ValueTooltip showHardSoftSplit={showHardSoftSplit} />}
+            content={<ValueTooltip />}
             cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
           />
           <Legend
@@ -225,95 +165,52 @@ export function ValueChart({ scenarios, showHardSoftSplit = false, height = 320,
             formatter={(value) => <span className="text-slate-600">{value}</span>}
           />
 
-          {!showHardSoftSplit ? (
-            <>
-              <Area
-                type="monotone"
-                dataKey="conservative"
-                stackId="conf"
-                stroke="none"
-                fill="rgba(0,0,0,0)"
-                legendType="none"
-                isAnimationActive={false}
-              />
-              <Area
-                type="monotone"
-                dataKey="bandDelta"
-                stackId="conf"
-                name="Optimistic–conservative range"
-                stroke="none"
-                fill="rgba(16, 185, 129, 0.12)"
-                legendType="none"
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="conservative"
-                name="Conservative"
-                stroke={COLORS.conservative}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="expected"
-                name="Expected"
-                stroke={COLORS.expected}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="optimistic"
-                name="Optimistic"
-                stroke={COLORS.optimistic}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </>
-          ) : (
-            <>
-              <Area
-                type="monotone"
-                dataKey="cumHard"
-                name="Hard savings (expected)"
-                stackId="exp"
-                stroke="none"
-                fill={COLORS.hard}
-                isAnimationActive={false}
-              />
-              <Area
-                type="monotone"
-                dataKey="cumSoft"
-                name="Soft savings (expected)"
-                stackId="exp"
-                stroke="none"
-                fill={COLORS.soft}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="conservative"
-                name="Conservative"
-                stroke={COLORS.conservative}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="optimistic"
-                name="Optimistic"
-                stroke={COLORS.optimistic}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </>
-          )}
+          <Area
+            type="monotone"
+            dataKey="conservative"
+            stackId="conf"
+            stroke="none"
+            fill="rgba(0,0,0,0)"
+            legendType="none"
+            isAnimationActive={false}
+          />
+          <Area
+            type="monotone"
+            dataKey="bandDelta"
+            stackId="conf"
+            name="Confidence range"
+            stroke="none"
+            fill="rgba(16, 185, 129, 0.10)"
+            legendType="none"
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="conservative"
+            name="Conservative"
+            stroke={COLORS.conservative}
+            strokeWidth={2}
+            dot={{ r: 3, fill: COLORS.conservative }}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="expected"
+            name="Expected"
+            stroke={COLORS.expected}
+            strokeWidth={2.5}
+            dot={{ r: 3, fill: COLORS.expected }}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="optimistic"
+            name="Optimistic"
+            stroke={COLORS.optimistic}
+            strokeWidth={2}
+            dot={{ r: 3, fill: COLORS.optimistic }}
+            isAnimationActive={false}
+          />
         </AreaChart>
       </ResponsiveContainer>
     </div>

@@ -121,10 +121,17 @@ def _coerce_llm_rows(data: Any) -> list[dict] | None:
 
 def _build_prompt(snapshots: list[dict[str, Any]]) -> str:
     payload = json.dumps(snapshots, indent=2, default=str)
-    return f"""You are an enterprise automation strategist assessing business processes for automation potential.
-Do not assume any prior numeric score — you only see qualitative enrichment below.
+    return f"""You are an enterprise automation strategist assessing business processes for agentic automation potential.
+Our product helps companies build "Agentic Business Operating Systems" — identifying where AI agents can transform operations. Do not assume any prior numeric score — you only see qualitative enrichment below.
 
 {_SALARY_GUIDANCE}
+
+AUTOMATION TYPE CLASSIFICATION — think carefully about each:
+- "deterministic": Simple rule-based flows with no ambiguity. IF/THEN logic, field updates, scheduled jobs. No human judgment involved.
+- "agentic": Processes involving decision-making, prioritization, exception handling, natural language understanding, contextual routing, data interpretation, or multi-step reasoning. AI agents can handle these with human oversight. MOST business processes that involve people making decisions are candidates for agentic automation.
+- "hybrid": Deterministic core with agentic exception handling — routine cases are automated, edge cases use AI.
+
+IMPORTANT: Be aggressive about identifying agentic opportunities. If a process involves ANY human judgment, approval chains, escalation logic, case routing, content generation, data analysis, prioritization, or contextual decision-making, it is likely "agentic" or "hybrid" — NOT "deterministic." The goal is to find where AI agents add the most value.
 
 Processes (JSON array of enrichment records):
 {payload}
@@ -134,25 +141,25 @@ Return ONLY a JSON array (no markdown). One object per process, in any order, wi
 - process_name: string (must match exactly a process_name from the input)
 - llm_score: number from 0 to 1 (automation value / feasibility confidence)
 - score_rationale: concise justification for the score (technical, for internal use)
-- automation_type_override: string or null — if the current automation_type should change, set to one of: deterministic, agentic, hybrid; else null
-- automation_type_rationale: short explanation if overriding
+- automation_type_override: string or null — set to "deterministic", "agentic", or "hybrid". ACTIVELY OVERRIDE the input automation_type if you disagree. Do not default to null — provide your independent assessment.
+- automation_type_rationale: explain your classification choice
 
-- current_state: 2-3 sentences explaining WHAT this process does today, WHO performs it, HOW it works, and what systems are involved. Write as if explaining to someone unfamiliar with the organization. Be concrete: mention specific triggers, handoffs, and outputs.
+- current_state: 2-3 sentences explaining WHAT this process does today, WHO performs it, HOW it works, and what systems are involved. Be concrete: mention specific triggers, handoffs, and outputs.
 
-- automation_approach: 2-3 sentences describing HOW this process would be automated. What would the automated workflow look like? What stays human-in-the-loop vs fully automated? What technology components are needed (flows, agents, integrations)?
+- automation_approach: 2-3 sentences describing HOW this would be automated with AI agents or deterministic flows. For agentic: describe what the agent would do, what context it needs, how it handles exceptions. For deterministic: describe the flow/trigger logic. For hybrid: describe both layers.
 
-- executive_summary: 2-3 sentences pitched to a VP/C-suite decision-maker. Lead with the business outcome (time saved, cost reduced, errors eliminated), not the technology. Quantify where possible using the assumptions you generate.
+- executive_summary: 2-3 sentences pitched to a VP/C-suite. Lead with the business outcome (time saved, cost reduced, errors eliminated), quantify where possible.
 
-- risks: 1-2 sentences on key risks, dependencies, or reasons this might not deliver expected value. Be honest — flag change management challenges, data quality issues, or integration complexity.
+- risks: 1-2 sentences on key risks, dependencies, or reasons this might not deliver expected value.
 
 - assumptions: object with numeric fields for ROI modeling:
   fte_annual_cost, hours_per_week, frequency (string e.g. "daily", "weekly"),
   actor_count (int), role_type (string e.g. "account_executive"),
-  technology_cost (initial implementation cost USD),
-  change_management_factor (0.0-0.5, higher = more change risk),
-  annual_operational_cost (ongoing platform/license cost USD),
-  adoption_ramp (array of 5 floats 0-1 representing Year 1-5 adoption %),
-  productivity_dip (0.0-0.3, year-1 productivity loss during transition),
+  technology_cost (initial implementation cost USD — higher for agentic, lower for deterministic),
+  change_management_factor (0.0-0.5, higher for agentic due to trust-building),
+  annual_operational_cost (ongoing platform/license/token cost USD),
+  adoption_ramp (array of 5 floats 0-1 representing Year 0-4 adoption %),
+  productivity_dip (0.0-0.3, year-0 productivity loss during transition),
   efficiency_gain (0.0-1.0, steady-state time savings as fraction),
   hard_savings_pct (0.0-1.0, fraction of savings that are hard/headcount),
   discount_rate (typically 0.08-0.12)
@@ -210,8 +217,9 @@ def _merge_llm_row(candidate: dict, row: dict) -> None:
     override = row.get("automation_type_override")
     if override is not None and str(override).strip().lower() not in ("null", "none", ""):
         val = str(override).strip().lower()
-        _MAP = {"full_auto": "deterministic", "human_led": "hybrid", "assist": "hybrid"}
-        candidate["automation_type"] = _MAP.get(val, val)
+        _VALID = {"deterministic", "agentic", "hybrid"}
+        if val in _VALID:
+            candidate["automation_type"] = val
 
 
 def _mark_incomplete(candidate: dict) -> None:
