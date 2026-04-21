@@ -361,23 +361,35 @@ async def recalculate_all_recommendations(
     db: DbSession,
     org: CurrentOrg,
 ) -> dict:
-    """Recalculate financial projections for all active recommendations using current engine."""
+    """Recalculate financial projections for ALL recommendations (any status) using current engine."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     q = await db.execute(
-        select(Recommendation).where(
-            Recommendation.org_id == org.id,
-            Recommendation.status == "active",
-        )
+        select(Recommendation).where(Recommendation.org_id == org.id)
     )
     recs = list(q.scalars().all())
+    logger.info("recalculate_all org=%s found=%d recommendations", org.id, len(recs))
     updated = 0
+    errors = 0
     for rec in recs:
-        assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
-        projections = compute_projections(assumptions, automation_type=rec.automation_type)
-        rec.scenarios_json = projections
-        rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
-        updated += 1
+        try:
+            assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+            projections = compute_projections(assumptions, automation_type=rec.automation_type)
+            rec.scenarios_json = projections
+            rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
+            updated += 1
+            logger.info(
+                "recalculated rec=%s title=%s type=%s npv=%s",
+                rec.id, rec.title[:40] if rec.title else "?",
+                rec.automation_type, projections["npv"]["expected"],
+            )
+        except Exception as exc:
+            errors += 1
+            logger.exception("recalculate_failed rec=%s err=%s", rec.id, exc)
     await db.commit()
-    return {"updated": updated, "total": len(recs)}
+    logger.info("recalculate_all done updated=%d errors=%d total=%d", updated, errors, len(recs))
+    return {"updated": updated, "errors": errors, "total": len(recs)}
 
 
 @router.get("/{recommendation_id}", response_model=RecommendationResponse)
