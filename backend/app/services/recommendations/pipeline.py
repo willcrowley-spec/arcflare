@@ -155,9 +155,21 @@ async def run_recommendation_pipeline(
         await db.refresh(run)
     run_id = run.id
 
+    async def _update_run_progress(stage_results: dict, current_stage: str | None = None) -> None:
+        """Flush stage_results to the run row so the status endpoint reports progress."""
+        values: dict = {"stage_results": stage_results}
+        if current_stage:
+            values["config"] = {"current_stage": current_stage}
+        await db.execute(
+            update(RecommendationRun).where(RecommendationRun.id == run_id).values(**values)
+        )
+        await db.commit()
+
     try:
         stage_results: dict = {}
 
+        # --- Stage 1: Candidate generation ---
+        await _update_run_progress(stage_results, "stage_1_candidates")
         t0 = time.perf_counter()
         discovered = await generate_discovered_candidates(org_id, db)
         synthesized = await generate_synthesized_candidates(org_id, discovered, db)
@@ -166,7 +178,9 @@ async def run_recommendation_pipeline(
             "discovered_count": len(discovered),
             "synthesized_count": len(synthesized),
         }
+        await _update_run_progress(stage_results, "stage_2_scoring")
 
+        # --- Stage 2: Heuristic scoring ---
         t0 = time.perf_counter()
         discovered_by_id: dict[str, dict] = {str(d["id"]): d for d in discovered}
         all_candidates: list[dict] = []
@@ -191,14 +205,18 @@ async def run_recommendation_pipeline(
             "seconds": round(time.perf_counter() - t0, 4),
             "candidates_scored": len(all_candidates),
         }
+        await _update_run_progress(stage_results, "stage_3_llm")
 
+        # --- Stage 3: LLM scoring + narrative ---
         t0 = time.perf_counter()
         llm_out = await score_candidates_with_llm(all_candidates)
         stage_results["stage_3"] = {
             "seconds": round(time.perf_counter() - t0, 4),
             "llm_candidates": len(llm_out),
         }
+        await _update_run_progress(stage_results, "stage_4_persist")
 
+        # --- Stage 4: Composite scoring + financial projections + persist ---
         for c in llm_out:
             base = float(c.get("base_score") or 0.0)
             llm = c.get("llm_score")
@@ -213,7 +231,9 @@ async def run_recommendation_pipeline(
                 Recommendation.status != "accepted",
             )
         )
+        await db.commit()
 
+        created_count = 0
         for c in llm_out:
             assumptions = c.get("assumptions_json")
             if not isinstance(assumptions, dict):
@@ -221,9 +241,12 @@ async def run_recommendation_pipeline(
             projections = compute_projections(assumptions)
             rec = _build_recommendation(c, org_id, run_id, projections)
             db.add(rec)
+            created_count += 1
+            if created_count % 5 == 0:
+                await db.commit()
 
         stage_results["summary"] = {
-            "recommendations_created": len(llm_out),
+            "recommendations_created": created_count,
         }
 
         await db.execute(
@@ -234,6 +257,7 @@ async def run_recommendation_pipeline(
                 completed_at=datetime.now(timezone.utc),
                 stage_results=stage_results,
                 error=None,
+                config={},
             )
         )
         await db.commit()

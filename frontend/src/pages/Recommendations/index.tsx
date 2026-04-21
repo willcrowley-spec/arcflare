@@ -151,6 +151,42 @@ const AUTOMATION_LABEL: Record<AutomationKey, string> = {
   hybrid: 'Hybrid',
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  stage_1_candidates: 'Discovering candidates…',
+  stage_2_scoring: 'Scoring candidates…',
+  stage_3_llm: 'AI analysis & narrative generation…',
+  stage_4_persist: 'Computing projections & saving…',
+}
+
+function PipelineBanner({ currentStage, stageResults }: {
+  currentStage?: string | null
+  stageResults?: Record<string, unknown>
+}) {
+  const stageName = currentStage && currentStage in STAGE_LABELS
+    ? STAGE_LABELS[currentStage]
+    : 'Pipeline running'
+
+  const completedStages: string[] = []
+  const sr = stageResults ?? {}
+  if (sr.stage_1) completedStages.push('Candidates found')
+  if (sr.stage_2) completedStages.push('Scoring complete')
+  if (sr.stage_3) completedStages.push('AI analysis complete')
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-navy-200 bg-navy-50 px-5 py-3.5">
+      <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-navy-600" />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-navy-900">{stageName}</p>
+        <p className="text-xs text-navy-600">
+          {completedStages.length > 0
+            ? completedStages.join(' → ') + ' → …'
+            : 'Analyzing processes, scoring candidates, and generating financial projections. Typically 30–90 seconds.'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function RecommendationsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const tabRaw = (searchParams.get('status') || 'active').toLowerCase()
@@ -313,15 +349,7 @@ export default function RecommendationsPage() {
       </div>
 
       {pipelineBusy ? (
-        <div className="flex items-center gap-3 rounded-xl border border-navy-200 bg-navy-50 px-5 py-3.5">
-          <Loader2 className="h-5 w-5 animate-spin text-navy-600" />
-          <div>
-            <p className="text-sm font-semibold text-navy-900">Pipeline running</p>
-            <p className="text-xs text-navy-600">
-              Analyzing processes, scoring candidates, and generating financial projections. This typically takes 30–90 seconds.
-            </p>
-          </div>
-        </div>
+        <PipelineBanner currentStage={pipelineStatus?.current_stage} stageResults={pipelineStatus?.stage_results} />
       ) : pipelineStatus?.status === 'failed' ? (
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3.5">
           <div>

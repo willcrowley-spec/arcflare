@@ -210,12 +210,20 @@ async def list_recommendations(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
 
 
+STALE_RUNNING_SECONDS = 600
+
+
 @router.get("/status")
 async def recommendation_pipeline_status(
     db: DbSession,
     org: CurrentOrg,
 ) -> dict:
-    """Return the latest RecommendationRun status for the org (used for polling)."""
+    """Return the latest RecommendationRun status for the org (used for polling).
+
+    Includes a staleness check: if the run has been ``running`` or ``pending``
+    for longer than ``STALE_RUNNING_SECONDS`` without completing, we flip it to
+    ``failed`` so the frontend stops polling and the user can retry.
+    """
     q = await db.execute(
         select(RecommendationRun)
         .where(RecommendationRun.org_id == org.id)
@@ -225,11 +233,28 @@ async def recommendation_pipeline_status(
     run = q.scalar_one_or_none()
     if run is None:
         return {"status": "idle", "run_id": None, "error": None, "stage_results": {}}
+
+    run_status = run.status
+    if run_status in ("running", "pending") and run.started_at:
+        elapsed = (datetime.now(tz=UTC) - run.started_at).total_seconds()
+        if elapsed > STALE_RUNNING_SECONDS:
+            run.status = "failed"
+            run.error = (
+                f"Pipeline timed out — no completion after {int(elapsed)}s. "
+                "The worker may have restarted. Click Generate to retry."
+            )
+            run.completed_at = datetime.now(tz=UTC)
+            await db.commit()
+            await db.refresh(run)
+            run_status = run.status
+
+    config = run.config or {}
     return {
-        "status": run.status,
+        "status": run_status,
         "run_id": str(run.id),
         "error": run.error,
         "stage_results": run.stage_results or {},
+        "current_stage": config.get("current_stage"),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
     }

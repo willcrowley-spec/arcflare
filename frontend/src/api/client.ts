@@ -300,6 +300,7 @@ export const api = {
         run_id: string | null
         error: string | null
         stage_results: Record<string, unknown>
+        current_stage: string | null
         started_at: string | null
         completed_at: string | null
       }>('/recommendations/status'),
