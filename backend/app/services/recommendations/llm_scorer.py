@@ -195,6 +195,7 @@ async def score_candidates_with_llm(
     *,
     max_per_batch: int = 8,
     cancel_check: Callable[[], Awaitable[None]] | None = None,
+    heartbeat: Callable[[], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """Run an LLM scoring pass over candidates; merge results by process_name.
 
@@ -202,6 +203,10 @@ async def score_candidates_with_llm(
 
     If *cancel_check* is provided it is awaited before each batch. It should
     raise an exception (e.g. ``PipelineCancelled``) to abort early.
+
+    If *heartbeat* is provided it is awaited after each completed batch so the
+    caller can update a liveness timestamp (prevents staleness timeouts on
+    long-running scoring runs).
     """
     if not candidates:
         return []
@@ -256,6 +261,9 @@ async def score_candidates_with_llm(
                 continue
             _merge_llm_row(out[i], row)
             merged_name_per_index[i] = pname
+
+        if heartbeat is not None:
+            await heartbeat()
 
     for i in range(len(out)):
         if i not in merged_name_per_index:

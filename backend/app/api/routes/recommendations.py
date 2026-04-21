@@ -210,7 +210,7 @@ async def list_recommendations(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
 
 
-STALE_RUNNING_SECONDS = 600
+STALE_HEARTBEAT_SECONDS = 600
 
 
 @router.get("/status")
@@ -220,9 +220,10 @@ async def recommendation_pipeline_status(
 ) -> dict:
     """Return the latest RecommendationRun status for the org (used for polling).
 
-    Includes a staleness check: if the run has been ``running`` or ``pending``
-    for longer than ``STALE_RUNNING_SECONDS`` without completing, we flip it to
-    ``failed`` so the frontend stops polling and the user can retry.
+    Includes a staleness check: if the worker hasn't sent a heartbeat within
+    ``STALE_HEARTBEAT_SECONDS`` we flip it to ``failed`` so the frontend stops
+    polling and the user can retry.  Falls back to ``started_at`` when no
+    heartbeat has been recorded yet.
     """
     q = await db.execute(
         select(RecommendationRun)
@@ -236,11 +237,19 @@ async def recommendation_pipeline_status(
 
     run_status = run.status
     if run_status in ("running", "pending") and run.started_at:
-        elapsed = (datetime.now(tz=UTC) - run.started_at).total_seconds()
-        if elapsed > STALE_RUNNING_SECONDS:
+        config = run.config or {}
+        heartbeat_raw = config.get("heartbeat_at")
+        if heartbeat_raw:
+            last_alive = datetime.fromisoformat(heartbeat_raw)
+        else:
+            last_alive = run.started_at
+        silence = (datetime.now(tz=UTC) - last_alive).total_seconds()
+        if silence > STALE_HEARTBEAT_SECONDS:
+            total_elapsed = (datetime.now(tz=UTC) - run.started_at).total_seconds()
             run.status = "failed"
             run.error = (
-                f"Pipeline timed out — no completion after {int(elapsed)}s. "
+                f"Pipeline timed out — no heartbeat for {int(silence)}s "
+                f"(total elapsed {int(total_elapsed)}s). "
                 "The worker may have restarted. Click Generate to retry."
             )
             run.completed_at = datetime.now(tz=UTC)

@@ -169,15 +169,28 @@ async def run_recommendation_pipeline(
             raise PipelineCancelled()
 
     async def _update_run_progress(stage_results: dict, current_stage: str | None = None) -> None:
-        """Flush stage_results and check for cancellation."""
+        """Flush stage_results + heartbeat and check for cancellation."""
+        now_iso = datetime.now(timezone.utc).isoformat()
         values: dict = {"stage_results": stage_results}
+        cfg: dict = {"heartbeat_at": now_iso}
         if current_stage:
-            values["config"] = {"current_stage": current_stage}
+            cfg["current_stage"] = current_stage
+        values["config"] = cfg
         await db.execute(
             update(RecommendationRun).where(RecommendationRun.id == run_id).values(**values)
         )
         await db.commit()
         await _check_cancelled()
+
+    async def _heartbeat() -> None:
+        """Update the run's heartbeat timestamp (called after each LLM batch)."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            update(RecommendationRun)
+            .where(RecommendationRun.id == run_id)
+            .values(config={"current_stage": "stage_3_llm", "heartbeat_at": now_iso})
+        )
+        await db.commit()
 
     try:
         stage_results: dict = {}
@@ -239,7 +252,9 @@ async def run_recommendation_pipeline(
         logger.info("pipeline_stage org=%s run=%s stage=3_llm candidates=%d", org_id, run_id, len(all_candidates))
         t0 = time.perf_counter()
         llm_out = await score_candidates_with_llm(
-            all_candidates, org_id, db, cancel_check=_check_cancelled,
+            all_candidates, org_id, db,
+            cancel_check=_check_cancelled,
+            heartbeat=_heartbeat,
         )
         stage_results["stage_3"] = {
             "seconds": round(time.perf_counter() - t0, 4),
@@ -311,6 +326,7 @@ async def run_recommendation_pipeline(
                     "model": "anthropic/claude-sonnet-4-6",
                     "heuristic_weights": {"gate": 0.7, "refinement": 0.3},
                     "blend_weights": {"base": 0.7, "llm": 0.3},
+                    "heartbeat_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
         )
