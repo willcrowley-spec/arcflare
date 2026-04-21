@@ -66,6 +66,7 @@ class PortfolioProjectionResponse(BaseModel):
     npv: dict
     payback_month: dict
     recommendation_count: int
+    by_automation_type: dict[str, int] | None = None
 
 
 class RecommendationRunResponse(BaseModel):

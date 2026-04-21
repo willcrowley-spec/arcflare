@@ -141,13 +141,20 @@ async def portfolio_projection(
     org: CurrentOrg,
 ) -> PortfolioProjectionResponse:
     assumptions_list: list[dict] = []
+    rec_rows: list[Recommendation] = []
     for rid in body.recommendation_ids:
         rec = await db.get(Recommendation, rid)
         if rec is None or rec.org_id != org.id:
             raise HTTPException(status_code=404, detail=f"Recommendation not found: {rid}")
+        rec_rows.append(rec)
         assumptions_list.append(dict(rec.assumptions_json) if rec.assumptions_json else {})
 
     raw = compute_portfolio_projections(assumptions_list, body.global_overrides or None)
+    by_automation_type: dict[str, int] = {}
+    for rec in rec_rows:
+        t = rec.automation_type or "hybrid"
+        by_automation_type[t] = by_automation_type.get(t, 0) + 1
+
     return PortfolioProjectionResponse(
         optimistic=raw["optimistic"],
         expected=raw["expected"],
@@ -155,6 +162,7 @@ async def portfolio_projection(
         npv=raw["npv"],
         payback_month=raw["payback_month"],
         recommendation_count=raw["recommendation_count"],
+        by_automation_type=by_automation_type,
     )
 
 

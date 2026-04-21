@@ -423,6 +423,26 @@ export interface RecommendationsSummary {
   estimated_total_roi_usd: number
 }
 
+/** Single scenario series from the portfolio projection / financial engine. */
+export interface PortfolioScenarioData {
+  cumulative: number[]
+  hard_savings: number[]
+  soft_savings: number[]
+  headcount_deflection?: number[]
+  annual_savings?: number[]
+}
+
+/** Response from POST /recommendations/portfolio-projection (aggregated scenarios). */
+export interface PortfolioProjection {
+  optimistic: PortfolioScenarioData
+  expected: PortfolioScenarioData
+  conservative: PortfolioScenarioData
+  npv: { optimistic: number; expected: number; conservative: number }
+  payback_month: { optimistic: number | null; expected: number | null; conservative: number | null }
+  recommendation_count: number
+  by_automation_type?: Partial<Record<'deterministic' | 'agentic' | 'hybrid', number>>
+}
+
 export interface FleetAnalytics {
   avg_accuracy_pct: number
   efficiency_delta_pct: number

@@ -28,6 +28,7 @@ import type {
   PromptOperation,
   ProvenanceLink,
   Recommendation,
+  PortfolioProjection,
   RecordTelemetry,
   SalesforceInitiateResponse,
   SyncEvent,
@@ -289,6 +290,11 @@ export const api = {
         body: JSON.stringify({ status }),
       }),
     summary: () => request<unknown>('/recommendations/summary'),
+    portfolioProjection: (recommendation_ids: string[], global_overrides?: Record<string, unknown>) =>
+      request<PortfolioProjection>('/recommendations/portfolio-projection', {
+        method: 'POST',
+        body: JSON.stringify({ recommendation_ids, global_overrides: global_overrides ?? {} }),
+      }),
   },
   organization: {
     profile: () => request<unknown>('/organization/profile'),

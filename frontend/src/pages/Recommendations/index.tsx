@@ -5,6 +5,8 @@ import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import { useGenerateRecommendations, useRecommendations, useRecommendationSummary } from '@/hooks/useApi'
+import { PortfolioDashboard } from './PortfolioDashboard'
+import { usePortfolio } from './usePortfolio'
 
 type RecRow = {
   id: string
@@ -13,6 +15,7 @@ type RecRow = {
   category?: string | null
   priority?: string | null
   status: string
+  automation_type?: string | null
   estimated_roi?: number | string | null
   composite_score?: number | null
   analysis_inputs_json?: unknown[]
@@ -96,6 +99,7 @@ export default function RecommendationsPage() {
 
   const { items, total, page_size } = useMemo(() => normalizeList(listData), [listData])
   const summary = useMemo(() => normalizeSummary(summaryData), [summaryData])
+  const portfolio = usePortfolio(total)
 
   const setTab = (next: 'active' | 'implemented') => {
     setSearchParams((prev) => {
@@ -233,6 +237,8 @@ export default function RecommendationsPage() {
           {generateMutation.isPending ? 'Generating…' : 'Generate'}
         </button>
       </div>
+
+      <PortfolioDashboard portfolio={portfolio} />
 
       {featured ? (
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-md ring-1 ring-slate-900/5">
@@ -391,6 +397,24 @@ export default function RecommendationsPage() {
             placeholder="Search recommendations…"
             className="sm:min-w-[320px]"
           />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => portfolio.selectAll(filteredCards.map((c) => c.id))}
+              disabled={filteredCards.length === 0}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Select visible
+            </button>
+            <button
+              type="button"
+              onClick={() => portfolio.clearAll()}
+              disabled={portfolio.selectedIds.size === 0}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Clear portfolio
+            </button>
+          </div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Viewing {total === 0 ? 0 : `${startIdx}-${endIdx}`} of {total} recommendations
           </p>
@@ -417,31 +441,47 @@ export default function RecommendationsPage() {
                 key={c.id}
                 className="flex flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm ring-1 ring-slate-900/5"
               >
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  {(c.category ?? 'General').replace(/_/g, ' ')}
-                </p>
-                <h3 className="mt-2 text-lg font-semibold text-navy-900">{c.title}</h3>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {[c.priority, c.status, c.estimated_roi != null ? formatMoney(Number(c.estimated_roi)) : null]
-                    .filter(Boolean)
-                    .map((t) => (
-                      <span
-                        key={String(t)}
-                        className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80"
+                <div className="flex flex-1 items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={portfolio.isSelected(c.id)}
+                    onChange={() => portfolio.toggle(c.id)}
+                    aria-label={`Include ${c.title} in portfolio projections`}
+                    className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-navy-800 focus:ring-navy-700"
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                      {(c.category ?? 'General').replace(/_/g, ' ')}
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-navy-900">{c.title}</h3>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {[
+                        c.automation_type,
+                        c.priority,
+                        c.status,
+                        c.estimated_roi != null ? formatMoney(Number(c.estimated_roi)) : null,
+                      ]
+                        .filter(Boolean)
+                        .map((t) => (
+                          <span
+                            key={String(t)}
+                            className="rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200/80"
+                          >
+                            {String(t).replace(/_/g, ' ')}
+                          </span>
+                        ))}
+                    </div>
+                    <div className="mt-auto pt-6">
+                      <button
+                        type="button"
+                        disabled
+                        title="Coming soon"
+                        className="w-full rounded-lg bg-navy-800 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {String(t)}
-                      </span>
-                    ))}
-                </div>
-                <div className="mt-auto pt-6">
-                  <button
-                    type="button"
-                    disabled
-                    title="Coming soon"
-                    className="w-full rounded-lg bg-navy-800 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {c.status === 'implemented' ? 'Review' : 'Implement'}
-                  </button>
+                        {c.status === 'implemented' ? 'Review' : 'Implement'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </article>
             ))}
