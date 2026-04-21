@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 
 from app.services.ai.router import llm_call, parse_json_response
@@ -194,10 +194,14 @@ async def score_candidates_with_llm(
     model_config: dict | None = None,
     *,
     max_per_batch: int = 8,
+    cancel_check: Callable[[], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """Run an LLM scoring pass over candidates; merge results by process_name.
 
     Candidates without a successful LLM row get llm_score=None and empty LLM fields.
+
+    If *cancel_check* is provided it is awaited before each batch. It should
+    raise an exception (e.g. ``PipelineCancelled``) to abort early.
     """
     if not candidates:
         return []
@@ -208,6 +212,9 @@ async def score_candidates_with_llm(
     grouped = _batch_by_domain(out)
 
     for domain, batch in _iter_batches(grouped, max_per_batch):
+        if cancel_check is not None:
+            await cancel_check()
+
         snapshots = [_enrichment_snapshot(c, i) for i, c in batch]
         prompt = _build_prompt(snapshots)
         try:

@@ -182,8 +182,8 @@ function PipelineBanner({ currentStage, stageResults, onCancel, isCancelling }: 
         <p className="text-sm font-semibold text-navy-900">{stageName}</p>
         <p className="text-xs text-navy-600">
           {completedStages.length > 0
-            ? completedStages.join(' → ') + ' → …'
-            : 'Analyzing processes, scoring candidates, and generating financial projections. Typically 30–90 seconds.'}
+            ? completedStages.join(' → ')
+            : 'Analyzing processes, scoring candidates, and generating financial projections. Typically 2–5 minutes.'}
         </p>
       </div>
       <button

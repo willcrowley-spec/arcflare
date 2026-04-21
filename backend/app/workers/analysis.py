@@ -15,21 +15,27 @@ def generate_recommendations_task(org_id: str, run_id: str | None = None) -> str
     """
     import asyncio
 
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    from app.core.database import engine
     from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
     from app.services.recommendations.pipeline import run_recommendation_pipeline
 
     async def _run() -> str:
-        factory = async_sessionmaker(engine, expire_on_commit=False)
-        async with factory() as session:
-            result_id = await run_recommendation_pipeline(
-                UUID(org_id),
-                session,
-                existing_run_id=UUID(run_id) if run_id else None,
-            )
-            return str(result_id)
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        _engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        try:
+            factory = async_sessionmaker(_engine, expire_on_commit=False)
+            async with factory() as session:
+                result_id = await run_recommendation_pipeline(
+                    UUID(org_id),
+                    session,
+                    existing_run_id=UUID(run_id) if run_id else None,
+                )
+                return str(result_id)
+        finally:
+            await _engine.dispose()
 
     try:
         with langfuse_context(org_id=org_id):

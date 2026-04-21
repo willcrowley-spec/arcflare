@@ -265,6 +265,20 @@ async def generate_recommendations(
     db: DbSession,
     org: CurrentOrg,
 ) -> dict[str, str]:
+    existing = await db.execute(
+        select(RecommendationRun)
+        .where(
+            RecommendationRun.org_id == org.id,
+            RecommendationRun.status.in_(["running", "pending"]),
+        )
+        .limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A recommendation pipeline is already running. Cancel it first or wait for it to finish.",
+        )
+
     run = RecommendationRun(org_id=org.id, status="pending", config={})
     db.add(run)
     await db.commit()

@@ -182,6 +182,7 @@ async def run_recommendation_pipeline(
         stage_results: dict = {}
 
         # --- Stage 1: Candidate generation ---
+        logger.info("pipeline_stage org=%s run=%s stage=1_candidates", org_id, run_id)
         await _update_run_progress(stage_results, "stage_1_candidates")
         t0 = time.perf_counter()
         discovered = await generate_discovered_candidates(org_id, db)
@@ -191,6 +192,10 @@ async def run_recommendation_pipeline(
             "discovered_count": len(discovered),
             "synthesized_count": len(synthesized),
         }
+        logger.info(
+            "pipeline_stage_done org=%s run=%s stage=1 discovered=%d synthesized=%d elapsed=%.1fs",
+            org_id, run_id, len(discovered), len(synthesized), time.perf_counter() - t0,
+        )
         await _update_run_progress(stage_results, "stage_2_scoring")
 
         # --- Stage 2: Heuristic scoring ---
@@ -218,18 +223,28 @@ async def run_recommendation_pipeline(
             "seconds": round(time.perf_counter() - t0, 4),
             "candidates_scored": len(all_candidates),
         }
+        logger.info(
+            "pipeline_stage_done org=%s run=%s stage=2 scored=%d elapsed=%.1fs",
+            org_id, run_id, len(all_candidates), time.perf_counter() - t0,
+        )
         await _update_run_progress(stage_results, "stage_3_llm")
 
         # --- Stage 3: LLM scoring + narrative ---
+        logger.info("pipeline_stage org=%s run=%s stage=3_llm candidates=%d", org_id, run_id, len(all_candidates))
         t0 = time.perf_counter()
-        llm_out = await score_candidates_with_llm(all_candidates)
+        llm_out = await score_candidates_with_llm(all_candidates, cancel_check=_check_cancelled)
         stage_results["stage_3"] = {
             "seconds": round(time.perf_counter() - t0, 4),
             "llm_candidates": len(llm_out),
         }
+        logger.info(
+            "pipeline_stage_done org=%s run=%s stage=3 llm_scored=%d elapsed=%.1fs",
+            org_id, run_id, len(llm_out), time.perf_counter() - t0,
+        )
         await _update_run_progress(stage_results, "stage_4_persist")
 
         # --- Stage 4: Composite scoring + financial projections + persist ---
+        logger.info("pipeline_stage org=%s run=%s stage=4_persist count=%d", org_id, run_id, len(llm_out))
         for c in llm_out:
             base = float(c.get("base_score") or 0.0)
             llm = c.get("llm_score")
@@ -274,6 +289,10 @@ async def run_recommendation_pipeline(
             )
         )
         await db.commit()
+        logger.info(
+            "pipeline_completed org=%s run=%s recommendations=%d",
+            org_id, run_id, created_count,
+        )
         return run_id
 
     except PipelineCancelled:
