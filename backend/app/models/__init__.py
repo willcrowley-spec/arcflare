@@ -18,6 +18,7 @@ from app.models.organization import Organization, User
 from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
 from app.models.prompt import PromptBlock, PromptOptimizationRun
 from app.models.recommendation import Recommendation
+from app.models.recommendation_run import RecommendationRun
 from app.models.sync_event import SyncEvent
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "PromptBlock",
     "PromptOptimizationRun",
     "Recommendation",
+    "RecommendationRun",
     "RecordTelemetry",
     "SyncEvent",
     "User",
