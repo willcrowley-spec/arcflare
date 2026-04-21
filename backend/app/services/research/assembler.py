@@ -17,29 +17,6 @@ from app.services.research.searcher import SearchResult
 
 logger = logging.getLogger(__name__)
 
-SYNTHESIS_SYSTEM_PROMPT = """\
-You are a senior business analyst writing an executive intelligence brief about a company.
-Given a set of verified facts organized by category, produce:
-
-1. company_summary: A 2-4 paragraph executive overview of what the company does, \
-who they serve, their market position, and notable characteristics. Write in third person, \
-professional tone. Only include information supported by the provided facts.
-
-2. ideal_customer_profile: A structured analysis of who the company sells to, including:
-   - segments: Target market segments (e.g. "Mid-market B2B SaaS")
-   - buyer_personas: Key buyer roles (e.g. "VP Sales Ops")
-   - value_propositions: Core value props as the customer would describe them
-   - competitive_positioning: How they differentiate from competitors
-
-3. financial_analysis: Speculation flag = true. Based on available signals, estimate:
-   - business_model: How they make money
-   - pricing_model: Pricing structure if visible
-   - growth_indicators: Signals of growth or contraction
-   - revenue_drivers: Key revenue levers
-
-Return a JSON object with keys: company_summary, ideal_customer_profile, financial_analysis."""
-
-
 def _group_facts_by_category(facts: list[ExtractedFact]) -> dict[str, list[ExtractedFact]]:
     groups: dict[str, list[ExtractedFact]] = defaultdict(list)
     for f in facts:
@@ -98,6 +75,7 @@ def assemble_profile(
     company_name: str,
     domains: list[str],
     model_config: dict | None = None,
+    prompt_blocks: dict[str, str] | None = None,
 ) -> dict:
     """Assemble the full org research profile from verified facts.
 
@@ -109,8 +87,9 @@ def assemble_profile(
     # --- LLM synthesis for narratives ---
     synthesis = {}
     try:
+        system = (prompt_blocks or {}).get("instructions") or ""
         prompt = PromptParts(
-            system=SYNTHESIS_SYSTEM_PROMPT,
+            system=system,
             variable=f"Company: {company_name}\n\nVERIFIED FACTS:\n{facts_context}",
         )
         result = llm_call(

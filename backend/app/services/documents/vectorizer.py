@@ -12,22 +12,6 @@ from app.services.ai.router import get_embedding_provider, llm_call
 
 logger = logging.getLogger(__name__)
 
-_BATCH_CONTEXT_PROMPT = """\
-Given the full document below, provide a 1-2 sentence context for EACH chunk listed.
-Each context should explain where the chunk fits in the document.
-Return one context per line, in the same order as the chunks, prefixed with the chunk number.
-
-<document>
-{document_text}
-</document>
-
-{chunk_list}
-
-Return ONLY the contexts, one per line, formatted as:
-1: <context for chunk 1>
-2: <context for chunk 2>
-..."""
-
 
 def _embed_model() -> str:
     return get_settings().EMBEDDING_MODEL
@@ -113,6 +97,7 @@ async def generate_contextual_prefixes(
     chunks: list[dict],
     full_document_text: str,
     batch_size: int = 25,
+    prompt_blocks: dict[str, str] | None = None,  # required when calling; None only for backward compat
 ) -> dict[int, str]:
     """Generate contextual retrieval prefixes for document chunks via LLM.
 
@@ -136,7 +121,8 @@ async def generate_contextual_prefixes(
         if not chunk_list_lines:
             continue
 
-        prompt = _BATCH_CONTEXT_PROMPT.format(
+        template = (prompt_blocks or {}).get("instructions") or ""
+        prompt = template.format(
             document_text=doc_text,
             chunk_list="\n\n".join(chunk_list_lines),
         )

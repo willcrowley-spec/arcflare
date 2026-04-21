@@ -12,26 +12,6 @@ from app.services.research.extractor import ExtractedFact
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_SYSTEM_PROMPT = """\
-You are a rigorous fact-checker. For each claim-evidence pair below, determine \
-whether the evidence actually supports the claim.
-
-VERDICTS:
-- CONFIRMED: The evidence directly and clearly supports the claim
-- WEAK: The evidence partially supports the claim, or the claim extrapolates beyond what's stated
-- UNSUPPORTED: The evidence does not support this claim, or the claim appears fabricated
-
-Be skeptical. Marketing language like "industry-leading" or "best-in-class" without \
-specific data should be rated WEAK at best. Specific numbers, names, and dates that \
-match the source are CONFIRMED."""
-
-VERIFICATION_TASK_TEMPLATE = """\
-Verify each claim against its evidence. Return JSON:
-{{"verifications": [{{"claim_index": 0, "verdict": "CONFIRMED|WEAK|UNSUPPORTED", "reasoning": "..."}}]}}
-
-CLAIMS TO VERIFY:
-{claim_blocks}"""
-
 BATCH_SIZE = 15
 CONFIDENCE_PENALTY_WEAK = 0.7
 CONFIDENCE_PENALTY_UNSUPPORTED = 0.2
@@ -40,6 +20,7 @@ CONFIDENCE_PENALTY_UNSUPPORTED = 0.2
 def verify_facts(
     facts: list[ExtractedFact],
     model_config: dict | None = None,
+    prompt_blocks: dict[str, str] | None = None,
 ) -> list[ExtractedFact]:
     """Verify facts against their source excerpts in batches.
 
@@ -68,9 +49,11 @@ def verify_facts(
                 f"    Source: {fact.source_urls[0] if fact.source_urls else 'unknown'}"
             )
 
+        system = (prompt_blocks or {}).get("instructions") or ""
+        protocol = (prompt_blocks or {}).get("protocol") or ""
         prompt = PromptParts(
-            system=VERIFICATION_SYSTEM_PROMPT,
-            variable=VERIFICATION_TASK_TEMPLATE.format(
+            system=system,
+            variable=protocol.format(
                 claim_blocks="\n\n".join(claim_blocks),
             ),
         )

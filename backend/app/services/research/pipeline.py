@@ -104,6 +104,12 @@ async def run_org_research_pipeline(
             org_id, len(search_results), len(search_pages),
         )
 
+        from app.services.prompts.resolver import resolve_prompt_blocks
+
+        extraction_blocks = await resolve_prompt_blocks("org_research_extraction", org_id, db)
+        verification_blocks = await resolve_prompt_blocks("org_research_verification", org_id, db)
+        synthesis_blocks = await resolve_prompt_blocks("org_research_synthesis", org_id, db)
+
         # ============================================================
         # Phase 3: Fact Extraction
         # ============================================================
@@ -114,6 +120,7 @@ async def run_org_research_pipeline(
 
         facts = await asyncio.to_thread(
             extract_facts, all_pages, company_name, search_results, model_config,
+            extraction_blocks,
         )
 
         research_log["phases"]["extraction"] = {"facts": len(facts)}
@@ -128,7 +135,9 @@ async def run_org_research_pipeline(
 
         from app.services.research.verifier import verify_facts
 
-        verified_facts = await asyncio.to_thread(verify_facts, facts, model_config)
+        verified_facts = await asyncio.to_thread(
+            verify_facts, facts, model_config, verification_blocks,
+        )
 
         research_log["phases"]["verification"] = {
             "input_facts": len(facts),
@@ -154,6 +163,7 @@ async def run_org_research_pipeline(
             assemble_profile,
             verified_facts, all_pages, search_results,
             structured_hints, company_name, domains, model_config,
+            synthesis_blocks,
         )
 
         enrichment = build_enrichment_summary(profile)

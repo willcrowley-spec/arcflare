@@ -9,8 +9,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.prompts.resolver import resolve_prompt_blocks
-
 logger = logging.getLogger(__name__)
 
 
@@ -53,19 +51,12 @@ def _substitute_prompt_vars(template: str, **kwargs: str) -> str:
 
 
 async def get_recommendations_prompt(org_id: UUID | None, db: AsyncSession) -> str:
-    """Load recommendations instructions, optional examples, protocol, with entity/context slots."""
-    blocks = await resolve_prompt_blocks("recommendations", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip()
-    protocol = (blocks.get("protocol") or "").strip()
-    examples = (blocks.get("examples") or "").strip()
-    if instructions and protocol:
-        dynamic = "Entities:\n{entity_summary}\n{context}"
-        parts = [instructions]
-        if examples:
-            parts.append(examples)
-        parts.append(dynamic)
-        parts.append(protocol)
-        return "\n\n".join(parts)
+    """Return the process document generation prompt.
+
+    Doc generation uses a fixed template distinct from the scorer prompt stored
+    under ``recommendations`` in the prompt store.  Always returns the local
+    fallback to avoid mixing scorer content into doc synthesis.
+    """
     return _FALLBACK_PROCESS_DOCUMENT_PROMPT
 
 

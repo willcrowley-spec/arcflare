@@ -15,39 +15,6 @@ from app.services.research.searcher import SearchResult
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_SYSTEM_PROMPT = """\
-You are an expert business analyst performing due diligence research on a company.
-You will be given text from web pages about an organization. Extract concrete, \
-verifiable facts organized into the categories below.
-
-CATEGORIES:
-- overview: Company description, founding date, headquarters, mission
-- financials: Revenue, funding, valuation, growth metrics, business model
-- products: Products, services, platforms, features, pricing
-- icp: Ideal customer profile, target market, buyer personas, use cases
-- structure: Corporate structure, executives, board, departments, subsidiaries
-- technology: Tech stack, integrations, platforms used
-- market: Market position, competitors, awards, press mentions, partnerships
-- employees: Headcount, hiring, office locations, culture
-
-RULES:
-1. Every fact MUST cite its source using the page reference tag (e.g. [PAGE-1])
-2. Only include facts actually stated or strongly implied by the source text
-3. Do NOT speculate beyond what the source supports
-4. Prefer specific numbers and names over vague descriptions
-5. If a fact appears in multiple sources, cite all of them
-6. Skip marketing fluff and boilerplate — only actionable intelligence
-7. Assign a confidence score (0.0–1.0) based on source quality and specificity
-
-Return a JSON object with a single key "facts" containing an array of fact objects."""
-
-EXTRACTION_TASK_TEMPLATE = """\
-Extract all high-value business facts about "{company_name}" from the pages below.
-
-{page_blocks}
-
-Return JSON: {{"facts": [{{"category": "...", "claim": "...", "evidence_refs": ["PAGE-N"], "confidence": 0.0-1.0}}]}}"""
-
 BATCH_SIZE = 5
 
 
@@ -85,6 +52,7 @@ def extract_facts(
     company_name: str,
     search_results: list[SearchResult] | None = None,
     model_config: dict | None = None,
+    prompt_blocks: dict[str, str] | None = None,
 ) -> list[ExtractedFact]:
     """Extract facts from pages in batches. Returns deduplicated fact list.
 
@@ -108,10 +76,12 @@ def extract_facts(
             page_index[ref_id] = page
             page_blocks.append(_build_page_block(batch_start + i, page))
 
+        system = (prompt_blocks or {}).get("instructions") or ""
+        protocol = (prompt_blocks or {}).get("protocol") or ""
         prompt = PromptParts(
-            system=EXTRACTION_SYSTEM_PROMPT,
+            system=system,
             context=search_context if search_context else "",
-            variable=EXTRACTION_TASK_TEMPLATE.format(
+            variable=protocol.format(
                 company_name=company_name,
                 page_blocks="\n\n".join(page_blocks),
             ),

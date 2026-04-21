@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.process import BusinessProcess
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -222,10 +223,13 @@ async def generate_discovered_candidates(org_id: UUID, db: AsyncSession) -> list
 def _build_synthesis_prompt(
     grouped: dict[str, list[dict]],
     handoffs_payload: list[dict],
+    blocks: dict[str, str],
 ) -> str:
     grouped_json = json.dumps(grouped, indent=2, default=str)
     handoffs_json = json.dumps(handoffs_payload, indent=2, default=str)
-    return f"""You are analyzing discovered business processes and handoffs for cross-process (composite) automation opportunities.
+    instructions = blocks.get("instructions", "")
+    protocol = blocks.get("protocol", "")
+    return f"""{instructions}
 
 Processes grouped by domain (parent process name):
 {grouped_json}
@@ -233,26 +237,7 @@ Processes grouped by domain (parent process name):
 Process handoffs for this discovery run (source_process_id, target_process_id, is_gap, description):
 {handoffs_json}
 
-Identify composite automation opportunities that span multiple processes or close handoff gaps. Prefer concrete, automatable bundles tied to the process IDs provided.
-
-Return ONLY valid JSON with this shape:
-{{
-  "synthesized_candidates": [
-    {{
-      "title": "Short name for the composite opportunity",
-      "description": "What to automate across processes",
-      "rationale": "Why this bundle matters",
-      "linked_process_ids": ["uuid-string", "..."],
-      "automation_type": "deterministic" | "agentic" | "hybrid"
-    }}
-  ]
-}}
-
-Rules:
-- linked_process_ids must be a subset of process ids from the input groups.
-- Use automation_type "hybrid" when unsure.
-- If no strong composite opportunities exist, return an empty synthesized_candidates array.
-"""
+{protocol}"""
 
 
 def _normalize_synthesized_item(raw: dict) -> dict | None:
@@ -326,7 +311,9 @@ async def generate_synthesized_candidates(
         for h in handoffs
     ]
 
-    prompt = _build_synthesis_prompt(dict(grouped), handoffs_payload)
+    blocks = await resolve_prompt_blocks("recommendations_composite", org_id, db)
+
+    prompt = _build_synthesis_prompt(dict(grouped), handoffs_payload, blocks)
 
     from app.services.ai.router import llm_call, parse_json_response
 
@@ -335,7 +322,7 @@ async def generate_synthesized_candidates(
             prompt=prompt,
             max_tokens=8192,
             tier="strong",
-            operation="recommendations",
+            operation="recommendations_composite",
         )
         data = parse_json_response(result.text)
     except Exception:

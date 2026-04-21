@@ -653,12 +653,8 @@ async def build_stage3_4_prompt(
 ) -> PromptParts:
     """Stage 3+4 merged: Enrichment + Flow prompt."""
     blocks = await resolve_prompt_blocks("discovery_enrichment_flow", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip()
-    protocol = (blocks.get("protocol") or "").strip()
-    if not instructions:
-        instructions = _FALLBACK_STAGE3_4_INSTRUCTIONS
-    if not protocol:
-        protocol = _FALLBACK_STAGE3_4_PROTOCOL
+    instructions = blocks.get("instructions") or ""
+    protocol = blocks.get("protocol") or ""
     middle = _stage3_4_dynamic_sections(
         steps, metadata_per_step, document_chunks_per_step,
         enriched_tree, metadata_relationships, dependency_graph,
@@ -822,8 +818,8 @@ async def build_v2_phase1_prompt(
 ) -> PromptParts:
     """v2 Phase 1: Domain Discovery with key_objects and key_terms."""
     blocks = await resolve_prompt_blocks("discovery_v2_domain", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE1_INSTRUCTIONS
-    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE1_PROTOCOL
+    instructions = blocks.get("instructions") or ""
+    protocol = blocks.get("protocol") or ""
     context = _v2_phase1_dynamic(
         org_context, object_inventory,
         metadata_community_summaries, document_community_summaries,
@@ -843,8 +839,8 @@ async def build_v2_phase3_prompt(
 ) -> PromptParts:
     """v2 Phase 3: Per-domain extraction from evidence bundle."""
     blocks = await resolve_prompt_blocks("discovery_v2_extraction", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE3_INSTRUCTIONS
-    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE3_PROTOCOL
+    instructions = blocks.get("instructions") or ""
+    protocol = blocks.get("protocol") or ""
     task = (
         f"Extract all business processes for the \"{domain['name']}\" domain.\n"
         f"Domain description: {domain.get('description', '')}\n\n"
@@ -870,8 +866,8 @@ async def build_v2_phase4_prompt(
 ) -> PromptParts:
     """v2 Phase 4: Evidence verification."""
     blocks = await resolve_prompt_blocks("discovery_v2_verification", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE4_INSTRUCTIONS
-    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE4_PROTOCOL
+    instructions = blocks.get("instructions") or ""
+    protocol = blocks.get("protocol") or ""
     pairs_text = []
     for i, pair in enumerate(verification_pairs):
         pairs_text.append(
@@ -898,8 +894,8 @@ async def build_v2_phase5_prompt(
 ) -> PromptParts:
     """v2 Phase 5: Cross-domain synthesis."""
     blocks = await resolve_prompt_blocks("discovery_v2_synthesis", org_id, db)
-    instructions = (blocks.get("instructions") or "").strip() or _V2_PHASE5_INSTRUCTIONS
-    protocol = (blocks.get("protocol") or "").strip() or _V2_PHASE5_PROTOCOL
+    instructions = blocks.get("instructions") or ""
+    protocol = blocks.get("protocol") or ""
 
     context_lines = [
         f"## Organization: {org_context.get('name', 'Unknown')}",

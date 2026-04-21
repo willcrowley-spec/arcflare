@@ -19,61 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import ChunkCommunity, Community
 from app.services.ai.router import get_embedding_provider, llm_call
+from app.services.prompts.resolver import resolve_prompt_blocks
 
 logger = logging.getLogger(__name__)
-
-_META_L0_PROMPT = """\
-You are a Salesforce platform analyst. Given the following group of related \
-Salesforce metadata items clustered by dependency relationships, write a 3-4 \
-sentence OPERATIONAL summary covering:
-1. What data flows through this cluster
-2. What automations execute and on what triggers
-3. What business events or user actions initiate activity here
-4. The overall operational pattern (CRUD-heavy, approval-heavy, integration-focused, etc.)
-
-Be specific — name objects, flows, and triggers. Start with a short label phrase.
-
-## Cluster Members
-{members_text}
-"""
-
-_META_L1_PROMPT = """\
-You are a Salesforce platform analyst. Given the following operational \
-summaries from sub-clusters, write a 2-3 sentence BUSINESS CAPABILITY summary \
-describing what business function this group of clusters implements together.
-Focus on the business capability, not implementation details.
-Start with a short label phrase (e.g. "Lead Qualification and Scoring").
-
-## Sub-Cluster Summaries
-{child_summaries}
-"""
-
-_META_L2_PROMPT = """\
-You are a strategic business analyst. Given the following capability summaries, \
-write a 1-2 sentence STRATEGIC DOMAIN summary suitable for executive-level reporting.
-Name the business domain and its strategic importance.
-
-## Capability Summaries
-{child_summaries}
-"""
-
-_DOC_SUMMARY_PROMPT = """\
-You are a business analyst. Given the following group of related document \
-sections that were clustered by concept co-occurrence, write a 2-3 sentence \
-summary of the main topics, processes, or business areas these sections cover.
-
-## Top Concepts
-{concepts}
-{excerpts_section}"""
-
-_DOC_L1_PROMPT = """\
-You are a business analyst. Given the following operational summaries from \
-document sub-clusters, write a 2-3 sentence summary describing the broader \
-topic area these clusters cover together.
-
-## Sub-Cluster Summaries
-{child_summaries}
-"""
 
 
 def _describe_metadata_member(node_id: str, obj_map: dict, auto_map: dict) -> str:
@@ -120,6 +68,11 @@ async def summarize_metadata_communities(org_id: UUID, db: AsyncSession) -> int:
     """
     from app.models.metadata import MetadataAutomation, MetadataObject
 
+    blocks = await resolve_prompt_blocks("community_summarization", org_id, db)
+    meta_l0 = blocks.get("meta_l0") or ""
+    meta_l1 = blocks.get("meta_l1") or ""
+    meta_l2 = blocks.get("meta_l2") or ""
+
     comms_q = await db.execute(
         select(Community).where(
             Community.org_id == org_id,
@@ -163,9 +116,9 @@ async def summarize_metadata_communities(org_id: UUID, db: AsyncSession) -> int:
             if child_summaries:
                 child_text = "\n\n".join(f"- {s}" for s in child_summaries)
                 if level == 0 and not comm.parent_id:
-                    prompt = _META_L2_PROMPT.format(child_summaries=child_text)
+                    prompt = meta_l2.format(child_summaries=child_text)
                 else:
-                    prompt = _META_L1_PROMPT.format(child_summaries=child_text)
+                    prompt = meta_l1.format(child_summaries=child_text)
             else:
                 member_lines = []
                 for node_id in (comm.member_concept_ids or [])[:30]:
@@ -173,7 +126,7 @@ async def summarize_metadata_communities(org_id: UUID, db: AsyncSession) -> int:
                 if not member_lines:
                     continue
                 members_text = "\n".join(f"- {line}" for line in member_lines)
-                prompt = _META_L0_PROMPT.format(members_text=members_text)
+                prompt = meta_l0.format(members_text=members_text)
 
             try:
                 result = llm_call(
@@ -213,6 +166,10 @@ async def summarize_document_communities(org_id: UUID, db: AsyncSession) -> int:
     from app.models.document import DocumentChunk
     from app.models.knowledge import Concept
 
+    blocks = await resolve_prompt_blocks("community_summarization", org_id, db)
+    doc_summary = blocks.get("doc_summary") or ""
+    doc_l1 = blocks.get("doc_l1") or ""
+
     comms_q = await db.execute(
         select(Community).where(
             Community.org_id == org_id,
@@ -245,7 +202,7 @@ async def summarize_document_communities(org_id: UUID, db: AsyncSession) -> int:
 
             if child_summaries:
                 child_text = "\n\n".join(f"- {s}" for s in child_summaries)
-                prompt = _DOC_L1_PROMPT.format(child_summaries=child_text)
+                prompt = doc_l1.format(child_summaries=child_text)
             else:
                 top_concepts = (comm.metadata_json or {}).get("top_concepts", [])
                 concepts_str = ", ".join(top_concepts[:10]) if top_concepts else comm.label or ""
@@ -276,7 +233,7 @@ async def summarize_document_communities(org_id: UUID, db: AsyncSession) -> int:
                 if excerpts:
                     excerpts_section = f"\n## Representative Excerpts\n{excerpts[:2000]}"
 
-                prompt = _DOC_SUMMARY_PROMPT.format(
+                prompt = doc_summary.format(
                     concepts=concepts_str,
                     excerpts_section=excerpts_section,
                 )

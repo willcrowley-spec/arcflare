@@ -238,7 +238,9 @@ async def run_recommendation_pipeline(
         # --- Stage 3: LLM scoring + narrative ---
         logger.info("pipeline_stage org=%s run=%s stage=3_llm candidates=%d", org_id, run_id, len(all_candidates))
         t0 = time.perf_counter()
-        llm_out = await score_candidates_with_llm(all_candidates, cancel_check=_check_cancelled)
+        llm_out = await score_candidates_with_llm(
+            all_candidates, org_id, db, cancel_check=_check_cancelled,
+        )
         stage_results["stage_3"] = {
             "seconds": round(time.perf_counter() - t0, 4),
             "llm_candidates": len(llm_out),
