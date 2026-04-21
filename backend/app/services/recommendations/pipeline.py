@@ -31,14 +31,14 @@ def _norm_automation_type(value: object | None) -> str:
     return s[:20]
 
 
-def _linked_process_ids_for_rec(candidate: dict) -> list[UUID]:
+def _linked_process_ids_for_rec(candidate: dict) -> list[str]:
     if candidate.get("recommendation_type") == "synthesized":
         raw = candidate.get("linked_process_ids") or []
-        return [UUID(str(x)) for x in raw]
+        return [str(x) for x in raw]
     pid = candidate.get("id")
     if pid is None:
         return []
-    return [UUID(str(pid))]
+    return [str(pid)]
 
 
 async def _eliminated_gap_handoff_count(
