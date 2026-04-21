@@ -115,13 +115,16 @@ def compute_scenario(
     fte_cost = float(resolve_assumption(assumptions, "fte_annual_cost") or 1)
     discount_rate = float(resolve_assumption(assumptions, "discount_rate") or 0.10)
 
-    annual_savings: list[float] = []
-    cumulative: list[float] = []
+    annual_net: list[float] = []
+    cumulative_net: list[float] = []
+    gross_benefit: list[float] = []
+    cumulative_benefit: list[float] = []
     hard_savings: list[float] = []
     soft_savings: list[float] = []
     headcount_deflection: list[float] = []
     discounted: list[float] = []
-    running_cumulative = 0.0
+    running_net = 0.0
+    running_benefit = 0.0
 
     for n in range(years):
         adoption = min(1.0, ramp[n] * multiplier) if n < len(ramp) else 1.0
@@ -133,9 +136,14 @@ def compute_scenario(
         else:
             net = gross - annual_op_cost
 
-        annual_savings.append(round(net))
-        running_cumulative += net
-        cumulative.append(round(running_cumulative))
+        annual_net.append(round(net))
+        running_net += net
+        cumulative_net.append(round(running_net))
+
+        gross_benefit.append(round(gross))
+        running_benefit += gross
+        cumulative_benefit.append(round(running_benefit))
+
         hard_savings.append(round(net * hard_pct))
         soft_savings.append(round(net * (1 - hard_pct)))
         hc = max(0.0, gross / fte_cost) if fte_cost > 0 else 0.0
@@ -149,18 +157,22 @@ def compute_scenario(
     if total_investment > 0:
         cum = 0.0
         for n in range(years):
-            monthly_inc = annual_savings[n] / 12
+            monthly_inc = annual_net[n] / 12
             for m in range(12):
                 cum += monthly_inc
                 if cum >= 0 and payback_month is None:
                     payback_month = n * 12 + m + 1
 
     return {
-        "annual_savings": annual_savings,
-        "cumulative": cumulative,
+        "annual_savings": annual_net,
+        "cumulative": cumulative_net,
+        "gross_benefit": gross_benefit,
+        "cumulative_benefit": cumulative_benefit,
         "hard_savings": hard_savings,
         "soft_savings": soft_savings,
         "headcount_deflection": headcount_deflection,
+        "total_investment": round(total_investment),
+        "annual_op_cost": round(annual_op_cost),
         "assumptions_multiplier": multiplier,
         "npv": npv,
         "payback_month": payback_month,
@@ -208,6 +220,8 @@ def compute_portfolio_projections(
         agg: dict[str, list] = {
             "annual_savings": [0] * years,
             "cumulative": [0] * years,
+            "gross_benefit": [0] * years,
+            "cumulative_benefit": [0] * years,
             "hard_savings": [0] * years,
             "soft_savings": [0] * years,
             "headcount_deflection": [0.0] * years,
@@ -217,6 +231,8 @@ def compute_portfolio_projections(
             for y in range(years):
                 agg["annual_savings"][y] += s["annual_savings"][y]
                 agg["cumulative"][y] += s["cumulative"][y]
+                agg["gross_benefit"][y] += s["gross_benefit"][y]
+                agg["cumulative_benefit"][y] += s["cumulative_benefit"][y]
                 agg["hard_savings"][y] += s["hard_savings"][y]
                 agg["soft_savings"][y] += s["soft_savings"][y]
                 agg["headcount_deflection"][y] += s["headcount_deflection"][y]

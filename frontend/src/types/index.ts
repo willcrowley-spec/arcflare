@@ -426,10 +426,14 @@ export interface RecommendationsSummary {
 /** Single scenario series from the portfolio projection / financial engine. */
 export interface PortfolioScenarioData {
   cumulative: number[]
+  cumulative_benefit?: number[]
+  gross_benefit?: number[]
   hard_savings: number[]
   soft_savings: number[]
   headcount_deflection?: number[]
   annual_savings?: number[]
+  total_investment?: number
+  annual_op_cost?: number
 }
 
 /** Response from POST /recommendations/portfolio-projection (aggregated scenarios). */

@@ -18,16 +18,19 @@ function toChartScenarios(projections: NonNullable<UsePortfolioReturn['projectio
   return {
     optimistic: {
       cumulative: projections.optimistic.cumulative,
+      cumulative_benefit: projections.optimistic.cumulative_benefit,
       hard_savings: projections.optimistic.hard_savings,
       soft_savings: projections.optimistic.soft_savings,
     },
     expected: {
       cumulative: projections.expected.cumulative,
+      cumulative_benefit: projections.expected.cumulative_benefit,
       hard_savings: projections.expected.hard_savings,
       soft_savings: projections.expected.soft_savings,
     },
     conservative: {
       cumulative: projections.conservative.cumulative,
+      cumulative_benefit: projections.conservative.cumulative_benefit,
       hard_savings: projections.conservative.hard_savings,
       soft_savings: projections.conservative.soft_savings,
     },

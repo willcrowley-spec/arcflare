@@ -55,19 +55,27 @@ function extractSignals(rec: Recommendation): Record<string, number> {
 
 function parseValueChartScenarios(raw: Record<string, unknown>): ValueChartScenarios | null {
   const keys = ['optimistic', 'expected', 'conservative'] as const
-  const out: Partial<ValueChartScenarios> = {}
+  const out: Record<string, Record<string, unknown>> = {}
   for (const k of keys) {
     const s = raw[k]
     if (!s || typeof s !== 'object' || Array.isArray(s)) return null
     const o = s as Record<string, unknown>
     if (!Array.isArray(o.cumulative)) return null
     out[k] = {
-      cumulative: o.cumulative.map((x) => Number(x)),
-      hard_savings: Array.isArray(o.hard_savings) ? o.hard_savings.map((x) => Number(x)) : [],
-      soft_savings: Array.isArray(o.soft_savings) ? o.soft_savings.map((x) => Number(x)) : [],
+      cumulative: (o.cumulative as number[]).map(Number),
+      cumulative_benefit: Array.isArray(o.cumulative_benefit) ? (o.cumulative_benefit as number[]).map(Number) : undefined,
+      gross_benefit: Array.isArray(o.gross_benefit) ? (o.gross_benefit as number[]).map(Number) : undefined,
+      hard_savings: Array.isArray(o.hard_savings) ? (o.hard_savings as number[]).map(Number) : [],
+      soft_savings: Array.isArray(o.soft_savings) ? (o.soft_savings as number[]).map(Number) : [],
+      total_investment: typeof o.total_investment === 'number' ? o.total_investment : 0,
+      annual_op_cost: typeof o.annual_op_cost === 'number' ? o.annual_op_cost : 0,
+      npv: typeof o.npv === 'number' ? o.npv : undefined,
+      payback_month: typeof o.payback_month === 'number' ? o.payback_month : null,
     }
   }
-  return out as ValueChartScenarios
+  const npv = raw.npv && typeof raw.npv === 'object' ? (raw.npv as Record<string, number>) : undefined
+  const payback = raw.payback_month && typeof raw.payback_month === 'object' ? (raw.payback_month as Record<string, number | null>) : undefined
+  return { ...out, npv, payback_month: payback } as unknown as ValueChartScenarios
 }
 
 function humanizeKey(key: string): string {
@@ -303,8 +311,8 @@ function OverviewTab({ rec, analysis }: { rec: Recommendation; analysis: Record<
       ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h4 className="text-xs font-bold uppercase tracking-wide text-navy-900">Value projection</h4>
-        <p className="mt-1 text-xs text-slate-500">Modeled cumulative savings by scenario (from current assumptions).</p>
+        <h4 className="text-xs font-bold uppercase tracking-wide text-navy-900">Projected value delivered</h4>
+        <p className="mt-1 text-xs text-slate-500">Cumulative savings projected by scenario over 5 years.</p>
         <div className="mt-4">
           <ValueChart scenarios={scenarios} height={260} />
         </div>
