@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { Check, GitBranch, MessageSquare, Pencil, Sparkles, X } from 'lucide-react'
+import { Check, CheckCheck, GitBranch, MessageSquare, Pencil, Sparkles, X } from 'lucide-react'
 import { useChatStore } from '@/stores/chatStore'
 import { useRecalculateRecommendation } from '@/hooks/useApi'
 import { ScoringBreakdown } from '@/pages/Recommendations/ScoringBreakdown'
@@ -440,21 +440,35 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
             <MessageSquare className="h-3.5 w-3.5" />
             Refine
           </button>
-          <button
-            type="button"
-            onClick={() => onStatusChange(rec.id, 'accepted')}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
-          >
-            <Check className="h-3.5 w-3.5" />
-            Accept
-          </button>
-          <button
-            type="button"
-            onClick={() => onStatusChange(rec.id, 'dismissed')}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
-          >
-            Dismiss
-          </button>
+          {rec.status === 'active' && (
+            <>
+              <button
+                type="button"
+                onClick={() => onStatusChange(rec.id, 'accepted')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+              >
+                <Check className="h-3.5 w-3.5" />
+                Accept
+              </button>
+              <button
+                type="button"
+                onClick={() => onStatusChange(rec.id, 'dismissed')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+              >
+                Dismiss
+              </button>
+            </>
+          )}
+          {rec.status === 'accepted' && (
+            <button
+              type="button"
+              onClick={() => onStatusChange(rec.id, 'implemented')}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              Mark Implemented
+            </button>
+          )}
           <button
             type="button"
             disabled

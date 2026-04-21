@@ -267,7 +267,7 @@ async def run_recommendation_pipeline(
             delete(Recommendation).where(
                 Recommendation.org_id == org_id,
                 Recommendation.recommendation_run_id.is_not(None),
-                Recommendation.status != "accepted",
+                Recommendation.status.not_in(["accepted", "dismissed", "implemented"]),
             )
         )
         await db.commit()

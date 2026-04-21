@@ -19,7 +19,7 @@ import { RecommendationCard } from './RecommendationCard'
 import { RecommendationDetail } from './RecommendationDetail'
 import type { Recommendation } from './RecommendationCard'
 
-type StatusTab = 'active' | 'accepted' | 'dismissed'
+type StatusTab = 'active' | 'accepted' | 'dismissed' | 'implemented'
 type SortKey = 'score' | 'npv' | 'title'
 type AutomationKey = 'deterministic' | 'agentic' | 'hybrid'
 type RecommendationTypeKey = 'discovered' | 'synthesized'
@@ -212,7 +212,10 @@ export default function RecommendationsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const tabRaw = (searchParams.get('status') || 'active').toLowerCase()
   const statusTab: StatusTab =
-    tabRaw === 'accepted' ? 'accepted' : tabRaw === 'dismissed' ? 'dismissed' : 'active'
+    tabRaw === 'accepted' ? 'accepted'
+    : tabRaw === 'dismissed' ? 'dismissed'
+    : tabRaw === 'implemented' ? 'implemented'
+    : 'active'
   const statusFilter = statusTab
 
   const [page, setPage] = useState(1)
@@ -425,6 +428,7 @@ export default function RecommendationsPage() {
               ['active', 'Active'],
               ['accepted', 'Accepted'],
               ['dismissed', 'Dismissed'],
+              ['implemented', 'Implemented'],
             ] as const
           ).map(([key, label]) => (
             <button

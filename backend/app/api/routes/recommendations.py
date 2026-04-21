@@ -421,6 +421,12 @@ async def patch_recommendation_status(
     db: DbSession,
     org: CurrentOrg,
 ) -> RecommendationResponse:
+    VALID_STATUSES = {"active", "accepted", "dismissed", "implemented"}
+    if body.status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_STATUSES))}",
+        )
     rec = await db.get(Recommendation, recommendation_id)
     if rec is None or rec.org_id != org.id:
         raise HTTPException(status_code=404, detail="Recommendation not found")
