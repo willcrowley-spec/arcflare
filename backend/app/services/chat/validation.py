@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.discovery import DiscoveryRun, ProcessHandoff
 from app.models.process import BusinessProcess
+from app.models.recommendation import Recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,22 @@ async def validate_tool_call(
             errors.append("A discovery run is already in progress for this organization.")
             return False, errors, enriched
 
+    if tool_name == "update_assumption":
+        raw_rid = params.get("recommendation_id")
+        if raw_rid in (None, ""):
+            errors.append("recommendation_id is required.")
+        else:
+            rid = _parse_uuid(raw_rid, "recommendation_id", errors)
+            if rid is not None:
+                row = await db.get(Recommendation, rid)
+                if row is None or row.org_id != org_id:
+                    errors.append("recommendation_id not found or not in this organization.")
+        ov = params.get("overrides")
+        if not isinstance(ov, dict):
+            errors.append("overrides must be an object with assumption key/value pairs.")
+        elif len(ov) == 0:
+            errors.append("overrides must contain at least one key.")
+
     if "level" in params and params["level"] is not None:
         if str(params["level"]) not in VALID_LEVELS:
             errors.append(
@@ -102,7 +119,7 @@ async def validate_tool_call(
             continue
         if key in ("process_id", "handoff_id", "parent_id", "source_process_id", "target_process_id"):
             id_checks.append((key, str(key)))
-        elif key.endswith("_id") and key not in ("discovery_run_id",):
+        elif key.endswith("_id") and key not in ("discovery_run_id", "recommendation_id"):
             id_checks.append((key, str(key)))
 
     for field, label in id_checks:

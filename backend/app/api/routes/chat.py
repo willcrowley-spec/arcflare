@@ -353,7 +353,7 @@ async def send_message(
 
         chat_tools: list[dict] | None = None
         try:
-            chat_tools = get_openai_tools()
+            chat_tools = get_openai_tools(thread.anchor_type)
         except Exception as tools_exc:
             logger.warning(
                 "get_openai_tools_failed thread=%s err=%s", thread_id_str, tools_exc,
@@ -423,7 +423,7 @@ async def send_message(
                                     yield f"event: action\ndata: {json.dumps(action_data)}\n\n"
 
                         elif chunk.type == "function_call":
-                            tool_def = get_tool(chunk.function_name)
+                            tool_def = get_tool(chunk.function_name, thread.anchor_type)
                             if not tool_def:
                                 logger.warning("unknown_tool_call name=%s", chunk.function_name)
                                 continue
@@ -569,7 +569,7 @@ async def send_message(
 
 def _extract_target_id(params: dict) -> UUID | None:
     """Pull the first UUID-shaped target from tool params."""
-    for key in ("process_id", "handoff_id", "target_process_id", "source_process_id"):
+    for key in ("process_id", "handoff_id", "target_process_id", "source_process_id", "recommendation_id"):
         val = params.get(key)
         if val:
             try:

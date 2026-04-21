@@ -14,6 +14,7 @@ from app.models.chat import ChatMessage, ChatThread
 from app.models.discovery import ProcessHandoff
 from app.models.organization import Organization
 from app.models.process import BusinessProcess
+from app.models.recommendation import Recommendation
 from app.services.chat.tools import get_tool_declarations
 from app.services.documents.vectorizer import search_documents
 from app.services.prompts.resolver import resolve_prompt_blocks
@@ -95,7 +96,13 @@ def _interpolate_examples_block(text: str, agent_name: str) -> str:
     return text.replace("{agent_name}", agent_name)
 
 
-async def build_system_prompt(org: Organization, tool_names: list[str], db: AsyncSession) -> str:
+async def build_system_prompt(
+    org: Organization,
+    tool_names: list[str],
+    db: AsyncSession,
+    *,
+    anchor_type: str | None = None,
+) -> str:
     """Arc system prompt: identity, rules, protocol, workflow, examples + tools/settings (from prompt store or fallback)."""
     from app.core.config import get_settings
 
@@ -105,7 +112,7 @@ async def build_system_prompt(org: Organization, tool_names: list[str], db: Asyn
     org_settings = org.settings_json or {}
     settings_blob = json.dumps(org_settings, indent=2) if org_settings else "{}"
 
-    decls = get_tool_declarations()
+    decls = get_tool_declarations(anchor_type)
     if tool_names:
         decls = [d for d in decls if d["name"] in tool_names]
     tools_lines = [f"- {d['name']}: {d['description']}" for d in decls]
@@ -216,6 +223,86 @@ async def _anchor_context(
         if at == "domain" and proc.level != "domain":
             payload["note"] = "Anchor type is domain but record level is not domain; still showing process."
         return {"anchor_type": at, "anchor_id": str(aid), "process": payload}
+    if at == "recommendation":
+        rec = await db.get(Recommendation, aid)
+        if rec is None or rec.org_id != org_id:
+            return {"anchor_type": at, "anchor_id": str(aid), "error": "Recommendation not found"}
+
+        assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+        overrides = assumptions.get("overrides") if isinstance(assumptions.get("overrides"), dict) else {}
+        skip = frozenset({"overrides", "source"})
+        base_keys = [k for k in assumptions if k not in skip]
+        overridden_keys = sorted(overrides.keys()) if overrides else []
+        auto_estimated_keys = sorted(k for k in base_keys if k not in overrides)
+
+        scenarios = dict(rec.scenarios_json) if rec.scenarios_json else {}
+        exp = scenarios.get("expected") or {}
+        hard = exp.get("hard_savings") or []
+        soft = exp.get("soft_savings") or []
+        hard_soft = {
+            "hard_savings_total_5y": sum(hard) if isinstance(hard, list) else None,
+            "soft_savings_total_5y": sum(soft) if isinstance(soft, list) else None,
+        }
+        hpct = assumptions.get("hard_savings_pct")
+        if isinstance(hpct, (int, float)):
+            hard_soft["hard_savings_pct_assumption"] = hpct
+            hard_soft["soft_savings_pct_assumption"] = 1.0 - float(hpct)
+
+        linked_ids = list(rec.linked_process_ids or [])
+        processes_out: list[dict] = []
+        for pid_raw in linked_ids:
+            try:
+                pid = UUID(str(pid_raw))
+            except (ValueError, TypeError):
+                continue
+            proc = await db.get(BusinessProcess, pid)
+            if proc is None or proc.org_id != org_id:
+                continue
+            processes_out.append(
+                {
+                    "id": str(proc.id),
+                    "name": proc.name,
+                    "level": proc.level,
+                    "narrative": proc.narrative,
+                    "actors": proc.actors,
+                    "automation_potential": proc.automation_potential,
+                }
+            )
+
+        anchor_payload = {
+            "anchor_type": at,
+            "anchor_id": str(aid),
+            "recommendation": {
+                "id": str(rec.id),
+                "title": rec.title,
+                "narrative": rec.description,
+                "scoring": {
+                    "base_score": rec.base_score,
+                    "llm_score": rec.llm_score,
+                    "composite_score": rec.composite_score,
+                    "score_divergence_flag": rec.score_divergence_flag,
+                },
+                "assumptions": assumptions,
+                "projections_summary": {
+                    "npv": scenarios.get("npv"),
+                    "payback_month": scenarios.get("payback_month"),
+                    "estimated_roi": float(rec.estimated_roi) if rec.estimated_roi is not None else None,
+                },
+                "hard_soft_split": hard_soft,
+                "assumption_source": assumptions.get("source"),
+                "overridden_assumption_keys": overridden_keys,
+                "auto_estimated_assumption_keys": auto_estimated_keys,
+                "linked_processes": processes_out,
+            },
+            "_enrichment_persona": (
+                "You are helping the user refine financial assumptions for this automation recommendation.\n"
+                "You already have auto-estimated values. Ask targeted questions to improve accuracy.\n"
+                "Prioritize: (1) hard savings opportunities — ask about eliminable spend, (2) actor count "
+                "and time accuracy — employees underestimate by 35%+, (3) automation type validation.\n"
+                "When the user provides information, call update_assumption immediately."
+            ),
+        }
+        return anchor_payload
     return {"anchor_type": at, "anchor_id": str(aid), "error": "Unknown anchor_type"}
 
 
@@ -230,11 +317,20 @@ async def build_chat_context(
     """Build ordered message dicts: system layers, optional summary/history/RAG, then user."""
     out: list[dict] = []
 
-    tool_names = [t["name"] for t in get_tool_declarations()]
-    out.append({"role": "system", "content": await build_system_prompt(org, tool_names, db)})
+    decls = get_tool_declarations(thread.anchor_type)
+    tool_names = [t["name"] for t in decls]
+    out.append(
+        {
+            "role": "system",
+            "content": await build_system_prompt(
+                org, tool_names, db, anchor_type=thread.anchor_type,
+            ),
+        }
+    )
 
     anchor = await _anchor_context(thread, db, org.id)
     if anchor is not None:
+        persona = anchor.pop("_enrichment_persona", None)
         out.append(
             {
                 "role": "system",
@@ -242,6 +338,8 @@ async def build_chat_context(
                 + json.dumps(anchor, default=str),
             }
         )
+        if persona:
+            out.append({"role": "system", "content": persona})
 
     if thread.summary:
         out.append(

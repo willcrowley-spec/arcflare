@@ -13,6 +13,11 @@ from app.models.chat import ChatAction
 from app.models.discovery import ProcessHandoff
 from app.models.process import BusinessProcess
 from app.services.chat.validation import _collect_descendant_ids
+from app.services.chat.tools.recommendation_tools import (
+    handle_get_recommendation_details,
+    handle_get_scoring_breakdown,
+    execute_update_assumption,
+)
 from app.services.documents.vectorizer import search_documents
 
 logger = logging.getLogger(__name__)
@@ -110,6 +115,16 @@ async def execute_auto_tool(
         for h in rows:
             items.append(await format_gap_handoff_item(h, db))
         return {"items": items, "total": len(items)}
+
+    if tool_name == "get_recommendation_details":
+        return await handle_get_recommendation_details(
+            params, db, org_id=org_id,
+        )
+
+    if tool_name == "get_scoring_breakdown":
+        return await handle_get_scoring_breakdown(
+            params, db, org_id=org_id,
+        )
 
     return {"ok": False, "error": f"Unknown or non-auto tool: {tool_name}"}
 
@@ -311,6 +326,7 @@ _ACTION_HANDLERS = {
     "update_handoff": _execute_update_handoff,
     "resolve_gap": _execute_resolve_gap,
     "rerun_synthesis": _execute_rerun_synthesis,
+    "update_assumption": execute_update_assumption,
 }
 
 

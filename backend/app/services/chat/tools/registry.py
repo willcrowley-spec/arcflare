@@ -1,8 +1,10 @@
-"""Tool registry for the AI chat assistant (names align with ChatAction.action_type)."""
+"""Base chat tool definitions (discovery / process graph)."""
 
 from __future__ import annotations
 
-TOOL_REGISTRY: list[dict] = [
+#: Tools available for all chat threads. Recommendation enrichment tools are merged in
+#: ``tools.__init__`` when ``anchor_type == "recommendation"``.
+BASE_TOOL_REGISTRY: list[dict] = [
     {
         "name": "search_knowledge",
         "description": (
@@ -244,35 +246,3 @@ TOOL_REGISTRY: list[dict] = [
         "risk_level": "medium",
     },
 ]
-
-_TOOL_BY_NAME: dict[str, dict] = {t["name"]: t for t in TOOL_REGISTRY}
-
-
-def get_tool(name: str) -> dict | None:
-    return _TOOL_BY_NAME.get(name)
-
-
-def get_tool_declarations() -> list[dict]:
-    return [
-        {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
-        for t in TOOL_REGISTRY
-    ]
-
-
-def get_openai_tools() -> list[dict]:
-    """Return tool definitions in OpenAI function-calling format.
-
-    This is the industry-standard format that LiteLLM accepts and
-    translates to provider-native format automatically.
-    """
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["parameters"],
-            },
-        }
-        for t in TOOL_REGISTRY
-    ]
