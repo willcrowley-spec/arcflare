@@ -362,34 +362,44 @@ async def recalculate_all_recommendations(
     org: CurrentOrg,
 ) -> dict:
     """Recalculate financial projections for ALL recommendations (any status) using current engine."""
-    import logging
-    logger = logging.getLogger(__name__)
+    import traceback
 
     q = await db.execute(
         select(Recommendation).where(Recommendation.org_id == org.id)
     )
     recs = list(q.scalars().all())
-    logger.info("recalculate_all org=%s found=%d recommendations", org.id, len(recs))
+    print(f"[recalc] org={org.id} found {len(recs)} recommendations", flush=True)
     updated = 0
     errors = 0
+    details = []
     for rec in recs:
         try:
             assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+            old_npv = None
+            if rec.scenarios_json and "npv" in rec.scenarios_json:
+                old_npv = rec.scenarios_json["npv"].get("expected")
             projections = compute_projections(assumptions, automation_type=rec.automation_type)
             rec.scenarios_json = projections
             rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
             updated += 1
-            logger.info(
-                "recalculated rec=%s title=%s type=%s npv=%s",
-                rec.id, rec.title[:40] if rec.title else "?",
-                rec.automation_type, projections["npv"]["expected"],
-            )
+            detail = {
+                "id": str(rec.id),
+                "title": (rec.title or "?")[:50],
+                "type": rec.automation_type,
+                "status": rec.status,
+                "old_npv": old_npv,
+                "new_npv": projections["npv"]["expected"],
+            }
+            details.append(detail)
+            print(f"[recalc] OK {detail}", flush=True)
         except Exception as exc:
             errors += 1
-            logger.exception("recalculate_failed rec=%s err=%s", rec.id, exc)
+            print(f"[recalc] FAIL rec={rec.id} err={exc}", flush=True)
+            traceback.print_exc()
+            details.append({"id": str(rec.id), "error": str(exc)})
     await db.commit()
-    logger.info("recalculate_all done updated=%d errors=%d total=%d", updated, errors, len(recs))
-    return {"updated": updated, "errors": errors, "total": len(recs)}
+    print(f"[recalc] DONE updated={updated} errors={errors} total={len(recs)}", flush=True)
+    return {"updated": updated, "errors": errors, "total": len(recs), "details": details}
 
 
 @router.get("/{recommendation_id}", response_model=RecommendationResponse)
