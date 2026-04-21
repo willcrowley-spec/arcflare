@@ -155,8 +155,20 @@ async def run_recommendation_pipeline(
         await db.refresh(run)
     run_id = run.id
 
+    class PipelineCancelled(Exception):
+        pass
+
+    async def _check_cancelled() -> None:
+        """Re-read the run row; raise if someone set status='cancelled'."""
+        row = await db.execute(
+            select(RecommendationRun.status).where(RecommendationRun.id == run_id)
+        )
+        current = row.scalar_one_or_none()
+        if current == "cancelled":
+            raise PipelineCancelled()
+
     async def _update_run_progress(stage_results: dict, current_stage: str | None = None) -> None:
-        """Flush stage_results to the run row so the status endpoint reports progress."""
+        """Flush stage_results and check for cancellation."""
         values: dict = {"stage_results": stage_results}
         if current_stage:
             values["config"] = {"current_stage": current_stage}
@@ -164,6 +176,7 @@ async def run_recommendation_pipeline(
             update(RecommendationRun).where(RecommendationRun.id == run_id).values(**values)
         )
         await db.commit()
+        await _check_cancelled()
 
     try:
         stage_results: dict = {}
@@ -259,6 +272,17 @@ async def run_recommendation_pipeline(
                 error=None,
                 config={},
             )
+        )
+        await db.commit()
+        return run_id
+
+    except PipelineCancelled:
+        logger.info("recommendation_pipeline_cancelled org_id=%s run_id=%s", org_id, run_id)
+        await db.rollback()
+        await db.execute(
+            update(RecommendationRun)
+            .where(RecommendationRun.id == run_id)
+            .values(completed_at=datetime.now(timezone.utc))
         )
         await db.commit()
         return run_id

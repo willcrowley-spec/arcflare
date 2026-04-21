@@ -294,6 +294,10 @@ export const api = {
       request<{ status: string; org_id: string; run_id: string }>('/recommendations/generate', {
         method: 'POST',
       }),
+    cancel: () =>
+      request<{ status: string; run_id: string }>('/recommendations/cancel', {
+        method: 'POST',
+      }),
     pipelineStatus: () =>
       request<{
         status: string

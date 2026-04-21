@@ -306,12 +306,24 @@ export function useRecommendationPipelineStatus() {
   })
 }
 
+
 export function useGenerateRecommendations() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.recommendations.generate(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['recommendations', 'pipeline-status'] })
+    },
+  })
+}
+
+export function useCancelRecommendations() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.recommendations.cancel(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations', 'pipeline-status'] })
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
     },
   })
 }

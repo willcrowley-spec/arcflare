@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowDownWideNarrow, Layers, Loader2, Sparkles } from 'lucide-react'
+import { ArrowDownWideNarrow, Layers, Loader2, Sparkles, X } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import {
+  useCancelRecommendations,
   useGenerateRecommendations,
   useRecommendationPipelineStatus,
   useRecommendations,
@@ -158,9 +159,11 @@ const STAGE_LABELS: Record<string, string> = {
   stage_4_persist: 'Computing projections & saving…',
 }
 
-function PipelineBanner({ currentStage, stageResults }: {
+function PipelineBanner({ currentStage, stageResults, onCancel, isCancelling }: {
   currentStage?: string | null
   stageResults?: Record<string, unknown>
+  onCancel: () => void
+  isCancelling: boolean
 }) {
   const stageName = currentStage && currentStage in STAGE_LABELS
     ? STAGE_LABELS[currentStage]
@@ -175,7 +178,7 @@ function PipelineBanner({ currentStage, stageResults }: {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-navy-200 bg-navy-50 px-5 py-3.5">
       <Loader2 className="h-5 w-5 flex-shrink-0 animate-spin text-navy-600" />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-navy-900">{stageName}</p>
         <p className="text-xs text-navy-600">
           {completedStages.length > 0
@@ -183,6 +186,15 @@ function PipelineBanner({ currentStage, stageResults }: {
             : 'Analyzing processes, scoring candidates, and generating financial projections. Typically 30–90 seconds.'}
         </p>
       </div>
+      <button
+        type="button"
+        disabled={isCancelling}
+        onClick={onCancel}
+        className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-navy-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-700 shadow-sm hover:bg-navy-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <X className="h-3.5 w-3.5" />
+        {isCancelling ? 'Cancelling…' : 'Cancel'}
+      </button>
     </div>
   )
 }
@@ -215,6 +227,7 @@ export default function RecommendationsPage() {
 
   const queryClient = useQueryClient()
   const generateMutation = useGenerateRecommendations()
+  const cancelMutation = useCancelRecommendations()
   const updateStatusMutation = useUpdateRecommendationStatus()
   const { data: pipelineStatus } = useRecommendationPipelineStatus()
 
@@ -225,7 +238,7 @@ export default function RecommendationsPage() {
   useEffect(() => {
     const s = pipelineStatus?.status
     const prev = prevPipelineStatus.current
-    if (prev !== undefined && (prev === 'running' || prev === 'pending') && (s === 'completed' || s === 'failed')) {
+    if (prev !== undefined && (prev === 'running' || prev === 'pending') && (s === 'completed' || s === 'failed' || s === 'cancelled')) {
       void queryClient.invalidateQueries({ queryKey: ['recommendations'] })
     }
     prevPipelineStatus.current = s
@@ -349,7 +362,12 @@ export default function RecommendationsPage() {
       </div>
 
       {pipelineBusy ? (
-        <PipelineBanner currentStage={pipelineStatus?.current_stage} stageResults={pipelineStatus?.stage_results} />
+        <PipelineBanner
+          currentStage={pipelineStatus?.current_stage}
+          stageResults={pipelineStatus?.stage_results}
+          onCancel={() => cancelMutation.mutate()}
+          isCancelling={cancelMutation.isPending}
+        />
       ) : pipelineStatus?.status === 'failed' ? (
         <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3.5">
           <div>

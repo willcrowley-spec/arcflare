@@ -274,6 +274,30 @@ async def generate_recommendations(
     return {"status": "queued", "org_id": str(org.id), "run_id": str(run.id)}
 
 
+@router.post("/cancel")
+async def cancel_recommendation_pipeline(
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict[str, str]:
+    """Cancel the latest running/pending recommendation pipeline."""
+    q = await db.execute(
+        select(RecommendationRun)
+        .where(
+            RecommendationRun.org_id == org.id,
+            RecommendationRun.status.in_(["running", "pending"]),
+        )
+        .order_by(RecommendationRun.started_at.desc())
+        .limit(1)
+    )
+    run = q.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="No active pipeline to cancel")
+    run.status = "cancelled"
+    run.completed_at = datetime.now(tz=UTC)
+    await db.commit()
+    return {"status": "cancelled", "run_id": str(run.id)}
+
+
 @router.post("/{recommendation_id}/recalculate", response_model=RecommendationResponse)
 async def recalculate_recommendation(
     recommendation_id: UUID,
