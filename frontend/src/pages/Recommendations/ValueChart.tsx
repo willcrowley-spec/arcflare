@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -51,16 +52,11 @@ function atYear(arr: number[] | undefined, i: number): number {
   return arr[Math.min(i, arr.length - 1)] ?? 0
 }
 
-function benefitAtYear(scenario: ScenarioData, i: number): number {
-  if (scenario.cumulative_benefit?.length) return atYear(scenario.cumulative_benefit, i)
-  return atYear(scenario.cumulative, i)
-}
-
 function buildRows(scenarios: ValueChartScenarios) {
   return YEAR_LABELS.map((yearLabel, i) => {
-    const opt = benefitAtYear(scenarios.optimistic, i)
-    const exp = benefitAtYear(scenarios.expected, i)
-    const cons = benefitAtYear(scenarios.conservative, i)
+    const opt = atYear(scenarios.optimistic.cumulative, i)
+    const exp = atYear(scenarios.expected.cumulative, i)
+    const cons = atYear(scenarios.conservative.cumulative, i)
     const bandDelta = Math.max(0, opt - cons)
     return { yearLabel, optimistic: opt, expected: exp, conservative: cons, bandDelta }
   })
@@ -124,12 +120,11 @@ function ValueTooltip({ active, payload, label }: { active?: boolean; payload?: 
   )
 }
 
-function KpiBadge({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+function KpiBadge({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="flex flex-col items-center rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200/60">
       <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">{label}</span>
       <span className={clsx('mt-0.5 text-sm font-bold tabular-nums', accent ?? 'text-slate-800')}>{value}</span>
-      {sub ? <span className="text-[10px] text-slate-400">{sub}</span> : null}
     </div>
   )
 }
@@ -168,13 +163,8 @@ export function ValueChart({ scenarios, height = 320, className, compact }: Valu
         <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
           <XAxis dataKey="yearLabel" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} />
-          <YAxis
-            tickFormatter={fmt}
-            tick={{ fill: '#64748b', fontSize: 11 }}
-            axisLine={{ stroke: '#cbd5e1' }}
-            width={56}
-            domain={[0, 'auto']}
-          />
+          <YAxis tickFormatter={fmt} tick={{ fill: '#64748b', fontSize: 11 }} axisLine={{ stroke: '#cbd5e1' }} width={56} />
+          <ReferenceLine y={0} stroke="#475569" strokeWidth={1} strokeDasharray="6 3" label={{ value: 'Break-even', position: 'insideTopRight', fontSize: 10, fill: '#475569' }} />
           <Tooltip content={<ValueTooltip />} cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }} />
           <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={(value) => <span className="text-slate-600">{value}</span>} />
 
