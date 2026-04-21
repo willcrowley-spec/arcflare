@@ -85,6 +85,9 @@ def _enrichment_snapshot(candidate: dict, idx: int) -> dict[str, Any]:
         "complexity_score": candidate.get("complexity_score"),
         "automation_type": candidate.get("automation_type"),
         "automation_potential": candidate.get("automation_potential"),
+        "estimated_duration": candidate.get("estimated_duration"),
+        "estimated_frequency": candidate.get("estimated_frequency"),
+        "confidence_score": candidate.get("confidence_score"),
     }
 
 
@@ -118,7 +121,7 @@ def _coerce_llm_rows(data: Any) -> list[dict] | None:
 
 def _build_prompt(snapshots: list[dict[str, Any]]) -> str:
     payload = json.dumps(snapshots, indent=2, default=str)
-    return f"""You are an enterprise automation strategist. Score each process independently for automation fit and ROI narrative.
+    return f"""You are an enterprise automation strategist assessing business processes for automation potential.
 Do not assume any prior numeric score — you only see qualitative enrichment below.
 
 {_SALARY_GUIDANCE}
@@ -127,21 +130,36 @@ Processes (JSON array of enrichment records):
 {payload}
 
 Return ONLY a JSON array (no markdown). One object per process, in any order, with this exact shape for each entry:
+
 - process_name: string (must match exactly a process_name from the input)
 - llm_score: number from 0 to 1 (automation value / feasibility confidence)
-- score_rationale: concise justification (no numeric anchoring from hidden scores)
-- automation_type_override: string or null — if the current automation_type should change, set to one of: full_auto, hybrid, human_led, assist; else null
-- automation_type_rationale: short explanation
-- narrative: 2-4 sentences for a non-technical decision-maker
-- assumptions: object with numeric fields suitable for ROI modeling:
-  fte_annual_cost, hours_per_week, frequency (string), actor_count (int),
-  role_type (string, e.g. account_executive),
-  technology_cost, change_management_factor, annual_operational_cost,
-  adoption_ramp (array of 5 floats 0-1), productivity_dip, efficiency_gain,
-  hard_savings_pct, discount_rate
+- score_rationale: concise justification for the score (technical, for internal use)
+- automation_type_override: string or null — if the current automation_type should change, set to one of: deterministic, agentic, hybrid; else null
+- automation_type_rationale: short explanation if overriding
+
+- current_state: 2-3 sentences explaining WHAT this process does today, WHO performs it, HOW it works, and what systems are involved. Write as if explaining to someone unfamiliar with the organization. Be concrete: mention specific triggers, handoffs, and outputs.
+
+- automation_approach: 2-3 sentences describing HOW this process would be automated. What would the automated workflow look like? What stays human-in-the-loop vs fully automated? What technology components are needed (flows, agents, integrations)?
+
+- executive_summary: 2-3 sentences pitched to a VP/C-suite decision-maker. Lead with the business outcome (time saved, cost reduced, errors eliminated), not the technology. Quantify where possible using the assumptions you generate.
+
+- risks: 1-2 sentences on key risks, dependencies, or reasons this might not deliver expected value. Be honest — flag change management challenges, data quality issues, or integration complexity.
+
+- assumptions: object with numeric fields for ROI modeling:
+  fte_annual_cost, hours_per_week, frequency (string e.g. "daily", "weekly"),
+  actor_count (int), role_type (string e.g. "account_executive"),
+  technology_cost (initial implementation cost USD),
+  change_management_factor (0.0-0.5, higher = more change risk),
+  annual_operational_cost (ongoing platform/license cost USD),
+  adoption_ramp (array of 5 floats 0-1 representing Year 1-5 adoption %),
+  productivity_dip (0.0-0.3, year-1 productivity loss during transition),
+  efficiency_gain (0.0-1.0, steady-state time savings as fraction),
+  hard_savings_pct (0.0-1.0, fraction of savings that are hard/headcount),
+  discount_rate (typically 0.08-0.12)
+
 - actions: array of {{ "step": int, "action": string, "effort": "low"|"medium"|"high" }}
 
-Be internally consistent: assumptions should align with actors, complexity, and touchpoints."""
+Be internally consistent: assumptions should align with actors, complexity, touchpoints, and the automation approach you describe."""
 
 
 def _merge_llm_row(candidate: dict, row: dict) -> None:
@@ -156,9 +174,17 @@ def _merge_llm_row(candidate: dict, row: dict) -> None:
     candidate["llm_score"] = llm_score
     candidate["llm_rationale"] = row.get("score_rationale")
 
-    narrative = row.get("narrative")
-    if narrative is not None:
-        candidate["narrative"] = narrative
+    executive_summary = row.get("executive_summary")
+    if executive_summary is not None:
+        candidate["narrative"] = executive_summary
+
+    candidate["llm_analysis"] = {
+        "current_state": row.get("current_state"),
+        "automation_approach": row.get("automation_approach"),
+        "executive_summary": executive_summary,
+        "risks": row.get("risks"),
+        "automation_type_rationale": row.get("automation_type_rationale"),
+    }
 
     assumptions = row.get("assumptions")
     if isinstance(assumptions, dict):
@@ -178,7 +204,9 @@ def _merge_llm_row(candidate: dict, row: dict) -> None:
 
     override = row.get("automation_type_override")
     if override is not None and str(override).strip().lower() not in ("null", "none", ""):
-        candidate["automation_type"] = str(override).strip()
+        val = str(override).strip().lower()
+        _MAP = {"full_auto": "deterministic", "human_led": "hybrid", "assist": "hybrid"}
+        candidate["automation_type"] = _MAP.get(val, val)
 
 
 def _mark_incomplete(candidate: dict) -> None:

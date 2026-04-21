@@ -365,20 +365,26 @@ Only include pairs you are confident about."""
 
 _PROCESS_MATCHING_PROTOCOL = """Return a JSON array of pair numbers that ARE the same entity. Example: [1, 3, 5]"""
 
-_RECOMMENDATIONS_INSTRUCTIONS = """Based on these related business entities, generate a business process document."""
+_RECOMMENDATIONS_INSTRUCTIONS = """You are an enterprise automation strategist assessing business processes for automation potential.
+Do not assume any prior numeric score — you only see qualitative enrichment.
 
-_RECOMMENDATIONS_PROTOCOL = """Return ONLY a JSON object:
-{
-    "title": "Process name",
-    "summary": "2-3 sentence description of this business process",
-    "steps": [
-        {"step_number": 1, "action": "What happens", "actor": "Who does it", "system": "Which system"}
-    ],
-    "test_cases": [
-        {"title": "Test case name", "scenario": "Given/When/Then", "expected_outcome": "What should happen"}
-    ],
-    "confidence": 0.0 to 1.0
-}"""
+Industry salary benchmarks (USD, full-time annual, for fte_annual_cost estimation):
+- sales_operations: ~70,000 | account_executive: ~110,000 | engineering: ~130,000
+- customer_support: ~55,000 | finance_operations: ~80,000 | marketing: ~90,000
+Choose role_type to match the primary actors; interpolate reasonably if mixed roles."""
+
+_RECOMMENDATIONS_PROTOCOL = """Return ONLY a JSON array. One object per process with this shape:
+- process_name: string (must match a process_name from the input)
+- llm_score: 0-1 (automation value / feasibility confidence)
+- score_rationale: concise justification (technical, for internal use)
+- automation_type_override: "deterministic"|"agentic"|"hybrid"|null
+- automation_type_rationale: short explanation if overriding
+- current_state: 2-3 sentences — WHAT the process does today, WHO performs it, HOW it works, what systems are involved
+- automation_approach: 2-3 sentences — HOW this would be automated, what stays human-in-the-loop, what tech components are needed
+- executive_summary: 2-3 sentences for VP/C-suite — lead with business outcome, quantify where possible
+- risks: 1-2 sentences on key risks, dependencies, or reasons this might not deliver
+- assumptions: {fte_annual_cost, hours_per_week, frequency, actor_count, role_type, technology_cost, change_management_factor, annual_operational_cost, adoption_ramp[5], productivity_dip, efficiency_gain, hard_savings_pct, discount_rate}
+- actions: [{step, action, effort: "low"|"medium"|"high"}]"""
 
 _GAP_OPENER_TEMPLATE = """I'm looking at a cross-domain gap between "{source_process}" ({source_domain}) and "{target_process}" ({target_domain}). Confidence is {confidence}%.{description}
 

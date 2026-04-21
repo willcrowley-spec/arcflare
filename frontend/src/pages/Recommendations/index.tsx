@@ -97,6 +97,10 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
         (r.scenarios_json as Record<string, unknown>)
       : {},
     actions_json,
+    impact_json:
+      r.impact_json && typeof r.impact_json === 'object' && !Array.isArray(r.impact_json) ?
+        (r.impact_json as Record<string, unknown>)
+      : {},
     linked_process_ids: linked,
     enrichment_log,
     analysis_inputs_json: Array.isArray(r.analysis_inputs_json) ? r.analysis_inputs_json : undefined,

@@ -113,7 +113,7 @@ def _build_recommendation(
             }
         ],
         actions_json=actions,
-        impact_json=dict(candidate.get("signals") or {}),
+        impact_json=candidate.get("llm_analysis") or dict(candidate.get("signals") or {}),
         architecture_health_json={},
         linked_process_ids=_linked_process_ids_for_rec(candidate),
         recommendation_type=rec_type if rec_type in ("discovered", "synthesized") else "discovered",

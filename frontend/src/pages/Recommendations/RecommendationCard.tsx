@@ -19,6 +19,7 @@ export interface Recommendation {
   assumptions_json: Record<string, unknown>
   scenarios_json: Record<string, unknown>
   actions_json: Array<{ step: number; action: string; effort: string }>
+  impact_json: Record<string, unknown>
   linked_process_ids: string[]
   enrichment_log: Array<Record<string, unknown>>
   /** API payload may include scoring inputs with embedded `signals`. */
