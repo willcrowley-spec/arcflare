@@ -129,12 +129,30 @@ def _build_recommendation(
     )
 
 
-async def run_recommendation_pipeline(org_id: UUID, db: AsyncSession) -> UUID:
-    """Run the full recommendation pipeline. Returns the RecommendationRun ID."""
-    run = RecommendationRun(org_id=org_id, status="running", config={})
-    db.add(run)
-    await db.commit()
-    await db.refresh(run)
+async def run_recommendation_pipeline(
+    org_id: UUID,
+    db: AsyncSession,
+    existing_run_id: UUID | None = None,
+) -> UUID:
+    """Run the full recommendation pipeline. Returns the RecommendationRun ID.
+
+    If *existing_run_id* is provided (pre-created by the API route for
+    immediate polling), that row is reused.  Otherwise a new run is created.
+    """
+    if existing_run_id is not None:
+        run = await db.get(RecommendationRun, existing_run_id)
+        if run is None:
+            run = RecommendationRun(org_id=org_id, status="running", config={})
+            db.add(run)
+        else:
+            run.status = "running"
+        await db.commit()
+        await db.refresh(run)
+    else:
+        run = RecommendationRun(org_id=org_id, status="running", config={})
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
     run_id = run.id
 
     try:

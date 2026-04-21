@@ -290,7 +290,19 @@ export const api = {
       sort?: string
     }) => request<PaginatedResponse<Recommendation>>(withQuery('/recommendations', params)),
     get: (id: string) => request<Recommendation>(`/recommendations/${id}`),
-    generate: () => request<void>('/recommendations/generate', { method: 'POST' }),
+    generate: () =>
+      request<{ status: string; org_id: string; run_id: string }>('/recommendations/generate', {
+        method: 'POST',
+      }),
+    pipelineStatus: () =>
+      request<{
+        status: string
+        run_id: string | null
+        error: string | null
+        stage_results: Record<string, unknown>
+        started_at: string | null
+        completed_at: string | null
+      }>('/recommendations/status'),
     runs: (params?: { page?: number; page_size?: number }) =>
       request<PaginatedResponse<Record<string, unknown>>>(withQuery('/recommendations/runs', params)),
     recalculate: (id: string, body: { overrides: Record<string, unknown> }) =>

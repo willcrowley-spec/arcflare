@@ -1,11 +1,13 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowDownWideNarrow, Layers, Sparkles } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { ArrowDownWideNarrow, Layers, Loader2, Sparkles } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import {
   useGenerateRecommendations,
+  useRecommendationPipelineStatus,
   useRecommendations,
   useUpdateRecommendationStatus,
 } from '@/hooks/useApi'
@@ -175,8 +177,23 @@ export default function RecommendationsPage() {
       automation_type: apiAutomationType,
     })
 
+  const queryClient = useQueryClient()
   const generateMutation = useGenerateRecommendations()
   const updateStatusMutation = useUpdateRecommendationStatus()
+  const { data: pipelineStatus } = useRecommendationPipelineStatus()
+
+  const pipelineRunning = pipelineStatus?.status === 'running' || pipelineStatus?.status === 'pending'
+  const pipelineBusy = pipelineRunning || generateMutation.isPending
+
+  const prevPipelineStatus = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const s = pipelineStatus?.status
+    const prev = prevPipelineStatus.current
+    if (prev !== undefined && (prev === 'running' || prev === 'pending') && (s === 'completed' || s === 'failed')) {
+      void queryClient.invalidateQueries({ queryKey: ['recommendations'] })
+    }
+    prevPipelineStatus.current = s
+  }, [pipelineStatus?.status, queryClient])
 
   const { items, total, page_size } = useMemo(() => normalizeList(listData), [listData])
   const portfolio = usePortfolio(total)
@@ -284,14 +301,37 @@ export default function RecommendationsPage() {
         </div>
         <button
           type="button"
-          disabled={generateMutation.isPending}
+          disabled={pipelineBusy}
           onClick={() => generateMutation.mutate()}
           className="inline-flex items-center gap-2 self-start rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Sparkles className="h-4 w-4" />
-          {generateMutation.isPending ? 'Generating…' : 'Generate'}
+          {pipelineBusy ?
+            <Loader2 className="h-4 w-4 animate-spin" />
+          : <Sparkles className="h-4 w-4" />}
+          {pipelineBusy ? 'Generating…' : 'Generate'}
         </button>
       </div>
+
+      {pipelineBusy ? (
+        <div className="flex items-center gap-3 rounded-xl border border-navy-200 bg-navy-50 px-5 py-3.5">
+          <Loader2 className="h-5 w-5 animate-spin text-navy-600" />
+          <div>
+            <p className="text-sm font-semibold text-navy-900">Pipeline running</p>
+            <p className="text-xs text-navy-600">
+              Analyzing processes, scoring candidates, and generating financial projections. This typically takes 30–90 seconds.
+            </p>
+          </div>
+        </div>
+      ) : pipelineStatus?.status === 'failed' ? (
+        <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3.5">
+          <div>
+            <p className="text-sm font-semibold text-red-900">Pipeline failed</p>
+            <p className="text-xs text-red-600">
+              {pipelineStatus.error || 'An unexpected error occurred. Check logs for details.'}
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <PortfolioDashboard portfolio={portfolio} />
 

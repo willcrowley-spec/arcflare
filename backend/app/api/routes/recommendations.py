@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Numeric, cast, func, select
@@ -210,13 +210,43 @@ async def list_recommendations(
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
 
 
+@router.get("/status")
+async def recommendation_pipeline_status(
+    db: DbSession,
+    org: CurrentOrg,
+) -> dict:
+    """Return the latest RecommendationRun status for the org (used for polling)."""
+    q = await db.execute(
+        select(RecommendationRun)
+        .where(RecommendationRun.org_id == org.id)
+        .order_by(RecommendationRun.started_at.desc())
+        .limit(1)
+    )
+    run = q.scalar_one_or_none()
+    if run is None:
+        return {"status": "idle", "run_id": None, "error": None, "stage_results": {}}
+    return {
+        "status": run.status,
+        "run_id": str(run.id),
+        "error": run.error,
+        "stage_results": run.stage_results or {},
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+    }
+
+
 @router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
 async def generate_recommendations(
+    db: DbSession,
     org: CurrentOrg,
 ) -> dict[str, str]:
-    generate_recommendations_task.delay(str(org.id))
-    run_id = uuid4()
-    return {"status": "queued", "org_id": str(org.id), "run_id": str(run_id)}
+    run = RecommendationRun(org_id=org.id, status="pending", config={})
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+
+    generate_recommendations_task.delay(str(org.id), str(run.id))
+    return {"status": "queued", "org_id": str(org.id), "run_id": str(run.id)}
 
 
 @router.post("/{recommendation_id}/recalculate", response_model=RecommendationResponse)

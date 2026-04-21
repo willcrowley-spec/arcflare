@@ -294,11 +294,25 @@ export function useRecommendationSummary() {
   })
 }
 
+export function useRecommendationPipelineStatus() {
+  return useQuery({
+    queryKey: ['recommendations', 'pipeline-status'],
+    queryFn: () => api.recommendations.pipelineStatus(),
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      if (s === 'pending' || s === 'running') return 2000
+      return false
+    },
+  })
+}
+
 export function useGenerateRecommendations() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.recommendations.generate(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recommendations'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations', 'pipeline-status'] })
+    },
   })
 }
 
