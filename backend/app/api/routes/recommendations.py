@@ -22,7 +22,7 @@ from app.services.recommendations.financial_engine import (
     compute_portfolio_projections,
     compute_projections,
 )
-from app.workers.analysis import generate_recommendations_task
+from app.workers.analysis import build_financial_assumptions, generate_recommendations_task
 
 router = APIRouter()
 
@@ -394,13 +394,21 @@ async def recalculate_all_recommendations(
     details = []
     for rec in recs:
         try:
-            assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+            opp = rec.agent_opportunity_json
+            if isinstance(opp, dict) and opp:
+                assumptions = build_financial_assumptions(opp)
+            else:
+                assumptions = None
+            if assumptions is None:
+                assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
             old_npv = None
             if rec.scenarios_json and "npv" in rec.scenarios_json:
                 old_npv = rec.scenarios_json["npv"].get("expected")
             projections = compute_projections(assumptions, automation_type=rec.automation_type)
+            rec.assumptions_json = assumptions
             rec.scenarios_json = projections
             rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
+            rec.financial_evaluation_status = "completed"
             updated += 1
             detail = {
                 "id": str(rec.id),
