@@ -44,3 +44,14 @@ def generate_recommendations_task(org_id: str, run_id: str | None = None) -> str
         return result_id
     finally:
         flush_langfuse()
+
+
+@celery_app.task(name="recommendations.evaluate_agent_financials")
+def evaluate_agent_financials_task(org_id: str, run_id: str) -> str:
+    """Async financial evaluation for agent opportunity recommendations (Phase 4).
+
+    Full implementation loads pending rows for the run, builds assumptions from
+    ``agent_opportunity_json``, and writes projections back. Stub body until Task 8
+    finalizes the evaluator.
+    """
+    return f"queued:org_id={org_id} run_id={run_id}"

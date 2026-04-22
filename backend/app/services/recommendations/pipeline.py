@@ -1,132 +1,90 @@
-"""Full recommendation pipeline orchestration (async)."""
+"""Full recommendation pipeline orchestration (async) — 4-phase agent opportunity engine."""
 from __future__ import annotations
 
 import logging
 import time
 from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.discovery import ProcessHandoff
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
-from app.services.recommendations.candidate_generator import (
-    generate_discovered_candidates,
-    generate_synthesized_candidates,
-)
-from app.services.recommendations.financial_engine import compute_projections
-from app.services.recommendations.heuristic_scorer import score_process, score_synthesized
-from app.services.recommendations.llm_scorer import score_candidates_with_llm
+from app.services.recommendations.agent_analyzer import analyze_domain
+from app.services.recommendations.cross_domain import synthesize_cross_domain
+from app.services.recommendations.domain_assembler import assemble_domain_contexts
+from app.workers.analysis import evaluate_agent_financials_task
 
 logger = logging.getLogger(__name__)
 
 _MAX_ERROR_LEN = 50_000
 
 
-def _norm_automation_type(value: object | None) -> str:
-    s = (str(value).strip() if value is not None else "") or "hybrid"
-    return s[:20]
-
-
-def _linked_process_ids_for_rec(candidate: dict) -> list[str]:
-    if candidate.get("recommendation_type") == "synthesized":
-        raw = candidate.get("linked_process_ids") or []
-        return [str(x) for x in raw]
-    pid = candidate.get("id")
-    if pid is None:
-        return []
-    return [str(pid)]
-
-
-async def _eliminated_gap_handoff_count(
+def _build_agent_recommendation(
+    opp: dict,
     org_id: UUID,
-    discovery_run_id: UUID,
-    linked_ids: list[str],
-    db: AsyncSession,
-) -> int:
-    if len(linked_ids) < 2:
-        return 0
-    id_set = set(linked_ids)
-    res = await db.execute(
-        select(ProcessHandoff.source_process_id, ProcessHandoff.target_process_id).where(
-            ProcessHandoff.org_id == org_id,
-            ProcessHandoff.discovery_run_id == discovery_run_id,
-            ProcessHandoff.is_gap.is_(True),
-        )
-    )
-    n = 0
-    for src, tgt in res.all():
-        if str(src) in id_set and str(tgt) in id_set:
-            n += 1
-    return n
-
-
-def _build_recommendation(
-    candidate: dict,
-    org_id: UUID,
-    recommendation_run_id: UUID,
-    projections: dict,
+    run_id: UUID,
+    domain_id: UUID | None,
+    rec_type: str = "agent_opportunity",
 ) -> Recommendation:
-    rec_type = candidate.get("recommendation_type") or "discovered"
-    title = (
-        (candidate.get("title") or candidate.get("name") or "").strip()
-        or ("Synthesized opportunity" if rec_type == "synthesized" else "Untitled process")
-    )
-    description = candidate.get("description") or candidate.get("narrative")
-    expected_npv = projections.get("expected", {}).get("npv")
-    est_roi: float | None
-    if expected_npv is None:
-        est_roi = None
+    title = (opp.get("agent_name") or "Untitled Agent Opportunity")[:512]
+
+    topic_types = {t.get("reasoning_type", "hybrid") for t in opp.get("topics", [])}
+    if topic_types == {"deterministic"}:
+        auto_type = "deterministic"
+    elif topic_types == {"agentic"}:
+        auto_type = "agentic"
     else:
-        est_roi = float(expected_npv)
+        auto_type = "hybrid"
 
-    assumptions = candidate.get("assumptions_json")
-    if not isinstance(assumptions, dict):
-        assumptions = {}
-
-    actions = candidate.get("actions_json")
-    if not isinstance(actions, list):
-        actions = []
-
-    base_score = candidate.get("base_score")
-    llm_score = candidate.get("llm_score")
-    composite = candidate.get("composite_score")
+    linked_proc_ids: list[str] = []
+    linked_step_ids_list: list[str] = []
+    for rep in opp.get("replaces", []):
+        pid = rep.get("process_id")
+        if pid:
+            linked_proc_ids.append(str(pid))
+        for sid in rep.get("step_ids", []):
+            linked_step_ids_list.append(str(sid))
 
     return Recommendation(
         org_id=org_id,
-        title=title[:512],
-        description=description,
+        title=title,
+        description=opp.get("description"),
         priority=None,
-        category=(candidate.get("category") if rec_type == "discovered" else "composite"),
-        estimated_roi=Decimal(str(round(est_roi, 2))) if est_roi is not None else None,
-        composite_score=float(composite) if composite is not None else None,
+        category=opp.get("agent_type", "hybrid"),
+        estimated_roi=None,
+        composite_score=float(opp.get("confidence", 0.0)),
         status="active",
         analysis_inputs_json=[
             {
                 "recommendation_type": rec_type,
-                "signals": candidate.get("signals") or {},
-                "gate_score": candidate.get("gate_score"),
-                "refinement_score": candidate.get("refinement_score"),
-                "llm_incomplete": bool(candidate.get("llm_incomplete")),
+                "complexity_estimate": opp.get("complexity_estimate"),
+                "trigger": opp.get("trigger"),
             }
         ],
-        actions_json=actions,
-        impact_json=candidate.get("llm_analysis") or dict(candidate.get("signals") or {}),
+        actions_json=opp.get("topics", []),
+        impact_json={
+            "data_requirements": opp.get("data_requirements", []),
+            "integration_points": opp.get("integration_points", []),
+            "risks": opp.get("risks", ""),
+        },
         architecture_health_json={},
-        linked_process_ids=_linked_process_ids_for_rec(candidate),
-        recommendation_type=rec_type if rec_type in ("discovered", "synthesized") else "discovered",
-        automation_type=_norm_automation_type(candidate.get("automation_type")),
-        base_score=float(base_score) if base_score is not None else None,
-        llm_score=float(llm_score) if llm_score is not None else None,
-        llm_rationale=candidate.get("llm_rationale"),
-        score_divergence_flag=bool(candidate.get("score_divergence_flag")),
-        assumptions_json=assumptions,
-        scenarios_json=projections,
+        linked_process_ids=linked_proc_ids,
+        recommendation_type=rec_type,
+        automation_type=auto_type,
+        base_score=None,
+        llm_score=None,
+        llm_rationale=opp.get("rationale"),
+        score_divergence_flag=False,
+        assumptions_json={},
+        scenarios_json={},
         enrichment_log=[],
-        recommendation_run_id=recommendation_run_id,
+        agent_opportunity_json=opp,
+        linked_step_ids=linked_step_ids_list,
+        domain_id=domain_id,
+        financial_evaluation_status="pending",
+        recommendation_run_id=run_id,
     )
 
 
@@ -168,7 +126,9 @@ async def run_recommendation_pipeline(
         if current == "cancelled":
             raise PipelineCancelled()
 
-    async def _update_run_progress(stage_results: dict, current_stage: str | None = None) -> None:
+    async def _update_run_progress(
+        stage_results: dict, current_stage: str | None = None
+    ) -> None:
         """Flush stage_results + heartbeat and check for cancellation."""
         now_iso = datetime.now(timezone.utc).isoformat()
         values: dict = {"stage_results": stage_results}
@@ -177,7 +137,9 @@ async def run_recommendation_pipeline(
             cfg["current_stage"] = current_stage
         values["config"] = cfg
         await db.execute(
-            update(RecommendationRun).where(RecommendationRun.id == run_id).values(**values)
+            update(RecommendationRun)
+            .where(RecommendationRun.id == run_id)
+            .values(**values)
         )
         await db.commit()
         await _check_cancelled()
@@ -188,98 +150,104 @@ async def run_recommendation_pipeline(
         await db.execute(
             update(RecommendationRun)
             .where(RecommendationRun.id == run_id)
-            .values(config={"current_stage": "stage_3_llm", "heartbeat_at": now_iso})
+            .values(
+                config={"current_stage": "phase_2", "heartbeat_at": now_iso}
+            )
         )
         await db.commit()
 
     try:
         stage_results: dict = {}
 
-        # --- Stage 1: Candidate generation ---
-        logger.info("pipeline_stage org=%s run=%s stage=1_candidates", org_id, run_id)
-        await _update_run_progress(stage_results, "stage_1_candidates")
+        # --- Phase 1: Domain context assembly ---
+        logger.info("pipeline_stage org=%s run=%s phase=1_domain_context", org_id, run_id)
+        await _update_run_progress(stage_results, "phase_1")
         t0 = time.perf_counter()
-        discovered = await generate_discovered_candidates(org_id, db)
-        synthesized = await generate_synthesized_candidates(org_id, discovered, db)
-        stage_results["stage_1"] = {
+        domain_contexts = await assemble_domain_contexts(org_id, db)
+        stage_results["phase_1"] = {
+            "domains_count": len(domain_contexts),
             "seconds": round(time.perf_counter() - t0, 4),
-            "discovered_count": len(discovered),
-            "synthesized_count": len(synthesized),
         }
         pipeline_discovery_run_id: UUID | None = None
-        if discovered:
-            raw_dr = discovered[0].get("discovery_run_id")
+        if domain_contexts:
+            raw_dr = domain_contexts[0].get("_discovery_run_id")
             if raw_dr is not None:
-                pipeline_discovery_run_id = raw_dr if isinstance(raw_dr, UUID) else UUID(str(raw_dr))
+                pipeline_discovery_run_id = (
+                    raw_dr if isinstance(raw_dr, UUID) else UUID(str(raw_dr))
+                )
         logger.info(
-            "pipeline_stage_done org=%s run=%s stage=1 discovered=%d synthesized=%d elapsed=%.1fs",
-            org_id, run_id, len(discovered), len(synthesized), time.perf_counter() - t0,
+            "pipeline_stage_done org=%s run=%s phase=1 domains=%d elapsed=%.1fs",
+            org_id,
+            run_id,
+            len(domain_contexts),
+            time.perf_counter() - t0,
         )
-        await _update_run_progress(stage_results, "stage_2_scoring")
+        await _update_run_progress(stage_results, "phase_2")
 
-        # --- Stage 2: Heuristic scoring ---
+        # --- Phase 2: Per-domain agent opportunity analysis ---
+        all_domain_results: list[dict] = []
         t0 = time.perf_counter()
-        discovered_by_id: dict[str, dict] = {str(d["id"]): d for d in discovered}
-        all_candidates: list[dict] = []
-
-        for row in discovered:
-            scored = score_process(row)
-            merged = {**row, **scored}
-            all_candidates.append(merged)
-
-        for synth in synthesized:
-            linked = synth.get("linked_process_ids") or []
-            constituents = [discovered_by_id[lp] for lp in linked if lp in discovered_by_id]
-            dr_id = synth.get("discovery_run_id")
-            handoff_n = 0
-            if dr_id is not None:
-                handoff_n = await _eliminated_gap_handoff_count(org_id, dr_id, linked, db)
-            scored = score_synthesized(constituents, handoff_n)
-            merged = {**synth, **scored}
-            all_candidates.append(merged)
-
-        stage_results["stage_2"] = {
+        for domain_ctx in domain_contexts:
+            result = await analyze_domain(
+                domain_ctx,
+                org_id,
+                db,
+                cancel_check=_check_cancelled,
+                heartbeat=_heartbeat,
+            )
+            result["_domain_name"] = domain_ctx["domain"]["name"]
+            result["_domain_db_id"] = domain_ctx.get("_domain_db_id")
+            result["_discovery_run_id"] = domain_ctx.get("_discovery_run_id")
+            result["_processes_raw"] = domain_ctx.get("processes", [])
+            all_domain_results.append(result)
+        total_opportunities = sum(
+            len(r.get("agent_opportunities", [])) for r in all_domain_results
+        )
+        stage_results["phase_2"] = {
+            "total_opportunities": total_opportunities,
+            "domains_analyzed": len(all_domain_results),
             "seconds": round(time.perf_counter() - t0, 4),
-            "candidates_scored": len(all_candidates),
         }
         logger.info(
-            "pipeline_stage_done org=%s run=%s stage=2 scored=%d elapsed=%.1fs",
-            org_id, run_id, len(all_candidates), time.perf_counter() - t0,
+            "pipeline_stage_done org=%s run=%s phase=2 opps=%d domains=%d elapsed=%.1fs",
+            org_id,
+            run_id,
+            total_opportunities,
+            len(all_domain_results),
+            time.perf_counter() - t0,
         )
-        await _update_run_progress(stage_results, "stage_3_llm")
+        await _update_run_progress(stage_results, "phase_3")
 
-        # --- Stage 3: LLM scoring + narrative ---
-        logger.info("pipeline_stage org=%s run=%s stage=3_llm candidates=%d", org_id, run_id, len(all_candidates))
-        t0 = time.perf_counter()
-        llm_out = await score_candidates_with_llm(
-            all_candidates, org_id, db,
-            cancel_check=_check_cancelled,
-            heartbeat=_heartbeat,
-        )
-        stage_results["stage_3"] = {
-            "seconds": round(time.perf_counter() - t0, 4),
-            "llm_candidates": len(llm_out),
-        }
-        logger.info(
-            "pipeline_stage_done org=%s run=%s stage=3 llm_scored=%d elapsed=%.1fs",
-            org_id, run_id, len(llm_out), time.perf_counter() - t0,
-        )
-        await _update_run_progress(stage_results, "stage_4_persist")
+        # --- Phase 3: Cross-domain synthesis ---
+        cross_result: dict | None = None
+        if len(all_domain_results) >= 2 and pipeline_discovery_run_id is not None:
+            t0 = time.perf_counter()
+            cross_result = await synthesize_cross_domain(
+                all_domain_results, org_id, pipeline_discovery_run_id, db
+            )
+            c_opps = cross_result.get("cross_domain_opportunities") or []
+            c_merge = cross_result.get("merge_suggestions") or []
+            stage_results["phase_3"] = {
+                "seconds": round(time.perf_counter() - t0, 4),
+                "cross_domain_opportunities": len(c_opps),
+                "merge_suggestions": len(c_merge),
+            }
+            logger.info(
+                "pipeline_stage_done org=%s run=%s phase=3 cross=%d merge_sug=%d elapsed=%.1fs",
+                org_id,
+                run_id,
+                len(c_opps),
+                len(c_merge),
+                time.perf_counter() - t0,
+            )
+        else:
+            stage_results["phase_3"] = {
+                "skipped": True,
+                "reason": "need_two_plus_domains_with_discovery",
+            }
+        await _update_run_progress(stage_results, "phase_4_persist")
 
-        # --- Stage 4: Composite scoring + financial projections + persist ---
-        logger.info("pipeline_stage org=%s run=%s stage=4_persist count=%d", org_id, run_id, len(llm_out))
-        for c in llm_out:
-            base = float(c.get("base_score") or 0.0)
-            llm = c.get("llm_score")
-            if llm is not None:
-                c["composite_score"] = round(base * 0.7 + float(llm) * 0.3, 6)
-                c["score_divergence_flag"] = abs(base - float(llm)) > 0.25
-                c.pop("llm_incomplete", None)
-            else:
-                c["composite_score"] = base
-                c["score_divergence_flag"] = False
-                c["llm_incomplete"] = True
-
+        # --- Phase 4: Persist recommendations, enqueue financial evaluation ---
         await db.execute(
             delete(Recommendation).where(
                 Recommendation.org_id == org_id,
@@ -290,22 +258,31 @@ async def run_recommendation_pipeline(
         await db.commit()
 
         created_count = 0
-        for c in llm_out:
-            assumptions = c.get("assumptions_json")
-            if not isinstance(assumptions, dict) or not assumptions.get("fte_annual_cost"):
-                logger.warning(
-                    "pipeline_skip_incomplete name=%s",
-                    c.get("name") or c.get("title"),
+        for r in all_domain_results:
+            raw_did = r.get("_domain_db_id")
+            domain_id: UUID | None
+            if raw_did is not None:
+                domain_id = raw_did if isinstance(raw_did, UUID) else UUID(str(raw_did))
+            else:
+                domain_id = None
+            for opp in r.get("agent_opportunities", []):
+                rec = _build_agent_recommendation(
+                    opp, org_id, run_id, domain_id, rec_type="agent_opportunity"
                 )
-                continue
-            projections = compute_projections(
-                assumptions, automation_type=c.get("automation_type")
-            )
-            rec = _build_recommendation(c, org_id, run_id, projections)
-            db.add(rec)
-            created_count += 1
-            if created_count % 5 == 0:
-                await db.commit()
+                db.add(rec)
+                created_count += 1
+                if created_count % 5 == 0:
+                    await db.commit()
+
+        if cross_result is not None:
+            for opp in cross_result.get("cross_domain_opportunities") or []:
+                rec = _build_agent_recommendation(
+                    opp, org_id, run_id, None, rec_type="agent_opportunity"
+                )
+                db.add(rec)
+                created_count += 1
+                if created_count % 5 == 0:
+                    await db.commit()
 
         stage_results["summary"] = {
             "recommendations_created": created_count,
@@ -324,21 +301,27 @@ async def run_recommendation_pipeline(
                     if pipeline_discovery_run_id
                     else None,
                     "model": "anthropic/claude-sonnet-4-6",
-                    "heuristic_weights": {"gate": 0.7, "refinement": 0.3},
-                    "blend_weights": {"base": 0.7, "llm": 0.3},
+                    "pipeline": "agent_opportunity_4phase",
                     "heartbeat_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
         )
         await db.commit()
+
+        evaluate_agent_financials_task.delay(str(org_id), str(run_id))
+
         logger.info(
             "pipeline_completed org=%s run=%s recommendations=%d",
-            org_id, run_id, created_count,
+            org_id,
+            run_id,
+            created_count,
         )
         return run_id
 
     except PipelineCancelled:
-        logger.info("recommendation_pipeline_cancelled org_id=%s run_id=%s", org_id, run_id)
+        logger.info(
+            "recommendation_pipeline_cancelled org_id=%s run_id=%s", org_id, run_id
+        )
         await db.rollback()
         await db.execute(
             update(RecommendationRun)
@@ -349,7 +332,9 @@ async def run_recommendation_pipeline(
         return run_id
 
     except Exception as e:
-        logger.exception("recommendation_pipeline_failed org_id=%s run_id=%s", org_id, run_id)
+        logger.exception(
+            "recommendation_pipeline_failed org_id=%s run_id=%s", org_id, run_id
+        )
         await db.rollback()
         err_text = str(e)[:_MAX_ERROR_LEN]
         await db.execute(
