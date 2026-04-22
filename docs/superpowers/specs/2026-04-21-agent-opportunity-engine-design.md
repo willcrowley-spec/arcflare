@@ -296,16 +296,20 @@ An agent CANNOT:
 - Process files or documents natively (needs Apex for parsing)
 - Replace complex multi-org or multi-cloud orchestration
 - Maintain state between separate sessions (state is per-session only)
-- Use custom/external AI models — locked into Salesforce's AI ecosystem (no BYOM)
 
-HARD PLATFORM LIMITS (as of 2026):
-- Max 20 active agents per org
-- Max 15 topics (subagents) per agent
-- Max 15 actions per topic
-- 60-second timeout per action — workflows exceeding this fail
-- Agentforce requires Data Cloud ($65K-$175K/year depending on tier)
-- Per-action cost: $0.10 standard, $0.15 voice (Flex Credits model)
-- Actions exceeding 10,000 tokens bill as multiple actions (2-3x cost)
+BYOM: Agentforce supports Bring Your Own Model via Einstein Studio and the LLM Open
+Connector. External models from Azure, Google, AWS, OpenAI can be connected and used
+within agents. This is NOT locked to Salesforce's AI ecosystem.
+
+PLATFORM LIMITS (verify against target org's Salesforce edition — limits may vary):
+- Third-party sources cite limits of 20 agents/org, 15 topics/agent, 15 actions/topic.
+  These are widely reported but not confirmed in official Salesforce developer docs as of
+  April 2026. Treat as approximate guidance, not hard constraints.
+- Standard Apex governor limits apply to all Apex actions (CPU time, callout limits,
+  SOQL queries, DML operations)
+- Data 360 must be provisioned (free tier available) for the Einstein Trust Layer
+- Per-action cost: $0.10 standard via Flex Credits ($0.15 voice)
+- Actions exceeding 10,000 tokens may bill as multiple actions
 - A typical agent conversation costs $0.50-$1.50 (5-15 actions)
 ```
 
@@ -372,12 +376,9 @@ ANTIPATTERNS — DO NOT RECOMMEND THESE:
 - REDUNDANT AGENTS: Don't propose two agents that overlap significantly. If two opportunities
   share most of their data context and actors, merge them into one agent with more topics.
 
-- EXCEEDING PLATFORM LIMITS: Never propose an agent with more than 15 topics or a topic
-  with more than 15 actions. These are hard Agentforce limits. If scope exceeds this,
-  split into multiple agents.
-
-- DATA CLOUD BLINDNESS: Agentforce requires Data Cloud. If the org doesn't have it,
-  that's a $65K-$175K/year prerequisite cost that must be flagged, not hidden.
+- OVERLOADED AGENTS: Agentforce has per-agent limits on topics and actions. If scope
+  grows beyond what a single agent can hold, split into multiple focused agents rather
+  than cramming everything into one.
 ```
 
 ### Section 4: Worked Examples (~2k tokens)
@@ -809,11 +810,11 @@ No new tools needed for v1. Future enhancement: a `refine_opportunity` tool that
 
 **Mitigation:** Phase 3's explicit mandate includes finding merge candidates. Post-processing: check for opportunities with >50% overlap in `linked_process_ids` and flag for review.
 
-### 6. The 20-Agent Ceiling
+### 6. Agent Count Sprawl
 
-**Risk:** Agentforce limits orgs to 20 active agents. A large org with 8 domains might get 3-4 agent recommendations per domain = 24-32 recommendations. The org can't deploy all of them simultaneously.
+**Risk:** Large orgs with many domains could get 3-4 agent recommendations per domain, totaling 20-30+ recommendations. Agentforce has per-org agent limits (exact numbers are edition-dependent). Too many agents also creates maintenance burden and routing complexity.
 
-**Mitigation:** Phase 3 should be aware of the org-wide 20-agent limit. If total opportunities exceed 15 (leaving buffer for non-Arcflare agents), prioritize by confidence and complexity, and suggest consolidation opportunities. Surface the constraint prominently in the API response.
+**Mitigation:** Phase 3 should prioritize consolidation — merge overlapping opportunities, prefer fewer well-scoped agents over many narrow ones. The engine should produce a manageable number of high-confidence opportunities rather than an exhaustive list of everything that could theoretically be an agent.
 
 ### 7. Position Bias in Domain Analysis (Research-Validated)
 
@@ -833,11 +834,11 @@ No new tools needed for v1. Future enhancement: a `refine_opportunity` tool that
 
 **Mitigation:** Use current Salesforce terminology ("subagents") in user-facing output (recommendation descriptions, UI labels). Keep "topics" in the Agent Script knowledge reference since that's still the DSL keyword. Add a terminology mapping note to the prompt.
 
-### 10. Data Cloud Cost Blindness
+### 10. Platform Prerequisite Blindness
 
-**Risk:** Every agent recommendation implicitly assumes the org has Data Cloud ($65K-$175K/year). If they don't, the ROI calculation is drastically wrong — the first recommendation isn't worth $X, it's worth $X minus $65K+ in platform prerequisite costs.
+**Risk:** Agent recommendations may assume platform capabilities the org doesn't have (e.g., specific Salesforce editions, Einstein features not enabled, BYOM infrastructure not set up). If prerequisites aren't met, estimated implementation costs are wrong.
 
-**Mitigation:** Phase 1 should check whether the org's metadata indicates Data Cloud presence (look for Data Cloud objects in the org's custom object inventory). If absent, add a prominent `platform_prerequisites` field to every opportunity card with the estimated cost. The financial evaluation in Phase 4 should amortize this prerequisite across all opportunities in the portfolio.
+**Mitigation:** Phase 1 should surface what Salesforce platform capabilities the org has based on its metadata (custom objects, installed packages, Einstein features). Agent opportunity cards should flag any prerequisites the org would need to enable. The financial evaluation should account for prerequisite setup effort in `technology_cost`.
 
 ---
 
@@ -898,18 +899,16 @@ Our `change_management_factor` default of 0.4 (40% on top of `technology_cost`) 
 
 ### Claim 4: "Agentforce agents can have multiple topics, call Apex/Flow actions, operate headlessly"
 
-**Verdict: CONFIRMED — but missing hard platform limits.**
+**Verdict: CONFIRMED for capabilities. Platform limit claims need caveats.**
 
-Our capability model is accurate for what agents CAN do. However, we're missing critical hard limits that must be in the knowledge reference:
+Our capability model is accurate for what agents CAN do. Two corrections to the original research pass:
 
-- **Max 20 active agents per org** (getgenerative.ai, Apex Hours, 2026)
-- **Max 15 topics per agent** (same sources — note: Salesforce is renaming "topics" to "subagents" as of April 2026)
-- **Max 15 actions per topic** (same sources)
-- **60-second action timeout** — workflows exceeding this fail (same sources)
-- **No BYOM** — locked into Salesforce's AI ecosystem (same sources)
-- **No native version control** — must deactivate/reactivate for modifications (same sources)
+- **BYOM IS supported.** Salesforce has had BYO LLM via Einstein Studio since Spring '24. The LLM Open Connector (GitHub) enables connecting any external model. Azure, Google, AWS, OpenAI models are all supported. The third-party source (getgenerative.ai) that claimed "BYOM unsupported" was wrong.
+- **Data Cloud is NOT a $65-175K/year prerequisite.** Data 360 must be provisioned (turned on) for the Einstein Trust Layer, but it has a free tier. The $60K+ numbers are for paid Starter SKUs with significant storage/credits, not a baseline requirement.
 
-**Action: CRITICAL.** Add these hard limits to the capability model. They directly constrain what the LLM can recommend. An agent with 15+ topics is infeasible. These limits also validate our design principle of "3-6 topics per agent" — it's not just good practice, it's platform reality.
+Regarding platform limits (20 agents/org, 15 topics/agent, 15 actions/topic, 60s timeout): these are cited by multiple third-party blogs but **cannot be confirmed in official Salesforce developer documentation as of April 2026**. They may be accurate, stale, or edition-dependent. Our design principle of "3-6 topics per agent" is good practice regardless of whether the hard ceiling is 15 or higher.
+
+**Action:** Add BYOM support to the capability model. Remove the incorrect Data Cloud cost claim. Present platform limits as approximate guidance with a caveat to verify against target org's edition. The 3-6 topic recommendation stands as good design, not just a platform constraint.
 
 ### Claim 5: "Agentforce execution costs $0.01-$0.50 per execution" (from v1 spec financial model)
 
@@ -919,12 +918,11 @@ Salesforce shifted to Flex Credits in 2026:
 - **$0.10 per action** (standard), $0.15 per action (voice) via Flex Credits
 - A "conversation" typically involves 5-15 actions = **$0.50-$1.50 per conversation**
 - The old $2/conversation model still exists but only through pre-purchase
-- **Hidden cost:** Actions exceeding 10,000 tokens bill as multiple actions (2-3x cost)
-- **Platform dependency:** Agentforce requires Data Cloud ($65,000-$175,000/year)
+- Actions exceeding 10,000 tokens may bill as multiple actions
 
 Our v1 assumption of "$0.01-$0.50/execution" is wrong. A single action is $0.10, and a meaningful agent interaction is $0.50-$2.00. The `annual_operational_cost` calculation in the financial engine needs to be updated with the Flex Credit model.
 
-**Action:** Update financial signal estimation in Phase 4 to use per-action pricing ($0.10/action, estimate 5-15 actions per agent invocation based on topic count). Flag Data Cloud as a prerequisite cost in agent opportunity cards.
+**Action:** Update financial signal estimation in Phase 4 to use per-action pricing ($0.10/action, estimate 5-15 actions per agent invocation based on topic count).
 
 ### Claim 6: "2-3 few-shot examples are optimal for structured output quality"
 
@@ -1025,32 +1023,29 @@ Our pipeline already uses Celery for the recommendation task. Adding `evaluate_a
 
 The research surfaced antipatterns not in the original spec:
 
-**Antipattern: The 20-Agent Ceiling**
-Agentforce limits orgs to 20 active agents. If the engine recommends 25 agents for a large org, 5 can't be deployed. The engine should be aware of this limit and potentially consolidate opportunities to stay within it.
-
-**Antipattern: Data Cloud Prerequisite Blindness**
-Agentforce requires Data Cloud ($65-175k/year). If the org doesn't have it, every recommendation has a massive hidden prerequisite cost. The engine should detect whether the org has Data Cloud and flag it prominently if not.
+**Antipattern: Agent Count Sprawl**
+Large orgs with many domains could receive 20-30+ agent recommendations. Agentforce has per-org agent limits (exact numbers are edition-dependent and not confirmed in official docs). Even without hard limits, too many agents creates maintenance burden, routing complexity, and adoption friction. The engine should prioritize consolidation and quality over quantity.
 
 **Antipattern: Token-Cost Multiplier Ignorance**
-Actions exceeding 10k tokens bill as multiple actions (2-3x cost). Complex agent topics that process large records or long text could have much higher operational costs than the simple per-action estimate. The financial engine should model this.
+Actions exceeding 10k tokens may bill as multiple Flex Credits. Complex agent topics that process large records or long text could have higher operational costs than the simple per-action estimate. The financial engine should model this.
 
 **Antipattern: The Terminology Drift Trap**
-Salesforce is renaming "topics" to "subagents" as of April 2026. Our spec uses "topics" throughout. We should use the current terminology in user-facing output while keeping "topics" in the Agent Script knowledge reference (since that's the DSL term).
+Salesforce is evolving Agentforce terminology (e.g., "topics" may be referenced as "subagents" in newer documentation). Our spec uses "topics" throughout since that's the Agent Script DSL keyword. User-facing output should use whatever terminology the target org's Salesforce documentation uses.
 
 ### Summary: Required Spec Adjustments
 
 | Finding | Severity | Action |
 |---------|----------|--------|
 | 62% statistic unverifiable | Medium | Replace with sourced Gartner 40% prediction |
-| Missing Agentforce hard limits (20 agents, 15 topics, 15 actions, 60s timeout) | **Critical** | Add to capability model |
+| BYOM incorrectly listed as unsupported | **Critical** | Corrected — BYOM is supported via Einstein Studio |
+| Data Cloud cost claim was wrong | **Critical** | Corrected — free tier available, not a $65-175K prerequisite |
+| Platform limits (20/15/15) unverifiable from official docs | Medium | Present as approximate guidance with caveat |
 | Agentforce pricing outdated ($0.01-$0.50 wrong) | **Critical** | Update to Flex Credit model ($0.10/action) |
 | Change management 40-60% overstated | Low | Rename factor, clarify scope, keep range |
 | Need 3rd worked example | Medium | Add hybrid headless/conversational example |
 | Lost-in-the-middle prompt structure risk | **High** | Restructure prompt: knowledge at boundaries, data in middle |
 | LLM-as-judge bias risks | **High** | Add randomization, logging, divergence detection |
 | JSON output failure rate 15-20% | **High** | Pydantic validation, partial result handling, retry |
-| 20-agent org limit not modeled | Medium | Add to capability model, consider in recommendations |
-| Data Cloud prerequisite cost not flagged | Medium | Add to integration requirements |
 | Example ordering (recency bias) | Low | Reorder worked examples weakest-to-strongest |
 
 ### Sources
@@ -1069,14 +1064,18 @@ Salesforce is renaming "topics" to "subagents" as of April 2026. Our spec uses "
 12. Structured Output Reliability in Production (2026). tianpan.co. 15-20% naive JSON failure rate.
 13. Pertama Partners (2026). "Enterprise AI Costs 2026." Change management at 12-18% of total costs.
 14. Sustainability Atlas (2026). "AI agent deployment costs in 2026." Change + integration at 35-45% of Y1 TCO.
-15. getgenerative.ai (2026). "Salesforce Agentforce Limitations You Should Know." Platform limits.
-16. Apex Hours (2026). "Agentforce Limitations and Workarounds." Platform limits with workarounds.
+15. getgenerative.ai (2026). "Salesforce Agentforce Limitations You Should Know." **CAUTION: this source incorrectly claimed BYOM is unsupported and overstated Data Cloud costs. Platform limit numbers (20/15/15) from this source are unverified against official Salesforce docs.**
+16. Apex Hours (2026). "Agentforce Limitations and Workarounds." **Same caveats as source 15 — repeats the same unverified limit numbers.**
 17. Concret.io (2026). "From $2 Conversations to $0.10 Actions: New Agentforce Pricing."
 18. Clientell AI (2026). "Agentforce Pricing: Flex Credits & Real Costs."
 19. AgencyQ (2026). "Agentforce Flex Credits: Real Cost Math for 2026."
 20. JAIT (2025). "A Multi-agent Framework for Autonomous Process Mining and Optimization." Vol 16 No 10.
 21. arxiv 2403.06402 (2024). "One size doesn't fit all: Predicting the Number of Examples for ICL."
 22. iBuidl.org (2026). "Prompt Engineering Patterns That Actually Work in 2026."
+23. Salesforce Developers (2024). "Bring Your Own Large Language Model in Einstein 1 Studio." Official blog. **Confirms BYOM support.**
+24. Salesforce Developers. "Supported Models" and "Einstein Studio" — Agentforce Developer Guide. **Confirms BYO LLM, LLM Open Connector, multi-provider model support.**
+25. Salesforce (2026). "Data 360 Pricing" and "Data Cloud Pricing Updates." **Confirms free tier, structured Salesforce data ingestion at no cost.**
+26. Salesforce Developers. "Set Up Einstein and Agentforce" — org-setup.html. **Confirms Data 360 provisioning required for Trust Layer, but does not state paid tier required.**
 
 ---
 
