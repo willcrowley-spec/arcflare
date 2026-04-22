@@ -145,7 +145,7 @@ def llm_call(
     model = _resolve_model(tier, operation=operation, model_config=model_config)
 
     from app.core.observability import langfuse_generation
-    from app.services.ai.operations import get_output_format, get_thinking_budget
+    from app.services.ai.operations import get_output_format, get_reasoning_effort, get_thinking_budget
     from app.services.ai.response_schemas import get_response_schema
 
     if isinstance(prompt, PromptParts):
@@ -185,8 +185,11 @@ def llm_call(
         elif output_fmt == "json":
             kwargs["response_format"] = {"type": "json_object"}
 
+        reasoning_effort = get_reasoning_effort(operation)
         thinking_budget = get_thinking_budget(operation)
-        if thinking_budget > 0:
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+        elif thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             kwargs["max_tokens"] = max(kwargs["max_tokens"], thinking_budget + 1024)
             kwargs.pop("response_format", None)
@@ -195,23 +198,7 @@ def llm_call(
 
         response = litellm.completion(**kwargs)
 
-        msg = response.choices[0].message
-        raw_content = msg.content
-
-        if thinking_budget > 0:
-            reasoning = getattr(msg, "reasoning_content", None)
-            tblocks = getattr(msg, "thinking_blocks", None)
-            logger.info(
-                "llm_debug operation=%s content_type=%s content_len=%s "
-                "reasoning_len=%s thinking_blocks=%s content_preview=%r",
-                operation,
-                type(raw_content).__name__,
-                len(raw_content) if raw_content else 0,
-                len(reasoning) if reasoning else 0,
-                len(tblocks) if tblocks else 0,
-                (str(raw_content)[:200] if raw_content else "<NONE>"),
-            )
-
+        raw_content = response.choices[0].message.content
         if isinstance(raw_content, list):
             text = ""
             for block in raw_content:
@@ -393,7 +380,7 @@ def stream_chat_with_tools(
 
 
 def parse_json_response(text: str | None) -> dict | list:
-    """Parse a JSON response, stripping markdown code fences if present."""
+    """Parse a JSON response, stripping markdown fences and preamble text."""
     if not text:
         raise ValueError("Empty LLM response — nothing to parse")
     raw = text.strip()
@@ -408,4 +395,18 @@ def parse_json_response(text: str | None) -> dict | list:
                 raw = cleaned
                 break
 
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    for ch in ("{", "["):
+        idx = raw.find(ch)
+        if idx > 0:
+            candidate = raw[idx:]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+    raise ValueError(f"No valid JSON found in LLM response (len={len(raw)}, start={raw[:120]!r})")

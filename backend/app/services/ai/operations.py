@@ -59,7 +59,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "discovery_domain": {
         "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
-        "thinking_budget": 4096,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "Domain Discovery",
         "group": "discovery",
@@ -104,7 +105,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "discovery_validation": {
         "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
-        "thinking_budget": 8192,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "Validation & Refinement",
         "group": "discovery",
@@ -122,7 +124,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "discovery_v2_domain": {
         "model": "anthropic/claude-opus-4-6",
         "tier": "strong",
-        "thinking_budget": 4096,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "v2 Domain Discovery",
         "group": "discovery",
@@ -158,7 +161,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "recommendations": {
         "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
-        "thinking_budget": 10000,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "text",
         "label": "Recommendation Scoring",
         "group": "synthesis",
@@ -167,7 +171,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "recommendations_composite": {
         "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
-        "thinking_budget": 4096,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "Composite Synthesis",
         "group": "synthesis",
@@ -185,7 +190,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "agent_opportunity": {
         "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
-        "thinking_budget": 16000,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "Agent Opportunity Analysis",
         "group": "synthesis",
@@ -194,7 +200,8 @@ MODEL_OPERATIONS: dict[str, dict] = {
     "agent_opportunity_cross_domain": {
         "model": "anthropic/claude-sonnet-4-6",
         "tier": "strong",
-        "thinking_budget": 8000,
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
         "output_format": "json",
         "label": "Cross-Domain Agent Synthesis",
         "group": "synthesis",
@@ -298,6 +305,16 @@ def get_thinking_budget(operation: str | None) -> int:
     if entry:
         return int(entry.get("thinking_budget", 0))
     return 0
+
+
+def get_reasoning_effort(operation: str | None) -> str | None:
+    """Return the reasoning_effort level for a named operation, or None."""
+    if not operation:
+        return None
+    entry = MODEL_OPERATIONS.get(operation)
+    if entry:
+        return entry.get("reasoning_effort")
+    return None
 
 
 def get_output_format(operation: str | None) -> str:
