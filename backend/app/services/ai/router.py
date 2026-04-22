@@ -189,12 +189,24 @@ def llm_call(
         if thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             kwargs["max_tokens"] = max(kwargs["max_tokens"], thinking_budget + 1024)
+            kwargs.pop("response_format", None)
         elif model.startswith("gemini/"):
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 0}
 
         response = litellm.completion(**kwargs)
 
-        text = response.choices[0].message.content or ""
+        raw_content = response.choices[0].message.content
+        if isinstance(raw_content, list):
+            text = ""
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    break
+                elif hasattr(block, "type") and block.type == "text":
+                    text = getattr(block, "text", "")
+                    break
+        else:
+            text = raw_content or ""
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
