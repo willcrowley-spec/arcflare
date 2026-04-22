@@ -761,6 +761,149 @@ _GAP_OPENER_TEMPLATE = """I'm looking at a cross-domain gap between "{source_pro
 
 Can you help me document what currently happens at this handoff point?"""
 
+# --- Agent opportunity analysis (domain-level) ---
+
+_AGENT_OPPORTUNITY_INSTRUCTIONS = """You are an Agentforce solution architect analyzing a business domain to identify where Salesforce Agentforce agents can replace or augment existing manual processes.
+
+You will receive a complete domain context: all processes, their steps, actors, decision logic, system touchpoints, handoffs, and failure modes. Your job is to identify agent opportunities — coherent clusters of work that a single Agentforce agent could own across multiple processes and steps.
+
+AGENTFORCE AGENT CAPABILITIES:
+
+An Agentforce agent can:
+- Own multiple "topics" (distinct jobs) — each topic has its own actions and reasoning
+- Route between topics based on user input or data conditions
+- Execute deterministic logic (if/then, field updates, record queries) before LLM reasoning
+- Use LLM reasoning for judgment calls: classification, prioritization, content generation, exception handling, contextual decision-making
+- Call Apex actions (database queries, API callouts, complex business logic)
+- Call Flow actions (record operations, simple automations)
+- Carry mutable state across topics via global variables
+- Operate conversationally (user-facing) OR headlessly (triggered by record events or Flows, fully autonomous)
+- Handle structured data (Salesforce records) and unstructured data (emails, free text, case descriptions)
+- Gate topic availability behind conditions (authentication, data loaded, role checks)
+- Pre-load data deterministically before the LLM reasons
+- Support Bring Your Own Model via Einstein Studio (Azure, Google, AWS, OpenAI models)
+
+An agent CANNOT:
+- Call external APIs directly — any integration outside Salesforce needs Apex middleware
+- Run long-duration background processes (agents are request-response per turn)
+- Process files or documents natively (needs Apex for parsing)
+- Replace complex multi-org or multi-cloud orchestration
+- Maintain state between separate sessions (state is per-session only)
+
+PLATFORM LIMITS: Agentforce has per-org and per-agent limits on topics and actions (varies by edition). Design agents with 3-6 topics each as best practice. Standard Apex governor limits apply to all actions.
+
+AGENT DESIGN PRINCIPLES:
+
+1. ONE AGENT = ONE DOMAIN OF RESPONSIBILITY — not a single task. Think "Sales Qualification Agent" not "BANT Scoring Agent."
+2. TOPICS = JOBS WITHIN THAT RESPONSIBILITY — 3-6 topics is typical.
+3. GROUP BY SHARED CONTEXT, NOT PROCESS BOUNDARIES — look for shared data objects, same actor/role, similar decision patterns, sequential handoffs an agent could eliminate.
+4. HEADLESS WHEN NO HUMAN INPUT NEEDED — if triggered by data events with no user interaction, it's headless.
+5. DETERMINISTIC CORE + AGENTIC EDGE CASES — deterministic handles the predictable 80%, LLM handles ambiguity and exceptions.
+6. FLAG INTEGRATION REQUIREMENTS HONESTLY — every external system needs Apex middleware."""
+
+_AGENT_OPPORTUNITY_PROTOCOL = """ANTIPATTERNS — DO NOT RECOMMEND THESE:
+- ONE AGENT PER PROCESS STEP — a single step is a topic at most, never a standalone agent
+- PURELY DETERMINISTIC AGENTS — if every topic is just if/then with no LLM reasoning, recommend a Flow, not an agent
+- NOTIFICATION-ONLY AGENTS — agents that only send emails/tasks without making decisions are automation rules, not agents
+- BOIL-THE-OCEAN AGENTS — don't propose one mega-agent per domain. Find 2-4 focused agents.
+- OVERLOADED AGENTS — if scope exceeds what a single agent can hold, split into multiple focused agents
+
+Return ONLY valid JSON with this exact shape:
+
+{
+  "agent_opportunities": [
+    {
+      "agent_name": "Descriptive name for the proposed agent",
+      "agent_type": "headless" | "conversational" | "hybrid",
+      "description": "2-3 sentences: what this agent does, who it serves, what business outcome it drives",
+      "topics": [
+        {
+          "topic_name": "Name for this topic/job",
+          "description": "What this topic handles",
+          "reasoning_type": "deterministic" | "agentic" | "hybrid",
+          "actions_needed": ["List of actions/tools this topic would call"]
+        }
+      ],
+      "replaces": [
+        {
+          "process_id": "uuid from the input",
+          "process_name": "string",
+          "steps_replaced": ["step names from the input"],
+          "step_ids": ["step uuids from the input"],
+          "replacement_type": "full" | "partial"
+        }
+      ],
+      "trigger": "What kicks this agent off",
+      "data_requirements": ["Salesforce objects this agent needs"],
+      "integration_points": ["External systems needing Apex middleware"],
+      "complexity_estimate": "low" | "medium" | "high",
+      "confidence": 0.0-1.0,
+      "rationale": "Why these processes/steps belong together and why an agent (not a Flow) is right",
+      "risks": "Key implementation risks or feasibility concerns",
+      "financial_signals": {
+        "actors_impacted": ["role names"],
+        "estimated_hours_per_week_saved": number,
+        "estimated_frequency": "daily" | "weekly" | "monthly" | "ad-hoc",
+        "estimated_actor_count": number,
+        "primary_role_type": "dominant role for salary estimation"
+      }
+    }
+  ],
+  "uncovered_processes": [
+    {
+      "process_name": "string",
+      "reason": "Why not included in any agent opportunity"
+    }
+  ]
+}
+
+Rules:
+- process_id and step_ids must be valid UUIDs from the domain context input
+- Every process in the domain should appear in either an agent opportunity's replaces array OR in uncovered_processes
+- confidence should reflect genuine assessment — not all 0.80
+- financial_signals must be internally consistent with the processes replaced"""
+
+# --- Agent opportunity cross-domain synthesis ---
+
+_AGENT_OPPORTUNITY_CROSS_DOMAIN_INSTRUCTIONS = """You are analyzing agent opportunities identified across multiple business domains to find cross-domain opportunities.
+
+Look for:
+1. Cross-domain agents: the same actor/role doing similar work in different domains
+2. Handoff bridge agents: cross-domain handoff gaps where an agent could bridge the boundary
+3. Merge candidates: similar agent opportunities in different domains that should be one agent"""
+
+_AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL = """Return ONLY valid JSON with this shape:
+
+{
+  "cross_domain_opportunities": [
+    {
+      "agent_name": "string",
+      "agent_type": "headless" | "conversational" | "hybrid",
+      "description": "What this cross-domain agent does",
+      "topics": [{"topic_name": "string", "description": "string", "reasoning_type": "string", "actions_needed": ["string"]}],
+      "replaces": [{"process_id": "uuid", "process_name": "string", "steps_replaced": ["string"], "step_ids": ["uuid"], "replacement_type": "full" | "partial"}],
+      "source_domains": ["domain names this spans"],
+      "trigger": "string",
+      "data_requirements": ["string"],
+      "integration_points": ["string"],
+      "complexity_estimate": "low" | "medium" | "high",
+      "confidence": 0.0-1.0,
+      "rationale": "string",
+      "risks": "string",
+      "financial_signals": {"actors_impacted": ["string"], "estimated_hours_per_week_saved": 0, "estimated_frequency": "string", "estimated_actor_count": 0, "primary_role_type": "string"}
+    }
+  ],
+  "merge_suggestions": [
+    {
+      "agent_a": "agent name from domain A",
+      "agent_b": "agent name from domain B",
+      "reason": "Why these should be merged into one agent"
+    }
+  ]
+}
+
+If no cross-domain opportunities exist, return empty arrays."""
+
 SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "chat", "block_type": "identity", "content": _CHAT_IDENTITY},
     {"operation_id": "chat", "block_type": "rules", "content": _CHAT_RULES},
@@ -815,4 +958,8 @@ SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "community_summarization", "block_type": "doc_l1", "content": _COMMUNITY_DOC_L1},
     {"operation_id": "contextual_retrieval", "block_type": "instructions", "content": _CONTEXTUAL_RETRIEVAL_INSTRUCTIONS},
     {"operation_id": "chat_templates", "block_type": "gap_opener", "content": _GAP_OPENER_TEMPLATE},
+    {"operation_id": "agent_opportunity", "block_type": "instructions", "content": _AGENT_OPPORTUNITY_INSTRUCTIONS},
+    {"operation_id": "agent_opportunity", "block_type": "protocol", "content": _AGENT_OPPORTUNITY_PROTOCOL},
+    {"operation_id": "agent_opportunity_cross_domain", "block_type": "instructions", "content": _AGENT_OPPORTUNITY_CROSS_DOMAIN_INSTRUCTIONS},
+    {"operation_id": "agent_opportunity_cross_domain", "block_type": "protocol", "content": _AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL},
 ]
