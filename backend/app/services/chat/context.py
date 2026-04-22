@@ -208,6 +208,7 @@ async def _anchor_context(
                 "id": str(rec.id),
                 "title": rec.title,
                 "narrative": rec.description,
+                "agent_opportunity": dict(rec.agent_opportunity_json) if rec.agent_opportunity_json else {},
                 "scoring": {
                     "base_score": rec.base_score,
                     "llm_score": rec.llm_score,
