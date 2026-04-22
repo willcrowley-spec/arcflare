@@ -67,6 +67,21 @@ class Recommendation(Base):
     enrichment_log: Mapped[list] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    agent_opportunity_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    linked_step_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    domain_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("business_processes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    financial_evaluation_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="pending"
+    )
     recommendation_run_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("recommendation_runs.id", ondelete="SET NULL"),
