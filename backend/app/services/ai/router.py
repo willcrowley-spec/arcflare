@@ -195,7 +195,23 @@ def llm_call(
 
         response = litellm.completion(**kwargs)
 
-        raw_content = response.choices[0].message.content
+        msg = response.choices[0].message
+        raw_content = msg.content
+
+        if thinking_budget > 0:
+            reasoning = getattr(msg, "reasoning_content", None)
+            tblocks = getattr(msg, "thinking_blocks", None)
+            logger.info(
+                "llm_debug operation=%s content_type=%s content_len=%s "
+                "reasoning_len=%s thinking_blocks=%s content_preview=%r",
+                operation,
+                type(raw_content).__name__,
+                len(raw_content) if raw_content else 0,
+                len(reasoning) if reasoning else 0,
+                len(tblocks) if tblocks else 0,
+                (str(raw_content)[:200] if raw_content else "<NONE>"),
+            )
+
         if isinstance(raw_content, list):
             text = ""
             for block in raw_content:
