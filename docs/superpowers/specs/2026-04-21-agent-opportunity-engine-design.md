@@ -181,11 +181,14 @@ Higher thinking budget than the current `recommendations` operation (10000) beca
 
 ### Prompt Structure
 
-The prompt has three sections:
+The prompt structure is designed to mitigate the "lost in the middle" effect (Liu et al., 2023) — transformer models attend most strongly to the beginning and end of their context, deprioritizing middle content. Critical reasoning instructions go at attention boundaries; bulk data goes in the middle where factual retrieval (not reasoning) is what we need.
 
-1. **System prompt:** Agent opportunity analyst identity + Agentforce Knowledge Reference (see dedicated section below)
-2. **User prompt:** Serialized `DomainContext` JSON
-3. **Output protocol:** Required JSON shape for agent opportunity cards
+1. **System prompt:** Agent opportunity analyst identity + Agentforce Capability Model + Design Principles (critical knowledge at the START attention peak)
+2. **User prompt START:** Brief task framing and domain summary
+3. **User prompt MIDDLE:** Full serialized `DomainContext` JSON (bulk data — factual retrieval zone)
+4. **User prompt END:** Antipatterns reminder + worked examples + output protocol (critical knowledge at the END attention peak)
+
+Additionally, process order within the domain context JSON is **randomized on each run** to mitigate position bias in LLM-as-judge assessments (CyclicJudge, 2026).
 
 ### Output Protocol
 
@@ -245,6 +248,16 @@ The prompt has three sections:
 
 The `uncovered_processes` array is important — it explicitly surfaces processes that the LLM decided don't belong in any agent opportunity (purely manual creative work, already well-automated, too simple for an agent, etc.). This prevents the "where did Process X go?" question.
 
+### Output Validation and Resilience
+
+Research shows naive JSON prompting fails 15-20% of the time in production (tianpan.co, 2026). For a pipeline making 5-10 LLM calls per org run, even a 10% failure rate means frequent partial failures. Mitigations:
+
+1. **Pydantic schema validation** — Define `AgentOpportunityResponse` as a Pydantic model. Parse raw JSON, then validate against the schema. Reject malformed opportunities individually, not the entire response.
+2. **Partial result handling** — If the LLM returns 4 opportunities and 1 is malformed, persist the 4 valid ones. Log the failure with raw LLM output for debugging.
+3. **Retry with backoff** — On complete JSON parse failure, retry once with a simplified prompt (reduce domain context by dropping step-level detail). If still failing, persist what we have and flag the domain as needing manual review.
+4. **Confidence distribution monitoring** — Log confidence scores per run. If all opportunities cluster within 0.05 of each other (e.g., all at 0.80-0.85), the LLM is likely anchoring to examples rather than genuinely analyzing. Flag for review.
+5. **Run reproducibility check** — Periodically re-run the same domain context and compare outputs. Significant divergence (>30% different opportunities) indicates non-determinism that should be investigated.
+
 ### ID Resolution
 
 The LLM outputs process names and step names. After the LLM call, the analyzer resolves these back to UUIDs using the `DomainContext` dataclass (which has the full ID mappings). Fuzzy matching on names handles minor LLM name variations. Unresolvable references are logged and dropped.
@@ -283,6 +296,17 @@ An agent CANNOT:
 - Process files or documents natively (needs Apex for parsing)
 - Replace complex multi-org or multi-cloud orchestration
 - Maintain state between separate sessions (state is per-session only)
+- Use custom/external AI models — locked into Salesforce's AI ecosystem (no BYOM)
+
+HARD PLATFORM LIMITS (as of 2026):
+- Max 20 active agents per org
+- Max 15 topics (subagents) per agent
+- Max 15 actions per topic
+- 60-second timeout per action — workflows exceeding this fail
+- Agentforce requires Data Cloud ($65K-$175K/year depending on tier)
+- Per-action cost: $0.10 standard, $0.15 voice (Flex Credits model)
+- Actions exceeding 10,000 tokens bill as multiple actions (2-3x cost)
+- A typical agent conversation costs $0.50-$1.50 (5-15 actions)
 ```
 
 ### Section 2: Design Principles (~600 tokens)
@@ -347,6 +371,13 @@ ANTIPATTERNS — DO NOT RECOMMEND THESE:
 
 - REDUNDANT AGENTS: Don't propose two agents that overlap significantly. If two opportunities
   share most of their data context and actors, merge them into one agent with more topics.
+
+- EXCEEDING PLATFORM LIMITS: Never propose an agent with more than 15 topics or a topic
+  with more than 15 actions. These are hard Agentforce limits. If scope exceeds this,
+  split into multiple agents.
+
+- DATA CLOUD BLINDNESS: Agentforce requires Data Cloud. If the org doesn't have it,
+  that's a $65K-$175K/year prerequisite cost that must be flagged, not hidden.
 ```
 
 ### Section 4: Worked Examples (~2k tokens)
@@ -778,6 +809,36 @@ No new tools needed for v1. Future enhancement: a `refine_opportunity` tool that
 
 **Mitigation:** Phase 3's explicit mandate includes finding merge candidates. Post-processing: check for opportunities with >50% overlap in `linked_process_ids` and flag for review.
 
+### 6. The 20-Agent Ceiling
+
+**Risk:** Agentforce limits orgs to 20 active agents. A large org with 8 domains might get 3-4 agent recommendations per domain = 24-32 recommendations. The org can't deploy all of them simultaneously.
+
+**Mitigation:** Phase 3 should be aware of the org-wide 20-agent limit. If total opportunities exceed 15 (leaving buffer for non-Arcflare agents), prioritize by confidence and complexity, and suggest consolidation opportunities. Surface the constraint prominently in the API response.
+
+### 7. Position Bias in Domain Analysis (Research-Validated)
+
+**Risk:** LLM-as-judge research (CyclicJudge 2026, BiasScope 2025) shows systematic position bias — processes listed first or last in the context get disproportionate attention. In a domain with 10 processes, processes 1-2 and 9-10 receive higher confidence scores regardless of actual merit.
+
+**Mitigation:** Randomize process order within the domain context JSON on every pipeline run. Log ordering for reproducibility. If re-runs with different orderings produce significantly different recommendations, the signal is weak and should be flagged.
+
+### 8. Example Anchoring
+
+**Risk:** With 2-3 worked examples in the prompt, the LLM may pattern-match to the examples rather than genuinely analyzing the domain. Every agent opportunity starts looking like "Order Fulfillment Agent" or "Support Resolution Agent."
+
+**Mitigation:** Monitor output diversity across orgs. If agent names, topic structures, or descriptions show high textual similarity to the examples, the prompt is over-constraining. Rotate or vary examples across runs. Consider dropping examples entirely after initial quality is established and using them only as a fallback when output quality degrades.
+
+### 9. Terminology Drift
+
+**Risk:** Salesforce is renaming "topics" to "subagents" as of April 2026. Our spec and prompts use "topics" throughout. User-facing output using outdated terminology will confuse customers who read Salesforce documentation.
+
+**Mitigation:** Use current Salesforce terminology ("subagents") in user-facing output (recommendation descriptions, UI labels). Keep "topics" in the Agent Script knowledge reference since that's still the DSL keyword. Add a terminology mapping note to the prompt.
+
+### 10. Data Cloud Cost Blindness
+
+**Risk:** Every agent recommendation implicitly assumes the org has Data Cloud ($65K-$175K/year). If they don't, the ROI calculation is drastically wrong — the first recommendation isn't worth $X, it's worth $X minus $65K+ in platform prerequisite costs.
+
+**Mitigation:** Phase 1 should check whether the org's metadata indicates Data Cloud presence (look for Data Cloud objects in the org's custom object inventory). If absent, add a prominent `platform_prerequisites` field to every opportunity card with the estimated cost. The financial evaluation in Phase 4 should amortize this prerequisite across all opportunities in the portfolio.
+
 ---
 
 ## Research Flag: Agentforce Knowledge Grounding
@@ -791,6 +852,231 @@ The knowledge reference (Section 7 of this spec) represents the initial approach
 3. **Org-specific context** — Future enhancement: inject information about agents the org already has deployed, so the engine doesn't recommend duplicating existing automation. This would come from the `Agent` model.
 
 4. **Token budget monitoring** — Track actual token consumption per Phase 2 call. If large domains consistently approach context limits, the truncation strategy in Phase 1 needs refinement.
+
+---
+
+## Research Validation and Fact-Check
+
+This section evaluates every major claim and design decision in this spec against current (2025-2026) research. Findings are organized by claim, with verdicts and required spec adjustments.
+
+### Claim 1: "62% of failed AI projects used agentic approaches for deterministic tasks" (carried from v1 spec)
+
+**Verdict: UNVERIFIABLE — replace with stronger sourced data.**
+
+The original spec cited "Gartner 2025, multiple 2026 sources" but this specific 62% figure cannot be traced to a published Gartner report. What Gartner *actually* published:
+
+- **Gartner (June 2025):** "Over 40% of agentic AI projects will be canceled by end of 2027" due to escalating costs, unclear business value, and inadequate risk controls. Only ~130 of thousands of vendors are legitimate; the rest are "agent washing." (Gartner Newsroom, June 25 2025; Reuters coverage same date.)
+- **Gartner (April 2026):** Only 28% of AI initiatives in infrastructure and operations meet ROI expectations; 1 in 5 fail outright. (Gartner via TechStartups, April 2026.)
+
+**Action:** Replace the unverifiable 62% claim with the sourced Gartner 40% cancellation prediction. The directional point (don't use agents where rules suffice) is valid but needs honest sourcing.
+
+### Claim 2: "The J-Curve productivity dip is real and should be modeled"
+
+**Verdict: CONFIRMED — stronger than we stated.**
+
+MIT/Wharton/Census Bureau research (McElheran et al., 2025, "The Rise of Industrial AI in America: Microfoundations of the Productivity J-curve(s)") using Census data documented:
+- Initial productivity declines averaging **1.33 percentage points** in the short run for AI-adopting firms
+- When correcting for selection bias, losses can reach **60 percentage points** in some firms
+- Losses concentrate in older, established businesses with legacy systems
+- One-third of productivity loss in older firms traced to abandonment of structured management practices during transition
+- Long-term: AI adopters eventually outpace peers in productivity, revenue, and market share
+
+Our `productivity_dip` parameter (0.0-0.3) captures this. The research suggests our default of 0.05 may be *optimistic* for enterprises with legacy systems. Consider defaulting higher (0.10-0.15) for orgs with high custom object counts.
+
+### Claim 3: "Change management accounts for 40-60% of total investment"
+
+**Verdict: OVERSTATED — revise downward.**
+
+Research shows:
+- Change management alone: **12-18% of total enterprise AI transformation costs** (Pertama Partners, 2026)
+- Change management + integration combined: **35-45% of first-year TCO** (Sustainability Atlas, 2026)
+- Broader digital transformation: total non-technology costs (training, process redesign, organizational change) can reach 35-45% but not consistently 40-60%
+
+Our `change_management_factor` default of 0.4 (40% on top of `technology_cost`) is at the high end of the combined change+integration range, not purely change management. This is defensible if we're explicit that it covers all non-technology costs (training, process redesign, parallel running, integration work, org learning), not just "change management" narrowly defined.
+
+**Action:** Rename internally to `implementation_overhead_factor` and clarify in the spec that it covers all non-technology implementation costs, not just change management. Range of 0.2-0.5 is supported by the research.
+
+### Claim 4: "Agentforce agents can have multiple topics, call Apex/Flow actions, operate headlessly"
+
+**Verdict: CONFIRMED — but missing hard platform limits.**
+
+Our capability model is accurate for what agents CAN do. However, we're missing critical hard limits that must be in the knowledge reference:
+
+- **Max 20 active agents per org** (getgenerative.ai, Apex Hours, 2026)
+- **Max 15 topics per agent** (same sources — note: Salesforce is renaming "topics" to "subagents" as of April 2026)
+- **Max 15 actions per topic** (same sources)
+- **60-second action timeout** — workflows exceeding this fail (same sources)
+- **No BYOM** — locked into Salesforce's AI ecosystem (same sources)
+- **No native version control** — must deactivate/reactivate for modifications (same sources)
+
+**Action: CRITICAL.** Add these hard limits to the capability model. They directly constrain what the LLM can recommend. An agent with 15+ topics is infeasible. These limits also validate our design principle of "3-6 topics per agent" — it's not just good practice, it's platform reality.
+
+### Claim 5: "Agentforce execution costs $0.01-$0.50 per execution" (from v1 spec financial model)
+
+**Verdict: OUTDATED — pricing model changed significantly.**
+
+Salesforce shifted to Flex Credits in 2026:
+- **$0.10 per action** (standard), $0.15 per action (voice) via Flex Credits
+- A "conversation" typically involves 5-15 actions = **$0.50-$1.50 per conversation**
+- The old $2/conversation model still exists but only through pre-purchase
+- **Hidden cost:** Actions exceeding 10,000 tokens bill as multiple actions (2-3x cost)
+- **Platform dependency:** Agentforce requires Data Cloud ($65,000-$175,000/year)
+
+Our v1 assumption of "$0.01-$0.50/execution" is wrong. A single action is $0.10, and a meaningful agent interaction is $0.50-$2.00. The `annual_operational_cost` calculation in the financial engine needs to be updated with the Flex Credit model.
+
+**Action:** Update financial signal estimation in Phase 4 to use per-action pricing ($0.10/action, estimate 5-15 actions per agent invocation based on topic count). Flag Data Cloud as a prerequisite cost in agent opportunity cards.
+
+### Claim 6: "2-3 few-shot examples are optimal for structured output quality"
+
+**Verdict: PARTIALLY CORRECT — nuanced.**
+
+Research findings:
+- For structured output tasks, **3 examples boost compliance from 71% to 94%** (iBuidl.org, 2026 patterns survey)
+- General guidance: **2-3 for simple tasks, 4-6 for structured generation** (Rephrase deep dive)
+- **"One size doesn't fit all"** — optimal count varies by task complexity (arxiv 2403.06402, ICML-adjacent)
+- **Example quality >> quantity** — poorly chosen examples degrade below zero-shot baselines
+- **Ordering matters** — place the strongest example LAST (recency bias)
+- **Example diversity** — cover realistic input variance with distinct patterns
+
+Our spec proposes 2 examples. For our use case (complex structured output with domain-specific reasoning), **3 examples covering distinct patterns** would be stronger. Also: our examples should be ordered weakest-to-strongest.
+
+**Action:** Add a third worked example (e.g., a hybrid agent with both headless triggers and conversational fallback). Reorder examples weakest-first, strongest-last.
+
+### Claim 7: "One LLM call per domain at 40-60k tokens is fine for Claude Sonnet"
+
+**Verdict: SAFE BUT WATCH THE CEILING.**
+
+Research on Claude's context window performance:
+- Claude Sonnet 4.6 has a 200k context window (officially)
+- **Safe threshold for complex reasoning: ~100k tokens (50% of window)** (BSWEN, community benchmarks)
+- At 40-50% fill, attention drift kicks in — model starts deprioritizing earlier content
+- **"Lost in the middle" effect** is documented in transformer models: U-shaped attention favoring beginning and end of context (Liu et al., 2023; ACL 2024 follow-up)
+- Beyond 180k tokens, "Actually... Actually..." reasoning loops appear
+
+Our estimate of 40-60k tokens of domain context + 4k system prompt + 4k knowledge = ~50-70k total is within the safe zone for a 200k window. But:
+
+**Action: CRITICAL prompt structure adjustment.** Place the Agentforce knowledge reference (the part the LLM must NOT forget) at the **beginning** of the system prompt AND reiterate key constraints at the **end** of the user prompt (before the output protocol). The "lost in the middle" effect means domain context data (which goes in the middle) gets less attention than framing content at boundaries. Structure:
+
+```
+[System prompt START] — Agentforce capability model + design principles
+[System prompt END]
+[User prompt START] — Brief task framing
+[User prompt MIDDLE] — Domain context JSON (bulk data)
+[User prompt END] — Antipatterns reminder + output protocol + examples
+```
+
+This places critical knowledge at both attention peaks (start and end) and puts the bulk data in the middle where factual retrieval (not reasoning) is what we need.
+
+### Claim 8: "LLM-as-judge assessments are reliable for opportunity identification"
+
+**Verdict: SIGNIFICANT RISK — needs mitigation strategy.**
+
+2025-2026 research on LLM-as-judge reveals serious bias:
+- LLM judges exhibit **systematic biases from non-semantic cues**: position, length, format, model provenance (FairJudge, arxiv 2602.06625)
+- Even powerful LLMs show **error rates above 50%** on robust benchmarks (BiasScope, OpenReview 2025)
+- Judge, scenario, and generation biases are often **similar in magnitude to the differences being measured** (CyclicJudge, arxiv 2603.01865)
+- 12 representative bias types across 4 dimensions have been cataloged (JudgeBiasBench, arxiv 2603.08091)
+
+For our use case, the key risks are:
+1. **Length bias**: Longer process descriptions get higher confidence scores regardless of actual automation potential
+2. **Position bias**: Processes listed first or last in the domain context get more attention (see "lost in the middle")
+3. **Anchoring to examples**: The LLM may pattern-match to our worked examples rather than genuinely analyzing the domain
+4. **Consistency across domains**: The same process type in different domains may get different recommendations depending on context
+
+**Action:** Add these mitigations to the spec:
+- **Randomize process order** within the domain context JSON on each run (breaks position bias)
+- **Log confidence distributions** per run — if all opportunities cluster at 0.80-0.85, the LLM is probably anchoring
+- **Divergence detection**: If re-running the pipeline on the same discovery data produces significantly different opportunities, flag it (non-determinism alarm)
+- **Post-processing sanity checks**: Validate that confidence scores correlate with concrete signals (more topics = higher complexity, more integration points = higher risk, etc.)
+
+### Claim 9: "JSON output from the LLM will be reliable for our protocol"
+
+**Verdict: REAL RISK — needs defensive parsing.**
+
+Research shows:
+- Naive JSON prompting **fails 15-20% of the time in production** (structured output reliability survey, 2026)
+- A model at 99% per-token accuracy on a 200-token JSON object has only **87% chance of valid output**
+- Common failures: mixed quotes, trailing commas, hallucinated field names (`analysis_result` instead of `analysis`)
+- Deeply nested structures (4+ levels) **fail non-linearly more often**
+
+Our protocol has moderate nesting (opportunity -> topics -> actions_needed, opportunity -> replaces -> step_ids). This is 3 levels deep, within the manageable range.
+
+**Action:** The `agent_analyzer.py` module MUST:
+1. Use the existing `parse_json_response` with retry (already in the codebase)
+2. Validate against a Pydantic schema after parsing (not just raw JSON check)
+3. Handle partial results — if the LLM returns 3 valid opportunities and 1 malformed one, keep the 3
+4. Log all parse failures with the raw LLM output for debugging
+5. Consider requesting output in a flatter structure if failure rates exceed 10%
+
+### Claim 10: "Async financial evaluation via Celery post-commit is the right pattern"
+
+**Verdict: CONFIRMED — this is standard and well-proven.**
+
+The FastAPI + Celery + Redis pattern for post-commit async work is the production standard for Python backends (used by Instagram, Mozilla, etc.). Key validations:
+- Celery chain/chord patterns handle sequential and parallel task execution natively
+- One case study showed API response times dropping from 10-60s to 0.1-0.3s after migrating to async (Medium, 2026)
+- Centralized failure callbacks are critical — don't scatter failure logic across tasks
+
+Our pipeline already uses Celery for the recommendation task. Adding `evaluate_agent_financials` as a chained task after the main pipeline is a natural extension.
+
+**Action:** Use a Celery `chain` to ensure financial evaluation only starts after the main pipeline commits successfully. Add a centralized failure handler that sets `financial_evaluation_status = "failed"` with error details on the recommendation rows.
+
+### Research-Driven Additions: New Antipatterns
+
+The research surfaced antipatterns not in the original spec:
+
+**Antipattern: The 20-Agent Ceiling**
+Agentforce limits orgs to 20 active agents. If the engine recommends 25 agents for a large org, 5 can't be deployed. The engine should be aware of this limit and potentially consolidate opportunities to stay within it.
+
+**Antipattern: Data Cloud Prerequisite Blindness**
+Agentforce requires Data Cloud ($65-175k/year). If the org doesn't have it, every recommendation has a massive hidden prerequisite cost. The engine should detect whether the org has Data Cloud and flag it prominently if not.
+
+**Antipattern: Token-Cost Multiplier Ignorance**
+Actions exceeding 10k tokens bill as multiple actions (2-3x cost). Complex agent topics that process large records or long text could have much higher operational costs than the simple per-action estimate. The financial engine should model this.
+
+**Antipattern: The Terminology Drift Trap**
+Salesforce is renaming "topics" to "subagents" as of April 2026. Our spec uses "topics" throughout. We should use the current terminology in user-facing output while keeping "topics" in the Agent Script knowledge reference (since that's the DSL term).
+
+### Summary: Required Spec Adjustments
+
+| Finding | Severity | Action |
+|---------|----------|--------|
+| 62% statistic unverifiable | Medium | Replace with sourced Gartner 40% prediction |
+| Missing Agentforce hard limits (20 agents, 15 topics, 15 actions, 60s timeout) | **Critical** | Add to capability model |
+| Agentforce pricing outdated ($0.01-$0.50 wrong) | **Critical** | Update to Flex Credit model ($0.10/action) |
+| Change management 40-60% overstated | Low | Rename factor, clarify scope, keep range |
+| Need 3rd worked example | Medium | Add hybrid headless/conversational example |
+| Lost-in-the-middle prompt structure risk | **High** | Restructure prompt: knowledge at boundaries, data in middle |
+| LLM-as-judge bias risks | **High** | Add randomization, logging, divergence detection |
+| JSON output failure rate 15-20% | **High** | Pydantic validation, partial result handling, retry |
+| 20-agent org limit not modeled | Medium | Add to capability model, consider in recommendations |
+| Data Cloud prerequisite cost not flagged | Medium | Add to integration requirements |
+| Example ordering (recency bias) | Low | Reorder worked examples weakest-to-strongest |
+
+### Sources
+
+1. McElheran et al. (2025). "The Rise of Industrial AI in America: Microfoundations of the Productivity J-curve(s)." U of Toronto / Stanford / CU Boulder / US Census Bureau. SSRN 5036270.
+2. Gartner (June 2025). "Gartner Predicts Over 40% of Agentic AI Projects Will Be Canceled by End of 2027." Gartner Newsroom.
+3. Gartner (April 2026). Via TechStartups: "Only 28% of AI initiatives in infrastructure and operations meet ROI expectations."
+4. Liu et al. (2023). "Lost in the Middle: How Language Models Use Long Contexts." Stanford CS. arxiv.
+5. Shi et al. (2024). "Found in the Middle: Calibration-Free Bias Mitigation." ACL Findings 2024.
+6. CyclicJudge (2026). arxiv 2603.01865. Judge bias via variance decomposition.
+7. JudgeBiasBench (2026). arxiv 2603.08091. Taxonomy of 12 bias types across 4 dimensions.
+8. FairJudge (2026). arxiv 2602.06625. Adaptive debiasing for LLM judges.
+9. BiasScope (2025). OpenReview. Automated bias discovery; error rates >50% on robust benchmarks.
+10. StructEval (2025). arxiv 2505.20139. Structured output benchmark; SOTA models at 75.58% avg.
+11. JSONSchemaBench (2025). arxiv 2501.10868. JSON schema compliance across constrained decoding frameworks.
+12. Structured Output Reliability in Production (2026). tianpan.co. 15-20% naive JSON failure rate.
+13. Pertama Partners (2026). "Enterprise AI Costs 2026." Change management at 12-18% of total costs.
+14. Sustainability Atlas (2026). "AI agent deployment costs in 2026." Change + integration at 35-45% of Y1 TCO.
+15. getgenerative.ai (2026). "Salesforce Agentforce Limitations You Should Know." Platform limits.
+16. Apex Hours (2026). "Agentforce Limitations and Workarounds." Platform limits with workarounds.
+17. Concret.io (2026). "From $2 Conversations to $0.10 Actions: New Agentforce Pricing."
+18. Clientell AI (2026). "Agentforce Pricing: Flex Credits & Real Costs."
+19. AgencyQ (2026). "Agentforce Flex Credits: Real Cost Math for 2026."
+20. JAIT (2025). "A Multi-agent Framework for Autonomous Process Mining and Optimization." Vol 16 No 10.
+21. arxiv 2403.06402 (2024). "One size doesn't fit all: Predicting the Number of Examples for ICL."
+22. iBuidl.org (2026). "Prompt Engineering Patterns That Actually Work in 2026."
 
 ---
 
