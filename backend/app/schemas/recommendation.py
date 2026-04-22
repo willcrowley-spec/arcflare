@@ -31,6 +31,10 @@ class RecommendationResponse(BaseModel):
     assumptions_json: dict
     scenarios_json: dict
     enrichment_log: list
+    agent_opportunity_json: dict
+    linked_step_ids: list
+    domain_id: UUID | None
+    financial_evaluation_status: str
     recommendation_run_id: UUID | None
     generated_at: datetime
     implemented_at: datetime | None

@@ -32,6 +32,7 @@ _SORTABLE = {
     "estimated_roi": Recommendation.estimated_roi,
     "title": Recommendation.title,
     "priority": Recommendation.priority,
+    "confidence": Recommendation.composite_score,
 }
 
 
@@ -258,6 +259,15 @@ async def recommendation_pipeline_status(
             run_status = run.status
 
     config = run.config or {}
+    pending_financial = 0
+    if run and run.status == "completed":
+        pending_financial = await db.scalar(
+            select(func.count()).select_from(Recommendation).where(
+                Recommendation.org_id == org.id,
+                Recommendation.recommendation_run_id == run.id,
+                Recommendation.financial_evaluation_status == "pending",
+            )
+        ) or 0
     return {
         "status": run_status,
         "run_id": str(run.id),
@@ -266,6 +276,7 @@ async def recommendation_pipeline_status(
         "current_stage": config.get("current_stage"),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "pending_financial_evaluations": int(pending_financial),
     }
 
 
