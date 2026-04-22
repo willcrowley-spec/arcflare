@@ -733,6 +733,297 @@ DISCOVERY_V2_SYNTHESIS_SCHEMA: dict = {
 }
 
 
+AGENT_OPPORTUNITY_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "agent_opportunities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "agent_name": {"type": "string"},
+                    "agent_type": {
+                        "type": "string",
+                        "enum": ["headless", "conversational", "hybrid"],
+                    },
+                    "description": {"type": "string"},
+                    "topics": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "topic_name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "reasoning_type": {
+                                    "type": "string",
+                                    "enum": ["deterministic", "agentic", "hybrid"],
+                                },
+                                "actions_needed": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": [
+                                "topic_name",
+                                "description",
+                                "reasoning_type",
+                                "actions_needed",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "replaces": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "process_id": {"type": "string"},
+                                "process_name": {"type": "string"},
+                                "steps_replaced": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "step_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "replacement_type": {
+                                    "type": "string",
+                                    "enum": ["full", "partial"],
+                                },
+                            },
+                            "required": [
+                                "process_id",
+                                "process_name",
+                                "steps_replaced",
+                                "step_ids",
+                                "replacement_type",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "trigger": {"type": "string"},
+                    "data_requirements": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "integration_points": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "complexity_estimate": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                    },
+                    "confidence": {"type": "number"},
+                    "rationale": {"type": "string"},
+                    "risks": {"type": "string"},
+                    "financial_signals": {
+                        "type": "object",
+                        "properties": {
+                            "actors_impacted": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "estimated_hours_per_week_saved": {"type": "number"},
+                            "estimated_frequency": {
+                                "type": "string",
+                                "enum": ["daily", "weekly", "monthly", "ad-hoc"],
+                            },
+                            "estimated_actor_count": {"type": "number"},
+                            "primary_role_type": {"type": "string"},
+                        },
+                        "required": [
+                            "actors_impacted",
+                            "estimated_hours_per_week_saved",
+                            "estimated_frequency",
+                            "estimated_actor_count",
+                            "primary_role_type",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "required": [
+                    "agent_name",
+                    "agent_type",
+                    "description",
+                    "topics",
+                    "replaces",
+                    "trigger",
+                    "data_requirements",
+                    "integration_points",
+                    "complexity_estimate",
+                    "confidence",
+                    "rationale",
+                    "risks",
+                    "financial_signals",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "uncovered_processes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "process_name": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["process_name", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["agent_opportunities", "uncovered_processes"],
+    "additionalProperties": False,
+}
+
+AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "cross_domain_opportunities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "agent_name": {"type": "string"},
+                    "agent_type": {
+                        "type": "string",
+                        "enum": ["headless", "conversational", "hybrid"],
+                    },
+                    "description": {"type": "string"},
+                    "topics": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "topic_name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "reasoning_type": {"type": "string"},
+                                "actions_needed": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": [
+                                "topic_name",
+                                "description",
+                                "reasoning_type",
+                                "actions_needed",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "replaces": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "process_id": {"type": "string"},
+                                "process_name": {"type": "string"},
+                                "steps_replaced": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "step_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "replacement_type": {
+                                    "type": "string",
+                                    "enum": ["full", "partial"],
+                                },
+                            },
+                            "required": [
+                                "process_id",
+                                "process_name",
+                                "steps_replaced",
+                                "step_ids",
+                                "replacement_type",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "source_domains": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "trigger": {"type": "string"},
+                    "data_requirements": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "integration_points": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "complexity_estimate": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                    },
+                    "confidence": {"type": "number"},
+                    "rationale": {"type": "string"},
+                    "risks": {"type": "string"},
+                    "financial_signals": {
+                        "type": "object",
+                        "properties": {
+                            "actors_impacted": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "estimated_hours_per_week_saved": {"type": "number"},
+                            "estimated_frequency": {"type": "string"},
+                            "estimated_actor_count": {"type": "number"},
+                            "primary_role_type": {"type": "string"},
+                        },
+                        "required": [
+                            "actors_impacted",
+                            "estimated_hours_per_week_saved",
+                            "estimated_frequency",
+                            "estimated_actor_count",
+                            "primary_role_type",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "required": [
+                    "agent_name",
+                    "agent_type",
+                    "description",
+                    "topics",
+                    "replaces",
+                    "source_domains",
+                    "trigger",
+                    "data_requirements",
+                    "integration_points",
+                    "complexity_estimate",
+                    "confidence",
+                    "rationale",
+                    "risks",
+                    "financial_signals",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "merge_suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "agent_a": {"type": "string"},
+                    "agent_b": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["agent_a", "agent_b", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["cross_domain_opportunities", "merge_suggestions"],
+    "additionalProperties": False,
+}
+
+
 OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_domain": DISCOVERY_DOMAIN_SCHEMA,
     "discovery_structure": DISCOVERY_STRUCTURE_SCHEMA,
@@ -745,6 +1036,8 @@ OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_v2_extraction": DISCOVERY_V2_EXTRACTION_SCHEMA,
     "discovery_v2_verification": DISCOVERY_V2_VERIFICATION_SCHEMA,
     "discovery_v2_synthesis": DISCOVERY_V2_SYNTHESIS_SCHEMA,
+    "agent_opportunity": AGENT_OPPORTUNITY_SCHEMA,
+    "agent_opportunity_cross_domain": AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA,
 }
 
 

@@ -189,6 +189,10 @@ def llm_call(
         thinking_budget = get_thinking_budget(operation)
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
+            # json_schema (constrained decoding) works with reasoning_effort;
+            # json_object is a silent no-op on Claude 4.6 — remove it
+            if kwargs.get("response_format", {}).get("type") == "json_object":
+                kwargs.pop("response_format", None)
         elif thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             kwargs["max_tokens"] = max(kwargs["max_tokens"], thinking_budget + 1024)
