@@ -63,7 +63,16 @@ def _build_agent_recommendation(
                 "trigger": opp.get("trigger"),
             }
         ],
-        actions_json=opp.get("topics", []),
+        actions_json=[
+            {
+                "step": i + 1,
+                "action": f"{t.get('topic_name', 'Step')}: {t.get('description', '')}".strip(": "),
+                "effort": {"deterministic": "low", "hybrid": "medium", "agentic": "high"}.get(
+                    t.get("reasoning_type", ""), "medium"
+                ),
+            }
+            for i, t in enumerate(opp.get("topics", []))
+        ],
         impact_json={
             "data_requirements": opp.get("data_requirements", []),
             "integration_points": opp.get("integration_points", []),

@@ -58,7 +58,13 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
       return {
         step: typeof o.step === 'number' ? o.step : i + 1,
         action:
-          typeof o.action === 'string' ? o.action : typeof o.title === 'string' ? o.title : 'Action',
+          typeof o.action === 'string'
+            ? o.action
+            : typeof o.title === 'string'
+              ? o.title
+              : typeof o.topic_name === 'string'
+                ? o.topic_name
+                : 'Action',
         effort: typeof o.effort === 'string' ? o.effort : '—',
       }
     }
