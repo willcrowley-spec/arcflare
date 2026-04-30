@@ -46,6 +46,21 @@ const headerOrganizationSwitcherAppearance = {
   },
 }
 
+const salesforceConnectionErrorMessages: Record<string, string> = {
+  salesforce_authorization_blocked:
+    'Salesforce blocked this OAuth flow because the External Client App cannot authorize a different Salesforce org. Install or package the app for that org, or use org-specific OAuth credentials.',
+  salesforce_access_denied: 'Salesforce access was denied before Arcflare received an authorization code.',
+  missing_authorization_code: 'Salesforce did not return an authorization code.',
+  invalid_state: 'The Salesforce authorization session expired. Start the connection again.',
+  token_exchange_failed: 'Arcflare could not exchange the Salesforce authorization code for tokens.',
+  salesforce_already_connected: 'This Arcflare organization already has a Salesforce connection.',
+  salesforce_org_mismatch: 'That reauthorization belongs to a different Salesforce org.',
+}
+
+function formatSalesforceConnectionError(error: string) {
+  return salesforceConnectionErrorMessages[error] ?? error.replace(/_/g, ' ')
+}
+
 function NavItem({ to, label }: { to: string; label: string }) {
   return (
     <NavLink
@@ -351,7 +366,7 @@ export function AppLayout() {
           className="border-b border-red-300 bg-red-50 px-6 py-3 text-center text-sm font-medium text-red-800"
           role="alert"
         >
-          Could not connect Salesforce: {salesforceConnectionError.replace(/_/g, ' ')}.
+          Could not connect Salesforce: {formatSalesforceConnectionError(salesforceConnectionError)}
         </div>
       )}
 

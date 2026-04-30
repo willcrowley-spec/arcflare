@@ -8,6 +8,7 @@ from app.api.routes.connections import (
     _build_oauth_state,
     _extract_salesforce_org_id,
     _parse_oauth_state,
+    _salesforce_authorization_error,
     router,
 )
 from app.core.database import get_db
@@ -54,6 +55,12 @@ def test_extract_salesforce_org_id_from_identity_url():
     tokens = {"id": "https://login.salesforce.com/id/00Dxx000000001A/005xx000000001B"}
 
     assert _extract_salesforce_org_id(tokens) == "00Dxx000000001A"
+
+
+def test_salesforce_authorization_error_maps_cross_org_block():
+    assert _salesforce_authorization_error("OAUTH_AUTHORIZATION_BLOCKED") == (
+        "salesforce_authorization_blocked"
+    )
 
 
 def _callback_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:

@@ -93,6 +93,8 @@ def _extract_salesforce_org_id(tokens: dict) -> str:
 
 
 def _salesforce_authorization_error(error: str | None) -> str:
+    if error == "OAUTH_AUTHORIZATION_BLOCKED":
+        return "salesforce_authorization_blocked"
     if error == "access_denied":
         return "salesforce_access_denied"
     if error in {"invalid_request", "invalid_client", "invalid_scope", "server_error"}:
