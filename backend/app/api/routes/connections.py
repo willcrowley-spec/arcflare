@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json as json_mod
+import logging
 import time
 from typing import AsyncGenerator
 from urllib.parse import urlencode
@@ -21,6 +22,7 @@ from app.schemas.connection import ConnectionList, ConnectionResponse
 from app.workers.metadata_sync import sync_metadata_task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _OAUTH_STATE_TTL_SECONDS = 10 * 60
 
@@ -90,6 +92,14 @@ def _extract_salesforce_org_id(tokens: dict) -> str:
     return parts[0] if parts else ""
 
 
+def _salesforce_authorization_error(error: str | None) -> str:
+    if error == "access_denied":
+        return "salesforce_access_denied"
+    if error in {"invalid_request", "invalid_client", "invalid_scope", "server_error"}:
+        return f"salesforce_{error}"
+    return "salesforce_authorization_failed"
+
+
 @router.post("/salesforce/initiate", status_code=status.HTTP_200_OK)
 async def salesforce_initiate(
     org: CurrentOrg,
@@ -125,13 +135,44 @@ async def salesforce_initiate(
 @router.get("/salesforce/callback")
 async def salesforce_callback(
     db: DbSession,
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    salesforce_error: str | None = Query(default=None, alias="error"),
+    error_description: str | None = Query(default=None),
 ) -> RedirectResponse:
     """OAuth redirect target: exchanges code, stores encrypted tokens, redirects to frontend."""
     from app.core.config import get_settings
 
     settings = get_settings()
+    if salesforce_error:
+        logger.warning(
+            "Salesforce OAuth authorization failed: error=%s description=%s state_present=%s",
+            salesforce_error,
+            error_description,
+            bool(state),
+        )
+        return RedirectResponse(
+            url=_frontend_redirect_url(
+                settings.FRONTEND_URL,
+                connection_error=_salesforce_authorization_error(salesforce_error),
+            ),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not code:
+        logger.warning("Salesforce OAuth callback missing authorization code; state_present=%s", bool(state))
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="missing_authorization_code"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if not state:
+        logger.warning("Salesforce OAuth callback missing state")
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="invalid_state"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
     try:
         raw = _parse_oauth_state(state, settings)
         clerk_org_id = raw["clerk_org_id"]

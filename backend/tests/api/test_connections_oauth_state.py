@@ -1,12 +1,16 @@
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.api.routes.connections import (
     _build_oauth_state,
     _extract_salesforce_org_id,
     _parse_oauth_state,
+    router,
 )
+from app.core.database import get_db
 
 
 def _settings():
@@ -14,6 +18,7 @@ def _settings():
         ENCRYPTION_KEY="state-secret",
         CLERK_SECRET_KEY="",
         SALESFORCE_CLIENT_SECRET="",
+        FRONTEND_URL="https://frontend.test",
     )
 
 
@@ -49,3 +54,46 @@ def test_extract_salesforce_org_id_from_identity_url():
     tokens = {"id": "https://login.salesforce.com/id/00Dxx000000001A/005xx000000001B"}
 
     assert _extract_salesforce_org_id(tokens) == "00Dxx000000001A"
+
+
+def _callback_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    from app.core import config as config_module
+
+    monkeypatch.setattr(config_module, "get_settings", _settings)
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/connections")
+
+    async def _db_override():
+        yield object()
+
+    app.dependency_overrides[get_db] = _db_override
+    return TestClient(app)
+
+
+def test_salesforce_callback_redirects_authorization_errors(monkeypatch: pytest.MonkeyPatch):
+    client = _callback_client(monkeypatch)
+
+    response = client.get(
+        "/api/v1/connections/salesforce/callback?error=access_denied&state=opaque",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        "https://frontend.test/#/analysis?connection_error=salesforce_access_denied"
+    )
+
+
+def test_salesforce_callback_redirects_missing_code(monkeypatch: pytest.MonkeyPatch):
+    client = _callback_client(monkeypatch)
+
+    response = client.get(
+        "/api/v1/connections/salesforce/callback?state=opaque",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == (
+        "https://frontend.test/#/analysis?connection_error=missing_authorization_code"
+    )
