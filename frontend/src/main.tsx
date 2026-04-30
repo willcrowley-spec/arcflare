@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter } from 'react-router-dom'
+import { HashRouter, useNavigate } from 'react-router-dom'
 import { ClerkProvider, useAuth } from '@clerk/clerk-react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
@@ -49,9 +49,30 @@ function ApiTokenBridge() {
 }
 
 function AuthShell({ children }: { children: ReactNode }) {
+  const navigate = useNavigate()
   if (!clerkEnabled) return <>{children}</>
+
+  const normalizeClerkRoute = (to: string) => {
+    try {
+      const url = new URL(to, window.location.origin)
+      if (url.origin === window.location.origin && url.hash.startsWith('#/')) {
+        return `${url.hash.slice(1)}${url.search}`
+      }
+    } catch {
+      // Clerk can pass either absolute URLs or app-relative paths.
+    }
+
+    if (to.startsWith('/#/')) return to.slice(2)
+    if (to.startsWith('#/')) return to.slice(1)
+    return to
+  }
+
   return (
-    <ClerkProvider publishableKey={clerkPubKey}>
+    <ClerkProvider
+      publishableKey={clerkPubKey}
+      routerPush={(to) => navigate(normalizeClerkRoute(to))}
+      routerReplace={(to) => navigate(normalizeClerkRoute(to), { replace: true })}
+    >
       <ApiTokenBridge />
       {children}
     </ClerkProvider>
@@ -60,12 +81,12 @@ function AuthShell({ children }: { children: ReactNode }) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthShell>
-      <QueryClientProvider client={queryClient}>
-        <HashRouter>
+    <HashRouter>
+      <AuthShell>
+        <QueryClientProvider client={queryClient}>
           <App />
-        </HashRouter>
-      </QueryClientProvider>
-    </AuthShell>
+        </QueryClientProvider>
+      </AuthShell>
+    </HashRouter>
   </StrictMode>,
 )
