@@ -30,6 +30,22 @@ const nav = [
   { to: '/agents', label: 'Agents' },
 ]
 
+const headerOrganizationSwitcherAppearance = {
+  elements: {
+    organizationSwitcherTrigger:
+      'h-9 max-w-[190px] rounded-lg bg-white/10 px-2.5 text-white ring-1 ring-white/15 transition-colors hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-orange-300',
+    organizationSwitcherTriggerIcon: 'h-4 w-4 text-slate-200',
+    organizationPreview: 'min-w-0 gap-2',
+    organizationPreviewAvatarContainer: 'shrink-0',
+    organizationPreviewAvatarBox:
+      'h-6 w-6 rounded-md bg-orange-500 text-white ring-1 ring-white/20',
+    organizationPreviewTextContainer: 'min-w-0',
+    organizationPreviewMainIdentifier: 'min-w-0 max-w-[126px] truncate text-sm font-semibold text-white',
+    organizationPreviewMainIdentifierText: 'truncate text-white',
+    organizationPreviewSecondaryIdentifier: 'text-xs text-slate-300',
+  },
+}
+
 function NavItem({ to, label }: { to: string; label: string }) {
   return (
     <NavLink
@@ -271,6 +287,7 @@ export function AppLayout() {
                   <OrganizationSwitcher
                     hidePersonal
                     skipInvitationScreen
+                    appearance={headerOrganizationSwitcherAppearance}
                     afterCreateOrganizationUrl="/#/analysis"
                     afterSelectOrganizationUrl="/#/analysis"
                     afterLeaveOrganizationUrl="/#/analysis"
