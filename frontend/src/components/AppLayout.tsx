@@ -284,14 +284,16 @@ export function AppLayout() {
             {clerkEnabled ? (
               <>
                 <SignedIn>
-                  <OrganizationSwitcher
-                    hidePersonal
-                    skipInvitationScreen
-                    appearance={headerOrganizationSwitcherAppearance}
-                    afterCreateOrganizationUrl="/#/analysis"
-                    afterSelectOrganizationUrl="/#/analysis"
-                    afterLeaveOrganizationUrl="/#/analysis"
-                  />
+                  <span className="arcflare-header-org-switcher">
+                    <OrganizationSwitcher
+                      hidePersonal
+                      skipInvitationScreen
+                      appearance={headerOrganizationSwitcherAppearance}
+                      afterCreateOrganizationUrl="/#/analysis"
+                      afterSelectOrganizationUrl="/#/analysis"
+                      afterLeaveOrganizationUrl="/#/analysis"
+                    />
+                  </span>
                   <UserButton
                     appearance={{
                       elements: {
