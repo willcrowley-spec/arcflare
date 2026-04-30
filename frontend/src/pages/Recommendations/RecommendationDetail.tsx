@@ -164,7 +164,7 @@ const AUTOMATION_COPY: Record<Recommendation['automation_type'], { label: string
   hybrid: {
     label: 'Hybrid',
     detail: 'Deterministic core with AI exception handling',
-    pill: 'bg-blue-50 text-blue-950 ring-blue-200',
+    pill: 'bg-navy-50 text-navy-900 ring-navy-200',
   },
 }
 
@@ -273,7 +273,7 @@ function OverviewTab({ rec, analysis }: { rec: Recommendation; analysis: Record<
       {!analysis.current_state && rec.llm_rationale ? (
         <div>
           <h4 className="text-xs font-bold uppercase tracking-wide text-navy-900">Assessment</h4>
-          <blockquote className="mt-2 border-l-4 border-navy-200 py-3 pl-4 pr-4 text-sm italic leading-relaxed text-slate-700">
+          <blockquote className="mt-2 rounded-lg bg-slate-50 px-4 py-3 text-sm italic leading-relaxed text-slate-700 ring-1 ring-slate-200/80">
             {rec.llm_rationale}
           </blockquote>
         </div>
@@ -463,7 +463,7 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
             <button
               type="button"
               onClick={() => onStatusChange(rec.id, 'implemented')}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-navy-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-800"
             >
               <CheckCheck className="h-3.5 w-3.5" />
               Mark Implemented

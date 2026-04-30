@@ -60,7 +60,7 @@ export function SyncProgressModal({ open, onClose, events, streamStatus, platfor
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/55 px-4"
       onClick={(e) => {
         if (e.target === overlayRef.current) onClose()
       }}
@@ -70,7 +70,7 @@ export function SyncProgressModal({ open, onClose, events, streamStatus, platfor
         role="dialog"
         aria-modal="true"
         aria-labelledby="sync-progress-title"
-        className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl"
+        className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white shadow-xl shadow-navy-900/15"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h2 id="sync-progress-title" className="text-lg font-semibold text-navy-900">

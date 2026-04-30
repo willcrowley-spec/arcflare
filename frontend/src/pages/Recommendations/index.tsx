@@ -528,7 +528,7 @@ export default function RecommendationsPage() {
                       : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
                     key === 'hybrid' &&
                       (on ?
-                        'bg-blue-50 text-blue-900 ring-blue-200'
+                        'bg-navy-50 text-navy-900 ring-navy-200'
                       : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'),
                   )}
                 >

@@ -16,11 +16,10 @@ export function ChatLauncher() {
       title={isOpen ? `Close ${name}` : `Ask ${name}`}
       aria-label={isOpen ? `Close ${name}` : `Ask ${name}`}
       className={clsx(
-        'fixed bottom-5 right-5 z-[60] flex h-13 w-13 items-center justify-center rounded-full shadow-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2',
+        'fixed bottom-5 right-5 z-[60] flex h-13 w-13 items-center justify-center rounded-full shadow-lg transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2',
         isOpen
           ? 'bg-slate-700 text-white hover:bg-slate-600'
-          : 'bg-orange-500 text-white hover:scale-105 hover:bg-orange-400 shadow-orange-500/30',
-        pending > 0 && !isOpen && 'animate-pulse',
+          : 'bg-orange-500 text-white shadow-orange-500/25 hover:bg-orange-400',
       )}
     >
       {isOpen ? (

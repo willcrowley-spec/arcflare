@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    width: 100%;
+    overflow-x: clip;
+  }
+}
+
 @keyframes chat-pop {
   from {
     opacity: 0;
@@ -14,6 +30,17 @@
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @theme {
@@ -84,4 +111,15 @@
 
 .arcflare-header-org-switcher .cl-organizationPreviewAvatarBox svg {
   color: #ffffff !important;
+}
+
+@media (max-width: 480px) {
+  .arcflare-header-org-switcher .cl-organizationSwitcherTrigger {
+    max-width: 150px !important;
+  }
+
+  .arcflare-header-org-switcher .cl-organizationPreviewMainIdentifier,
+  .arcflare-header-org-switcher .cl-organizationPreviewMainIdentifierText {
+    max-width: 88px !important;
+  }
 }

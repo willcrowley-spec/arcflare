@@ -37,13 +37,13 @@ function RevealingReply({
       className={
         'w-fit rounded-full border px-3 py-1.5 text-left text-xs font-medium transition animate-[fade-in_200ms_ease-out] ' +
         (isSelected
-          ? 'border-orange-300 bg-orange-50 text-orange-800'
+          ? 'border-orange-300 bg-orange-50 text-orange-900'
           : isDimmed
             ? 'border-slate-100 bg-slate-50 text-slate-400 cursor-default'
-            : 'border-slate-200 bg-white text-slate-700 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800')
+            : 'border-slate-200 bg-white text-navy-800 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-900')
       }
     >
-      <span className="mr-1.5 font-semibold text-slate-400">{option.id.toUpperCase()}</span>
+      <span className="mr-1.5 font-semibold opacity-70">{option.id.toUpperCase()}</span>
       {animate && !done ? displayed : option.label}
     </button>
   )

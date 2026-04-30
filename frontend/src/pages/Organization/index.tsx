@@ -427,7 +427,7 @@ export default function OrganizationPage() {
                           <button
                             type="button"
                             onClick={() => removeDomain(d)}
-                            className="ml-0.5 rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-400"
+                            className="ml-0.5 rounded-full p-0.5 text-red-500 hover:bg-red-50 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-400"
                             aria-label={`Remove ${d}`}
                           >
                             <X className="h-2.5 w-2.5" />

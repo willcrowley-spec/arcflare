@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
 import clsx from 'clsx'
 
 interface PlatformEntry {
   id: string
   label: string
   description: string
-  enabled: boolean
-  color: string
   logo: string
 }
 
@@ -15,42 +13,8 @@ const PLATFORMS: PlatformEntry[] = [
   {
     id: 'salesforce',
     label: 'Salesforce',
-    description: 'CRM, metadata, automations, licensing',
-    enabled: true,
-    color: 'bg-sky-50 text-sky-700 ring-sky-200',
+    description: 'CRM metadata, automations, licensing, and org health',
     logo: 'SF',
-  },
-  {
-    id: 'hubspot',
-    label: 'HubSpot',
-    description: 'Marketing, sales, and service hub',
-    enabled: false,
-    color: 'bg-orange-50 text-orange-700 ring-orange-200',
-    logo: 'HS',
-  },
-  {
-    id: 'netsuite',
-    label: 'NetSuite',
-    description: 'ERP, financials, and operations',
-    enabled: false,
-    color: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    logo: 'NS',
-  },
-  {
-    id: 'mulesoft',
-    label: 'MuleSoft',
-    description: 'Integration and API management',
-    enabled: false,
-    color: 'bg-violet-50 text-violet-700 ring-violet-200',
-    logo: 'MS',
-  },
-  {
-    id: 'confluence',
-    label: 'Confluence',
-    description: 'Documentation and knowledge base',
-    enabled: false,
-    color: 'bg-blue-50 text-blue-700 ring-blue-200',
-    logo: 'CF',
   },
 ]
 
@@ -107,7 +71,7 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-navy-900/55 px-4"
       onClick={(e) => {
         if (e.target === overlayRef.current) onClose()
       }}
@@ -117,11 +81,11 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
         role="dialog"
         aria-modal="true"
         aria-labelledby="connect-platform-title"
-        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl"
+        className="w-full max-w-md rounded-lg border border-slate-200 bg-white shadow-xl shadow-navy-900/15"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
           <h2 id="connect-platform-title" className="text-lg font-semibold text-navy-900">
-            Connect a Platform
+            Connect Salesforce
           </h2>
           <button
             ref={closeRef}
@@ -139,20 +103,15 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
             <button
               key={p.id}
               type="button"
-              disabled={!p.enabled || connecting}
-              onClick={() => p.enabled && onSelectPlatform(p.id)}
+              disabled={connecting}
+              onClick={() => onSelectPlatform(p.id)}
               className={clsx(
-                'flex w-full items-center gap-4 rounded-xl px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-200',
-                p.enabled
-                  ? 'hover:bg-slate-50 active:bg-slate-100'
-                  : 'cursor-not-allowed opacity-50',
+                'flex w-full items-center gap-4 rounded-lg px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-200',
+                connecting ? 'cursor-wait opacity-70' : 'hover:bg-slate-50 active:bg-slate-100',
               )}
             >
               <span
-                className={clsx(
-                  'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg text-xs font-bold ring-1 ring-inset',
-                  p.color,
-                )}
+                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-navy-50 text-xs font-bold text-navy-800 ring-1 ring-inset ring-navy-200"
               >
                 {p.logo}
               </span>
@@ -160,22 +119,14 @@ export function ConnectPlatformModal({ open, onClose, onSelectPlatform, connecti
                 <p className="text-sm font-semibold text-slate-900">{p.label}</p>
                 <p className="text-xs text-slate-500">{p.description}</p>
               </div>
-              {p.enabled ? (
-                <svg className="h-5 w-5 flex-shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              ) : (
-                <span className="flex-shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Coming soon
-                </span>
-              )}
+              <ChevronRight className="h-5 w-5 flex-shrink-0 text-slate-400" />
             </button>
           ))}
         </div>
 
         <div className="border-t border-slate-100 px-6 py-3">
-          <p className="text-center text-xs text-slate-400">
-            Additional platforms will be available in future releases.
+          <p className="text-xs leading-relaxed text-slate-500">
+            Arcflare will redirect you to Salesforce to review permissions before the connection is saved.
           </p>
         </div>
       </div>

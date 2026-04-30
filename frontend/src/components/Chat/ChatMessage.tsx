@@ -130,9 +130,9 @@ export function ChatMessage({ message, onQuickReply, animate, onTick }: Props) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end px-2 py-1.5">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-blue-50 px-3.5 py-2 text-sm leading-relaxed text-slate-800 shadow-sm ring-1 ring-blue-100/80">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-navy-50 px-3.5 py-2 text-sm leading-relaxed text-navy-900 shadow-sm ring-1 ring-navy-100">
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          <p className="mt-1 text-right text-[10px] text-slate-400">{time}</p>
+          <p className="mt-1 text-right text-[10px] text-navy-500">{time}</p>
         </div>
       </div>
     )

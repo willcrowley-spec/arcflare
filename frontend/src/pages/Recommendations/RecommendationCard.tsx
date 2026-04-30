@@ -80,7 +80,7 @@ export function RecommendationCard({
 }: RecommendationCardProps) {
   const typePill =
     rec.recommendation_type === 'synthesized'
-      ? 'bg-purple-50 text-purple-900 ring-purple-200'
+      ? 'bg-navy-50 text-navy-900 ring-navy-200'
       : 'bg-navy-50 text-navy-900 ring-navy-200'
 
   const autoPill =
@@ -88,7 +88,7 @@ export function RecommendationCard({
       ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
       : rec.automation_type === 'agentic'
         ? 'bg-orange-50 text-orange-900 ring-orange-200'
-        : 'bg-blue-50 text-blue-900 ring-blue-200'
+        : 'bg-navy-50 text-navy-900 ring-navy-200'
 
   const npvRange = extractNpvRange(rec.scenarios_json)
   const hasNpvBand =
@@ -116,7 +116,7 @@ export function RecommendationCard({
         'relative flex cursor-pointer flex-col rounded-xl border border-slate-200/80 bg-white p-5 pr-12 shadow-sm ring-1 ring-slate-900/5 transition-colors',
         'hover:border-slate-300 hover:shadow-md',
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-700',
-        isExpanded && 'border-l-4 border-l-navy-700 border-slate-200/80 ring-2 ring-navy-900/10',
+        isExpanded && 'border-navy-300 bg-navy-50/30 ring-2 ring-navy-900/10',
       )}
     >
       <div

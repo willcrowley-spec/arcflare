@@ -9,7 +9,7 @@ import {
   UserButton,
   useAuth,
 } from '@clerk/clerk-react'
-import { Bot, Bell, Settings, User, Zap, Shield, BarChart3, ArrowRight } from 'lucide-react'
+import { Bot, User, Zap, Shield, BarChart3, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
 import { clerkEnabled } from '@/main'
 import { ChatLauncher } from '@/components/Chat/ChatLauncher'
@@ -264,9 +264,9 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
       <header className="border-b border-white/10 bg-navy-800 text-white shadow-md">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-6 py-4">
-          <div className="flex items-center gap-10">
-            <div className="flex items-center gap-2">
+        <div className="mx-auto box-border flex max-w-[1400px] flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-6 lg:gap-10">
+            <div className="flex min-w-0 items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/10">
                 <Bot className="h-5 w-5 text-orange-300" strokeWidth={1.75} />
               </span>
@@ -275,27 +275,13 @@ export function AppLayout() {
                 <p className="text-[11px] text-slate-300">Enterprise Intelligence</p>
               </div>
             </div>
-            <nav className="hidden items-center gap-8 md:flex">
+            <nav className="hidden items-center gap-5 lg:flex lg:gap-8">
               {nav.map((item) => (
                 <NavItem key={item.to} {...item} />
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              className="rounded-lg p-2.5 text-slate-200 hover:bg-white/10 hover:text-white"
-              aria-label="Notifications"
-            >
-              <Bell className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              className="rounded-lg p-2.5 text-slate-200 hover:bg-white/10 hover:text-white"
-              aria-label="Settings"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {clerkEnabled ? (
               <>
                 <SignedIn>
@@ -335,7 +321,7 @@ export function AppLayout() {
             )}
           </div>
         </div>
-        <div className="border-t border-white/10 px-6 py-2 md:hidden">
+        <div className="border-t border-white/10 px-4 py-2 sm:px-6 lg:hidden">
           <nav className="flex flex-wrap gap-x-4 gap-y-2">
             {nav.map((item) => (
               <NavLink
@@ -370,18 +356,13 @@ export function AppLayout() {
         </div>
       )}
 
-      <main className="mx-auto w-full max-w-[1400px] flex-1 px-6 py-8">
+      <main className="mx-auto box-border w-full max-w-[1400px] flex-1 px-4 py-8 sm:px-6">
         <Outlet />
       </main>
 
       <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-3 px-6 py-6 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto box-border flex max-w-[1400px] flex-col gap-3 px-4 py-6 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <p>© {new Date().getFullYear()} Arcflare AI. All rights reserved.</p>
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-slate-400">
-            <span>System Status</span>
-            <span>API Docs</span>
-            <span>Support</span>
-          </div>
         </div>
       </footer>
 

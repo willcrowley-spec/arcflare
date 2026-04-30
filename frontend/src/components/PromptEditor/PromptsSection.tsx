@@ -117,7 +117,7 @@ export function PromptsSection() {
                             onClick={() => setSelectedOperationId(op.operation_id)}
                             className={clsx(
                               'w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition',
-                              selected ? 'bg-blue-50 font-medium text-blue-700' : 'text-slate-700 hover:bg-slate-50',
+                              selected ? 'bg-navy-50 font-medium text-navy-800' : 'text-slate-700 hover:bg-slate-50',
                             )}
                           >
                             {op.label}

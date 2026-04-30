@@ -190,15 +190,15 @@ export function ChatPanel() {
   return (
     <div
       className={clsx(
-        'fixed bottom-20 right-5 z-50 flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl shadow-slate-900/12',
-        'w-[min(96vw,420px)]',
+        'fixed bottom-20 right-4 z-50 flex flex-col overflow-hidden rounded-lg border border-slate-200/80 bg-white shadow-xl shadow-navy-900/12 sm:right-5',
+        'w-[calc(100vw_-_2rem)] sm:w-[min(96vw,420px)]',
         hasMessages ? 'h-[min(85vh,600px)]' : 'h-auto max-h-[min(85vh,600px)]',
         'animate-[chat-pop_200ms_ease-out]',
       )}
       style={{ transformOrigin: 'bottom right' }}
     >
       {/* Header */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3">
+      <header className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500 text-white shadow-sm">
           <Sparkles className="h-4 w-4" />
         </div>
@@ -338,7 +338,7 @@ export function ChatPanel() {
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {!activeThreadId && !detailLoading ? (
           <div className="flex flex-col items-center px-6 py-10 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-orange-500">
+            <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
               <MessageSquareText className="h-6 w-6" strokeWidth={1.5} />
             </div>
             <p className="mt-3 text-sm font-semibold text-slate-800">{agentName}</p>
@@ -358,7 +358,7 @@ export function ChatPanel() {
                     setInput(q)
                     inputRef.current?.focus()
                   }}
-                  className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-left text-xs text-slate-600 transition hover:border-orange-200 hover:bg-orange-50/50 hover:text-orange-700"
+                  className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-left text-xs text-navy-800 transition hover:border-orange-200 hover:bg-orange-50/70 hover:text-orange-900"
                 >
                   {q}
                 </button>
