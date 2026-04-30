@@ -26,6 +26,7 @@ class CurrentUser(BaseModel):
     clerk_user_id: str
     email: str | None = None
     org_id: str | None = None
+    org_name: str | None = None
     raw_claims: dict[str, Any] = {}
 
 
@@ -122,6 +123,19 @@ async def verify_clerk_jwt(token: str, settings: Settings | None = None) -> dict
     return claims
 
 
+def extract_clerk_org_context(claims: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return the active Clerk organization id/name from verified session claims."""
+    org_id = claims.get("org_id")
+    org_name = claims.get("org_name")
+
+    org_claim = claims.get("o")
+    if isinstance(org_claim, dict):
+        org_id = org_id or org_claim.get("id")
+        org_name = org_name or org_claim.get("name") or org_claim.get("slug") or org_claim.get("slg")
+
+    return (str(org_id) if org_id else None, str(org_name) if org_name else None)
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     settings: Settings = Depends(get_settings),
@@ -136,21 +150,13 @@ async def get_current_user(
     if not sub:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
 
-    org_id = (
-        claims.get("org_id")
-        or (claims.get("o") or {}).get("id")
-        if isinstance(claims.get("o"), dict)
-        else None
-    )
-    if org_id is None:
-        org_role = claims.get("org_role")
-        if isinstance(org_role, str) and ":" in org_role:
-            org_id = org_role.split(":", 1)[0]
+    org_id, org_name = extract_clerk_org_context(claims)
 
     return CurrentUser(
         clerk_user_id=sub,
         email=claims.get("email"),
         org_id=str(org_id) if org_id else None,
+        org_name=org_name,
         raw_claims=claims,
     )
 

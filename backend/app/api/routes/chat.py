@@ -13,11 +13,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
+from app.api.deps import CurrentOrg, CurrentUserDep, DbSession, get_or_create_org_user
 from app.core.observability import langfuse_context, langfuse_generation, langfuse_span
-from app.core.security import CurrentUser
 from app.models.chat import ChatAction, ChatMessage, ChatThread
-from app.models.organization import Organization, User
 from app.schemas.chat import (
     ActionConfirm,
     ActionResponse,
@@ -133,53 +131,6 @@ def _collect_stream_chunks(
     ]
 
 
-async def _get_or_create_user(
-    db: DbSession,
-    org: Organization,
-    current_user: CurrentUser,
-) -> User:
-    res = await db.execute(
-        select(User).where(
-            User.clerk_user_id == current_user.clerk_user_id,
-            User.org_id == org.id,
-        )
-    )
-    row = res.scalar_one_or_none()
-    if row is not None:
-        return row
-    row = User(
-        org_id=org.id,
-        clerk_user_id=current_user.clerk_user_id,
-        email=current_user.email,
-        display_name=None,
-        role="member",
-    )
-    db.add(row)
-    try:
-        await db.commit()
-        await db.refresh(row)
-        logger.info("auto_created_user clerk_user_id=%s org_id=%s", current_user.clerk_user_id, org.id)
-        return row
-    except Exception as e:
-        await db.rollback()
-        logger.warning("user_create_failed retry_lookup error=%s", e)
-        res2 = await db.execute(
-            select(User).where(User.clerk_user_id == current_user.clerk_user_id)
-        )
-        existing = res2.scalar_one_or_none()
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Could not resolve user record",
-            ) from e
-        if existing.org_id != org.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User is not registered for this organization",
-            )
-        return existing
-
-
 @router.post("/threads", response_model=ThreadResponse, status_code=status.HTTP_201_CREATED)
 async def create_thread(
     body: ThreadCreate,
@@ -187,7 +138,7 @@ async def create_thread(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ChatThread:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     thread = ChatThread(
         org_id=org.id,
         user_id=u.id,
@@ -208,7 +159,7 @@ async def list_threads(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ThreadListResponse:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatThread)
         .where(
@@ -230,7 +181,7 @@ async def get_thread_detail(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ThreadDetailResponse:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatThread)
         .options(
@@ -263,7 +214,7 @@ async def archive_thread(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ChatThread:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatThread).where(
             ChatThread.id == thread_id,
@@ -288,7 +239,7 @@ async def send_message(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> StreamingResponse:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatThread).where(
             ChatThread.id == thread_id,
@@ -587,7 +538,7 @@ async def confirm_action(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ChatAction:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatAction)
         .join(ChatThread, ChatThread.id == ChatAction.thread_id)
@@ -627,7 +578,7 @@ async def reject_action(
     org: CurrentOrg,
     user: CurrentUserDep,
 ) -> ChatAction:
-    u = await _get_or_create_user(db, org, user)
+    u = await get_or_create_org_user(db, org, user)
     q = await db.execute(
         select(ChatAction)
         .join(ChatThread, ChatThread.id == ChatAction.thread_id)

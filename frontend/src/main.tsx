@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, type ReactNode } from 'react'
+import { StrictMode, useEffect, useRef, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import { ClerkProvider, useAuth } from '@clerk/clerk-react'
@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import './index.css'
 import { setApiTokenGetter } from '@/api/client'
+import { useChatStore } from '@/stores/chatStore'
+import { useConnectionStore } from '@/stores/connectionStore'
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY || ''
 export const clerkEnabled = !!clerkPubKey
@@ -15,16 +17,33 @@ const queryClient = new QueryClient({
 })
 
 function ApiTokenBridge() {
-  const { getToken, isSignedIn } = useAuth()
+  const { getToken, isSignedIn, orgId } = useAuth()
+  const lastOrgIdRef = useRef<string | null | undefined>(undefined)
 
   useEffect(() => {
-    if (!isSignedIn) {
+    const resetOrgScopedState = () => {
+      queryClient.clear()
+      useConnectionStore.getState().reset()
+      useChatStore.getState().reset()
+    }
+
+    if (!isSignedIn || !orgId) {
       setApiTokenGetter(null)
+      if (lastOrgIdRef.current !== undefined && lastOrgIdRef.current !== null) {
+        resetOrgScopedState()
+      }
+      lastOrgIdRef.current = orgId ?? null
       return
     }
-    setApiTokenGetter(() => getToken())
+
+    if (lastOrgIdRef.current !== undefined && lastOrgIdRef.current !== orgId) {
+      resetOrgScopedState()
+    }
+    lastOrgIdRef.current = orgId
+    void getToken({ organizationId: orgId, skipCache: true })
+    setApiTokenGetter(() => getToken({ organizationId: orgId }))
     return () => setApiTokenGetter(null)
-  }, [getToken, isSignedIn])
+  }, [getToken, isSignedIn, orgId])
 
   return null
 }

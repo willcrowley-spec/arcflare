@@ -4,10 +4,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from app.api.deps import CurrentOrg, CurrentUserDep, DbSession
+from app.api.deps import CurrentOrg, CurrentUserDep, DbSession, get_or_create_org_user
 from app.models.document import Document, DocumentChunk
 from app.models.knowledge import Community, Concept, ProcessDocumentSource
-from app.models.organization import User
 from app.schemas.knowledge import CommunityResponse, ProvenanceResponse
 from app.schemas.common import PaginatedResponse
 from app.schemas.document import (
@@ -36,10 +35,8 @@ async def upload_document(
     user: CurrentUserDep,
     file: UploadFile = File(...),
 ) -> DocumentUploadResponse:
-    res = await db.execute(select(User).where(User.clerk_user_id == user.clerk_user_id))
-    db_user = res.scalar_one_or_none()
-    user_id = db_user.id if db_user else None
-    doc, is_new = await handle_upload(file, org.id, user_id, db)
+    db_user = await get_or_create_org_user(db, org, user)
+    doc, is_new = await handle_upload(file, org.id, db_user.id, db)
     await db.commit()
     if is_new:
         vectorize_document_task.delay(str(doc.id))

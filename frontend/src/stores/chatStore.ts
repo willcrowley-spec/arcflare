@@ -23,6 +23,7 @@ interface ChatState {
   dismissGap: (id: string) => void
   undoGapDismiss: (id: string) => void
   clearDismissedGap: (id: string) => void
+  reset: () => void
 }
 
 const UNDO_DELAY = 5000
@@ -85,6 +86,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const next = new Map(s.dismissedGaps)
       next.delete(id)
       return { dismissedGaps: next }
+    })
+  },
+
+  reset: () => {
+    for (const timer of get().dismissedGaps.values()) {
+      clearTimeout(timer)
+    }
+    set({
+      isOpen: false,
+      activeThreadId: null,
+      anchorContext: null,
+      initialPrompt: null,
+      streamingMessageId: null,
+      pendingActionsCount: 0,
+      dismissedGaps: new Map(),
+      thinkingPhase: null,
     })
   },
 }))

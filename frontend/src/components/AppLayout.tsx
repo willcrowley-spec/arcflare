@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { SignedIn, SignedOut, SignInButton, UserButton, useAuth, ClerkLoaded, ClerkLoading } from '@clerk/clerk-react'
+import {
+  OrganizationList,
+  OrganizationSwitcher,
+  SignedIn,
+  SignedOut,
+  SignInButton,
+  UserButton,
+  useAuth,
+} from '@clerk/clerk-react'
 import { Bot, Bell, Settings, User, Zap, Shield, BarChart3, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
 import { clerkEnabled } from '@/main'
@@ -8,7 +16,7 @@ import { ChatLauncher } from '@/components/Chat/ChatLauncher'
 import { ChatPanel } from '@/components/Chat/ChatPanel'
 
 function useClerkAuthSafe() {
-  if (!clerkEnabled) return { isSignedIn: false, isLoaded: true }
+  if (!clerkEnabled) return { isSignedIn: false, isLoaded: true, orgId: null }
   // eslint-disable-next-line react-hooks/rules-of-hooks
   return useAuth()
 }
@@ -137,23 +145,69 @@ function LandingPage() {
   )
 }
 
+function OrganizationGate() {
+  return (
+    <div className="flex min-h-screen flex-col bg-navy-900">
+      <header className="border-b border-white/10 bg-navy-900">
+        <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-5">
+          <div className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/10">
+              <Bot className="h-5 w-5 text-orange-300" strokeWidth={1.75} />
+            </span>
+            <div className="leading-tight">
+              <p className="text-sm font-semibold tracking-tight text-white">Arcflare</p>
+              <p className="text-[11px] text-slate-400">Enterprise Intelligence</p>
+            </div>
+          </div>
+          <UserButton
+            appearance={{
+              elements: {
+                userButtonAvatarBox: 'h-9 w-9 ring-2 ring-white/20',
+              },
+            }}
+          />
+        </div>
+      </header>
+
+      <main className="flex flex-1 items-center justify-center px-6 py-16">
+        <div className="w-full max-w-lg">
+          <OrganizationList
+            hidePersonal
+            skipInvitationScreen
+            afterCreateOrganizationUrl="/#/analysis"
+            afterSelectOrganizationUrl="/#/analysis"
+          />
+        </div>
+      </main>
+    </div>
+  )
+}
+
 export function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { isSignedIn, isLoaded } = useClerkAuthSafe()
+  const { isSignedIn, isLoaded, orgId } = useClerkAuthSafe()
   const [salesforceConnectedBanner, setSalesforceConnectedBanner] = useState(false)
+  const [salesforceConnectionError, setSalesforceConnectionError] = useState<string | null>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    if (params.get('connected') !== 'salesforce') return
+    const connected = params.get('connected') === 'salesforce'
+    const connectionError = params.get('connection_error')
+    if (!connected && !connectionError) return
 
-    setSalesforceConnectedBanner(true)
+    setSalesforceConnectedBanner(connected)
+    setSalesforceConnectionError(connectionError)
     params.delete('connected')
+    params.delete('connection_error')
     const qs = params.toString()
     const next = `${location.pathname}${qs ? `?${qs}` : ''}${location.hash}`
     navigate(next, { replace: true })
 
-    const timer = window.setTimeout(() => setSalesforceConnectedBanner(false), 6000)
+    const timer = window.setTimeout(() => {
+      setSalesforceConnectedBanner(false)
+      setSalesforceConnectionError(null)
+    }, 6000)
     return () => window.clearTimeout(timer)
   }, [location.hash, location.pathname, location.search, navigate])
 
@@ -170,6 +224,10 @@ export function AppLayout() {
 
   if (clerkEnabled && !isSignedIn) {
     return <LandingPage />
+  }
+
+  if (clerkEnabled && !orgId) {
+    return <OrganizationGate />
   }
 
   return (
@@ -210,6 +268,13 @@ export function AppLayout() {
             {clerkEnabled ? (
               <>
                 <SignedIn>
+                  <OrganizationSwitcher
+                    hidePersonal
+                    skipInvitationScreen
+                    afterCreateOrganizationUrl="/#/analysis"
+                    afterSelectOrganizationUrl="/#/analysis"
+                    afterLeaveOrganizationUrl="/#/analysis"
+                  />
                   <UserButton
                     appearance={{
                       elements: {
@@ -259,6 +324,15 @@ export function AppLayout() {
           role="status"
         >
           Salesforce connected successfully. Metadata sync has been queued.
+        </div>
+      )}
+
+      {salesforceConnectionError && (
+        <div
+          className="border-b border-red-300 bg-red-50 px-6 py-3 text-center text-sm font-medium text-red-800"
+          role="alert"
+        >
+          Could not connect Salesforce: {salesforceConnectionError.replace(/_/g, ' ')}.
         </div>
       )}
 

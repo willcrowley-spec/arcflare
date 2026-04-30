@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import hashlib
+import hmac
 import json as json_mod
-from datetime import UTC, datetime
+import time
 from typing import AsyncGenerator
+from urllib.parse import urlencode
 from uuid import UUID
 
-import redis
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import delete, select as sa_select
@@ -20,16 +22,102 @@ from app.workers.metadata_sync import sync_metadata_task
 
 router = APIRouter()
 
+_OAUTH_STATE_TTL_SECONDS = 10 * 60
+
+
+def _frontend_redirect_url(base_url: str, **params: str) -> str:
+    query = urlencode({k: v for k, v in params.items() if v})
+    return f"{base_url.rstrip('/')}/#/analysis{f'?{query}' if query else ''}"
+
+
+def _state_secret(settings: object) -> bytes:
+    for name in ("ENCRYPTION_KEY", "CLERK_SECRET_KEY", "SALESFORCE_CLIENT_SECRET"):
+        value = str(getattr(settings, name, "") or "").strip()
+        if value:
+            return value.encode("utf-8")
+    raise RuntimeError("No application secret available for OAuth state signing")
+
+
+def _b64_json(data: dict) -> str:
+    raw = json_mod.dumps(data, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64_bytes(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _unb64_json(data: str) -> dict:
+    padded = data + "=" * (-len(data) % 4)
+    return json_mod.loads(base64.urlsafe_b64decode(padded.encode("utf-8")))
+
+
+def _build_oauth_state(payload: dict, settings: object) -> str:
+    body = dict(payload)
+    body["ts"] = int(time.time())
+    encoded = _b64_json(body)
+    sig = hmac.new(_state_secret(settings), encoded.encode("utf-8"), hashlib.sha256).digest()
+    return f"{encoded}.{_b64_bytes(sig)}"
+
+
+def _parse_oauth_state(state: str, settings: object) -> dict:
+    try:
+        encoded, supplied_sig = state.split(".", 1)
+    except ValueError as exc:
+        raise ValueError("Invalid OAuth state format") from exc
+
+    expected = hmac.new(_state_secret(settings), encoded.encode("utf-8"), hashlib.sha256).digest()
+    padded_sig = supplied_sig + "=" * (-len(supplied_sig) % 4)
+    try:
+        supplied = base64.urlsafe_b64decode(padded_sig.encode("utf-8"))
+    except Exception as exc:
+        raise ValueError("Invalid OAuth state signature") from exc
+    if not hmac.compare_digest(expected, supplied):
+        raise ValueError("Invalid OAuth state signature")
+
+    payload = _unb64_json(encoded)
+    ts = int(payload.get("ts") or 0)
+    if ts <= 0 or int(time.time()) - ts > _OAUTH_STATE_TTL_SECONDS:
+        raise ValueError("Expired OAuth state")
+    return payload
+
+
+def _extract_salesforce_org_id(tokens: dict) -> str:
+    id_url = str(tokens.get("id") or "")
+    if "/id/" not in id_url:
+        return ""
+    parts = id_url.split("/id/", 1)[1].split("/")
+    return parts[0] if parts else ""
+
 
 @router.post("/salesforce/initiate", status_code=status.HTTP_200_OK)
 async def salesforce_initiate(
     org: CurrentOrg,
     user: CurrentUserDep,
+    db: DbSession,
 ) -> dict[str, str]:
     """Start Salesforce OAuth; returns authorize URL and opaque state."""
-    del user  # reserved for audit logging
-    payload = {"clerk_org_id": org.clerk_org_id, "ts": datetime.now(tz=UTC).isoformat()}
-    oauth_state = base64.urlsafe_b64encode(json_mod.dumps(payload).encode("utf-8")).decode("utf-8")
+    existing = await db.execute(
+        sa_select(PlatformConnection).where(
+            PlatformConnection.org_id == org.id,
+            PlatformConnection.platform_type == "salesforce",
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Salesforce is already connected for this organization",
+        )
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    payload = {
+        "action": "connect",
+        "clerk_org_id": org.clerk_org_id,
+        "clerk_user_id": user.clerk_user_id,
+    }
+    oauth_state = _build_oauth_state(payload, settings)
     url, _ = sf_oauth.generate_auth_url(oauth_state=oauth_state)
     return {"authorization_url": url, "state": oauth_state}
 
@@ -45,11 +133,14 @@ async def salesforce_callback(
 
     settings = get_settings()
     try:
-        padded = state + "=" * (-len(state) % 4)
-        raw = json_mod.loads(base64.urlsafe_b64decode(padded.encode("utf-8")))
+        raw = _parse_oauth_state(state, settings)
         clerk_org_id = raw["clerk_org_id"]
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid state") from exc
+        action = raw.get("action")
+    except Exception:
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="invalid_state"),
+            status_code=status.HTTP_302_FOUND,
+        )
 
     from app.models.organization import Organization
 
@@ -58,34 +149,70 @@ async def salesforce_callback(
     )
     org = org_result.scalar_one_or_none()
     if org is None:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    tokens = await sf_oauth.handle_callback(code)
-    enc = encrypt_tokens(json_mod.dumps(tokens), settings)
-
-    # Extract Salesforce org ID from the token "id" URL
-    # Format: https://login.salesforce.com/id/00Dxx.../005xx...
-    sf_org_id = ""
-    id_url = tokens.get("id", "")
-    if "/id/" in id_url:
-        parts = id_url.split("/id/")[1].split("/")
-        sf_org_id = parts[0] if parts else ""
-
-    # Upsert: find existing connection for this SF org, or create new
-    existing = await db.execute(
-        sa_select(PlatformConnection).where(
-            PlatformConnection.org_id == org.id,
-            PlatformConnection.platform_type == "salesforce",
-            PlatformConnection.platform_org_id == sf_org_id,
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="org_not_found"),
+            status_code=status.HTTP_302_FOUND,
         )
-    )
-    conn = existing.scalar_one_or_none()
 
-    if conn:
+    try:
+        tokens = await sf_oauth.handle_callback(code)
+    except Exception:
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="token_exchange_failed"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    sf_org_id = _extract_salesforce_org_id(tokens)
+    if not sf_org_id:
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="missing_salesforce_org"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    try:
+        enc = encrypt_tokens(json_mod.dumps(tokens), settings)
+    except Exception:
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="token_storage_failed"),
+            status_code=status.HTTP_302_FOUND,
+        )
+
+    if action == "reauth":
+        raw_connection_id = raw.get("connection_id")
+        try:
+            connection_id = UUID(str(raw_connection_id))
+        except (TypeError, ValueError):
+            return RedirectResponse(
+                url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="invalid_connection"),
+                status_code=status.HTTP_302_FOUND,
+            )
+        conn = await db.get(PlatformConnection, connection_id)
+        if conn is None or conn.org_id != org.id or conn.platform_type != "salesforce":
+            return RedirectResponse(
+                url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="connection_not_found"),
+                status_code=status.HTTP_302_FOUND,
+            )
+        if conn.platform_org_id and conn.platform_org_id != sf_org_id:
+            return RedirectResponse(
+                url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="salesforce_org_mismatch"),
+                status_code=status.HTTP_302_FOUND,
+            )
+        conn.platform_org_id = sf_org_id
         conn.oauth_tokens_encrypted = enc
         conn.instance_url = tokens.get("instance_url")
         conn.status = "connected"
-    else:
+    elif action == "connect":
+        existing = await db.execute(
+            sa_select(PlatformConnection).where(
+                PlatformConnection.org_id == org.id,
+                PlatformConnection.platform_type == "salesforce",
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            return RedirectResponse(
+                url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="salesforce_already_connected"),
+                status_code=status.HTTP_302_FOUND,
+            )
         conn = PlatformConnection(
             org_id=org.id,
             platform_type="salesforce",
@@ -98,6 +225,11 @@ async def salesforce_callback(
             sync_config_json={},
         )
         db.add(conn)
+    else:
+        return RedirectResponse(
+            url=_frontend_redirect_url(settings.FRONTEND_URL, connection_error="invalid_action"),
+            status_code=status.HTTP_302_FOUND,
+        )
 
     await db.commit()
     await db.refresh(conn)
@@ -116,7 +248,6 @@ async def reauth_connection(
     db: DbSession,
 ) -> dict[str, str]:
     """Start OAuth re-authentication for an existing connection."""
-    del user
     conn = await db.get(PlatformConnection, connection_id)
     if conn is None or conn.org_id != org.id:
         raise HTTPException(status_code=404, detail="Connection not found")
@@ -124,12 +255,16 @@ async def reauth_connection(
     if conn.platform_type != "salesforce":
         raise HTTPException(status_code=400, detail=f"Re-auth not yet supported for {conn.platform_type}")
 
+    from app.core.config import get_settings
+
+    settings = get_settings()
     payload = {
+        "action": "reauth",
         "clerk_org_id": org.clerk_org_id,
-        "ts": datetime.now(tz=UTC).isoformat(),
+        "clerk_user_id": user.clerk_user_id,
         "connection_id": str(connection_id),
     }
-    oauth_state = base64.urlsafe_b64encode(json_mod.dumps(payload).encode("utf-8")).decode("utf-8")
+    oauth_state = _build_oauth_state(payload, settings)
     url, _ = sf_oauth.generate_auth_url(oauth_state=oauth_state)
     return {"authorization_url": url, "state": oauth_state}
 

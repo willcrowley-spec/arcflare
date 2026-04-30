@@ -8,6 +8,7 @@ type ConnectionState = {
   upsertConnection: (connection: PlatformConnection) => void
   removeConnection: (id: string) => void
   select: (id: string | null) => void
+  reset: () => void
 }
 
 export const useConnectionStore = create<ConnectionState>((set) => ({
@@ -28,4 +29,5 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
       selectedId: s.selectedId === id ? null : s.selectedId,
     })),
   select: (id) => set({ selectedId: id }),
+  reset: () => set({ connections: [], selectedId: null }),
 }))
