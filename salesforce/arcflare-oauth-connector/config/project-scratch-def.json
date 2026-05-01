@@ -1,0 +1,7 @@
+{
+  "orgName": "Arcflare OAuth Connector Package Build",
+  "edition": "Developer",
+  "features": [
+    "ExternalClientApps"
+  ]
+}

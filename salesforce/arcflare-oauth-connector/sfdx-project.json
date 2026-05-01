@@ -1,0 +1,21 @@
+{
+  "packageDirectories": [
+    {
+      "path": "force-app",
+      "default": true,
+      "package": "Arcflare OAuth Connector",
+      "versionName": "1.0.0",
+      "versionNumber": "1.0.0.NEXT",
+      "versionDescription": "External Client App package for Arcflare Salesforce OAuth authorization."
+    }
+  ],
+  "name": "arcflare-oauth-connector",
+  "namespace": "elemes",
+  "sfdcLoginUrl": "https://epms.my.salesforce.com",
+  "sourceApiVersion": "66.0",
+  "packageAliases": {
+    "Arcflare OAuth Connector": "0HoUp00000001YnKAI",
+    "Arcflare OAuth Connector@1.0.0-1": "04tUp000001HpwnIAC",
+    "Arcflare OAuth Connector@1.0.0-2": "04tUp000001HpyPIAS"
+  }
+}

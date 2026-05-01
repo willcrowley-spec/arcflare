@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExternalClientApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+    <contactEmail>will.crowley@elevate.cloud</contactEmail>
+    <distributionState>Packaged</distributionState>
+    <isProtected>false</isProtected>
+    <label>Arcflare</label>
+    <orgScopedExternalApp>00DDp000000eLhW:Arcflare</orgScopedExternalApp>
+</ExternalClientApplication>

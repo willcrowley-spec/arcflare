@@ -48,7 +48,7 @@ const headerOrganizationSwitcherAppearance = {
 
 const salesforceConnectionErrorMessages: Record<string, string> = {
   salesforce_authorization_blocked:
-    'Salesforce blocked this OAuth flow because the External Client App cannot authorize a different Salesforce org. Install or package the app for that org, or use org-specific OAuth credentials.',
+    'The Arcflare Salesforce connector is not installed in that org yet. Install the connector package from Add Connection, then retry authorization.',
   salesforce_access_denied: 'Salesforce access was denied before Arcflare received an authorization code.',
   missing_authorization_code: 'Salesforce did not return an authorization code.',
   invalid_state: 'The Salesforce authorization session expired. Start the connection again.',

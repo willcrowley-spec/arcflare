@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtlClntAppOauthSettings xmlns="http://soap.sforce.com/2006/04/metadata">
+    <commaSeparatedOauthScopes>Basic, Api, RefreshToken</commaSeparatedOauthScopes>
+    <externalClientApplication>Arcflare</externalClientApplication>
+    <isFirstPartyAppEnabled>false</isFirstPartyAppEnabled>
+    <label>Arcflare_oauth</label>
+    <oauthLink>00DDp000000eLhW:888Up000002zuwz</oauthLink>
+</ExtlClntAppOauthSettings>
