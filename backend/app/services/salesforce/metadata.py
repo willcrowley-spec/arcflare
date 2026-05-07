@@ -303,9 +303,17 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
 
 def pull_permission_sets(sf: Salesforce) -> list[PermissionMeta]:
     try:
-        raw = _rest_query_all(
-            sf, "SELECT Id,Name,Label,Description,IsCustom FROM PermissionSet WHERE IsCustom=true"
-        )
+        try:
+            raw = _rest_query_all(
+                sf,
+                "SELECT Id,Name,Label,Description,IsCustom,NamespacePrefix "
+                "FROM PermissionSet WHERE IsCustom=true",
+            )
+        except Exception as exc:
+            logger.warning("sf_permission_sets_namespace_query_failed error=%s", exc)
+            raw = _rest_query_all(
+                sf, "SELECT Id,Name,Label,Description,IsCustom FROM PermissionSet WHERE IsCustom=true"
+            )
         ps_ids = [ps["Id"] for ps in raw]
         perms_by_parent: dict[str, list[dict]] = {}
 
@@ -321,8 +329,22 @@ def pull_permission_sets(sf: Salesforce) -> list[PermissionMeta]:
                 perms_by_parent.setdefault(op.get("ParentId", ""), []).append(op)
 
         results = []
+        seen_api_names: set[str] = set()
         for ps in raw:
             ps_id = ps.get("Id", "")
+            raw_name = ps.get("Name", "")
+            namespace = ps.get("NamespacePrefix")
+            api_name = f"{namespace}__{raw_name}" if namespace else raw_name
+            if not api_name:
+                continue
+            if api_name in seen_api_names:
+                logger.warning(
+                    "sf_permission_set_duplicate_skipped api_name=%s id=%s",
+                    api_name,
+                    ps_id,
+                )
+                continue
+            seen_api_names.add(api_name)
             obj_perms = [
                 {
                     "object": op.get("SobjectType", ""),
@@ -335,7 +357,7 @@ def pull_permission_sets(sf: Salesforce) -> list[PermissionMeta]:
             ]
             results.append(
                 PermissionMeta(
-                    api_name=ps.get("Name", ""),
+                    api_name=api_name,
                     label=ps.get("Label", ""),
                     permission_type="permission_set",
                     description=ps.get("Description"),
