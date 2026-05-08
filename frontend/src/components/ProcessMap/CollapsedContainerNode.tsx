@@ -8,6 +8,8 @@ interface CollapsedData extends Record<string, unknown> {
   depth: number
   isCollapsed: boolean
   processId: string
+  isDimmed?: boolean
+  isHighlighted?: boolean
   onToggle?: (id: string) => void
 }
 
@@ -16,7 +18,11 @@ function CollapsedContainerComponent({ data }: NodeProps<Node<CollapsedData>>) {
 
   return (
     <div
-      className="relative flex w-[260px] cursor-pointer items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 shadow-sm transition hover:border-slate-400 hover:shadow-md"
+      className={[
+        'relative flex w-[260px] cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 shadow-sm transition hover:border-slate-400 hover:shadow-md',
+        data.isDimmed ? 'opacity-35' : '',
+        data.isHighlighted ? 'ring-2 ring-orange-200' : '',
+      ].filter(Boolean).join(' ')}
       onClick={() => data.onToggle?.(data.processId)}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}

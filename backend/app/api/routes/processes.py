@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import CurrentOrg, DbSession
 from app.models.discovery import ProcessHandoff
-from app.models.process import BusinessProcess, ProcessEdge, ProcessNode
+from app.models.process import BusinessProcess, ProcessNode
 from app.schemas.process import (
     ProcessCreate,
     ProcessExportRequest,
@@ -17,7 +17,7 @@ from app.schemas.process import (
     ProcessUpdate,
 )
 from app.services.chat.actions import format_gap_handoff_item
-from app.services.processes.export import export_json, export_lucidchart, export_svg
+from app.services.processes.export import export_json, export_lucidchart, export_mermaid, export_svg
 from app.services.processes.graph import build_process_graph
 from app.services.processes.domain_graph import get_domain_graph
 
@@ -44,7 +44,7 @@ async def list_gaps(db: DbSession, org: CurrentOrg) -> dict:
     q = await db.execute(
         select(ProcessHandoff).where(
             ProcessHandoff.org_id == org.id,
-            ProcessHandoff.is_gap == True,
+            ProcessHandoff.is_gap.is_(True),
         )
     )
     rows = q.scalars().all()
@@ -111,7 +111,7 @@ async def list_processes(
     gap_c = await db.scalar(
         select(func.count()).select_from(ProcessHandoff).where(
             ProcessHandoff.org_id == org.id,
-            ProcessHandoff.is_gap == True,
+            ProcessHandoff.is_gap.is_(True),
         )
     )
     kpis = ProcessKpis(
@@ -278,4 +278,7 @@ async def export_process(
     if body.format == "svg":
         svg = await export_svg(process_id, db)
         return PlainTextResponse(svg, media_type="image/svg+xml")
+    if body.format == "mermaid":
+        mermaid = await export_mermaid(process_id, db)
+        return PlainTextResponse(mermaid, media_type="text/plain; charset=utf-8")
     return await export_lucidchart(process_id, db)

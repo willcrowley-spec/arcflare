@@ -9,6 +9,8 @@ interface ContainerNodeData extends Record<string, unknown> {
   depth: number
   isCollapsed: boolean
   processId: string
+  isDimmed?: boolean
+  isHighlighted?: boolean
   onToggle?: (id: string) => void
 }
 
@@ -28,7 +30,16 @@ function ContainerNodeComponent({ data }: NodeProps<Node<ContainerNodeData>>) {
   const [showTooltip, setShowTooltip] = useState(false)
 
   return (
-    <div className={clsx('rounded-xl border overflow-hidden', style.border, style.body)} style={{ width: '100%', height: '100%' }}>
+    <div
+      className={clsx(
+        'overflow-hidden rounded-lg border transition',
+        style.border,
+        style.body,
+        data.isDimmed && 'opacity-35',
+        data.isHighlighted && 'ring-2 ring-orange-200',
+      )}
+      style={{ width: '100%', height: '100%' }}
+    >
       <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-0 !bg-slate-300" />
       <button
         type="button"

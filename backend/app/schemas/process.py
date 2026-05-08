@@ -76,4 +76,4 @@ class ProcessNodeUpdate(BaseModel):
 
 
 class ProcessExportRequest(BaseModel):
-    format: str = Field(default="json", pattern="^(json|svg|lucidchart)$")
+    format: str = Field(default="json", pattern="^(json|svg|lucidchart|mermaid)$")

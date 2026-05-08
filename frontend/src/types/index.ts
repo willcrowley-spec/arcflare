@@ -275,6 +275,20 @@ export interface DomainGraphNode {
   confidence_score: number | null
   needs_review: boolean
   description: string | null
+  actors?: Record<string, unknown>[]
+  artifacts?: Record<string, unknown>[]
+  trigger_conditions?: Record<string, unknown>[]
+  decision_logic?: Record<string, unknown>[]
+  system_touchpoints?: Record<string, unknown>[]
+  success_criteria?: Record<string, unknown>[]
+  failure_modes?: Record<string, unknown>[]
+  value_classification?: string | null
+  complexity_score?: string | null
+  automation_potential?: string | null
+  estimated_duration?: string | null
+  estimated_frequency?: string | null
+  sequencing?: Record<string, unknown>
+  evidence_sources?: Record<string, unknown>[]
   is_leaf: boolean
   leaf_count: number
   children: DomainGraphNode[]
@@ -286,14 +300,24 @@ export interface DomainGraphEdge {
   target_id: string
   label: string
   description: string | null
+  kind?: 'handoff' | 'sequence' | string
+  confidence_score?: number | null
   is_gap: boolean
+  gap_status?: string | null
+  needs_review?: boolean
+  evidence_sources?: Record<string, unknown>[]
+  data_transferred?: Record<string, unknown>[]
+  transfer_mechanism?: string | null
 }
 
 export interface DomainGraphResponse {
   domain: { id: string; name: string }
   hierarchy: DomainGraphNode[]
   edges: DomainGraphEdge[]
+  positions?: Record<string, { x: number; y: number }>
 }
+
+export type ProcessMapLens = 'structure' | 'handoffs' | 'evidence' | 'automation'
 
 export interface ProcessMapSettings {
   process_map_direction: 'LR' | 'TB'
