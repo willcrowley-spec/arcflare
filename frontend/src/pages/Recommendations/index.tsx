@@ -102,6 +102,10 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
       r.scenarios_json && typeof r.scenarios_json === 'object' && !Array.isArray(r.scenarios_json) ?
         (r.scenarios_json as Record<string, unknown>)
       : {},
+    arc_score_json:
+      r.arc_score_json && typeof r.arc_score_json === 'object' && !Array.isArray(r.arc_score_json) ?
+        (r.arc_score_json as Record<string, unknown>)
+      : {},
     actions_json,
     impact_json:
       r.impact_json && typeof r.impact_json === 'object' && !Array.isArray(r.impact_json) ?

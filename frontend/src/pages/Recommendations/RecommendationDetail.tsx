@@ -397,6 +397,7 @@ function ScoringTab({ rec }: { rec: Recommendation }) {
   const signals = extractSignals(rec)
   return (
     <ScoringBreakdown
+      arcScore={rec.arc_score_json}
       signals={signals}
       baseScore={rec.base_score ?? 0}
       llmScore={rec.llm_score}

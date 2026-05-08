@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
+from app.services.recommendations.arc_score import apply_arc_score
 from app.services.recommendations.agent_analyzer import analyze_domain
 from app.services.recommendations.cross_domain import synthesize_cross_domain
 from app.services.recommendations.domain_assembler import assemble_domain_contexts
@@ -47,7 +48,7 @@ def _build_agent_recommendation(
         for sid in rep.get("step_ids", []):
             linked_step_ids_list.append(str(sid))
 
-    return Recommendation(
+    rec = Recommendation(
         org_id=org_id,
         title=title,
         description=opp.get("description"),
@@ -95,6 +96,8 @@ def _build_agent_recommendation(
         financial_evaluation_status="pending",
         recommendation_run_id=run_id,
     )
+    apply_arc_score(rec)
+    return rec
 
 
 async def run_recommendation_pipeline(

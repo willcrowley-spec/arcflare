@@ -22,11 +22,13 @@ from app.services.recommendations.financial_engine import (
     compute_portfolio_projections,
     compute_projections,
 )
+from app.services.recommendations.arc_score import apply_arc_score
 from app.workers.analysis import build_financial_assumptions, generate_recommendations_task
 
 router = APIRouter()
 
 _SORTABLE = {
+    "arc_score": Recommendation.composite_score,
     "composite_score": Recommendation.composite_score,
     "generated_at": Recommendation.generated_at,
     "estimated_roi": Recommendation.estimated_roi,
@@ -356,6 +358,7 @@ async def recalculate_recommendation(
     new_npv = projections["npv"]["expected"]
     rec.scenarios_json = projections
     rec.estimated_roi = Decimal(str(new_npv))
+    apply_arc_score(rec)
 
     log = list(rec.enrichment_log or [])
     log.append(
@@ -409,6 +412,7 @@ async def recalculate_all_recommendations(
             rec.scenarios_json = projections
             rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
             rec.financial_evaluation_status = "completed"
+            apply_arc_score(rec)
             updated += 1
             detail = {
                 "id": str(rec.id),

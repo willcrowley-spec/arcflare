@@ -187,6 +187,7 @@ def evaluate_agent_financials_task(org_id: str, run_id: str) -> str:
     import logging
 
     from app.core.observability import flush_langfuse, langfuse_context, langfuse_span
+    from app.services.recommendations.arc_score import apply_arc_score
     from app.services.recommendations.financial_engine import compute_projections
 
     logger = logging.getLogger(__name__)
@@ -227,6 +228,7 @@ def evaluate_agent_financials_task(org_id: str, run_id: str) -> str:
                         rec.scenarios_json = projections
                         rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
                         rec.financial_evaluation_status = "completed"
+                        apply_arc_score(rec)
                         evaluated += 1
                     except Exception:
                         logger.exception("financial_eval_failed rec=%s", rec.id)

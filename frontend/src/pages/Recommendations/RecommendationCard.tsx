@@ -18,6 +18,7 @@ export interface Recommendation {
   estimated_roi: number | null
   assumptions_json: Record<string, unknown>
   scenarios_json: Record<string, unknown>
+  arc_score_json: Record<string, unknown>
   actions_json: Array<{ step: number; action: string; effort: string }>
   impact_json: Record<string, unknown>
   linked_process_ids: string[]
@@ -66,9 +67,9 @@ function formatCompactUsd(n: number | null | undefined): string {
   return `${sign}$${Math.round(abs)}`
 }
 
-function formatScore(n: number | null | undefined): string {
+function formatArcScore(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return '—'
-  return Number(n).toFixed(2)
+  return String(Math.round(Number(n) * 100))
 }
 
 export function RecommendationCard({
@@ -161,7 +162,7 @@ export function RecommendationCard({
 
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
         <span className="font-medium tabular-nums">
-          Score: <span className="text-navy-900">{formatScore(rec.composite_score)}</span>
+          ARC Score: <span className="text-navy-900">{formatArcScore(rec.composite_score)}</span>
         </span>
         <span className="text-slate-400">·</span>
         <span className="font-medium tabular-nums" title={npvTitle}>
