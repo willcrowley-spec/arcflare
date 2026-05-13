@@ -5,7 +5,6 @@ the existing llm_call() + JSON schema infrastructure.
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 

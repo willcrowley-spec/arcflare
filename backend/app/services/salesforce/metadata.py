@@ -1284,8 +1284,14 @@ async def sync_metadata(
                 profile_count = len(getattr(vel_snap, "by_profile_json", {}) or {})
 
             licenses_list = getattr(lic_snap, "licenses_json", []) or [] if lic_snap else []
-            internal_lics = [l for l in licenses_list if l.get("category") == "internal"]
-            external_lics = [l for l in licenses_list if l.get("category") == "external"]
+            internal_lics = [
+                license_item for license_item in licenses_list
+                if license_item.get("category") == "internal"
+            ]
+            external_lics = [
+                license_item for license_item in licenses_list
+                if license_item.get("category") == "external"
+            ]
 
             experience_sites = []
             if lic_snap:
@@ -1306,12 +1312,12 @@ async def sync_metadata(
                 "estimated_annual_spend": float(getattr(lic_snap, "estimated_annual_spend", 0) or 0) if lic_snap else 0,
                 "top_packages": top_packages[:20],
                 "license_summary": {
-                    "total": sum(l.get("total", 0) for l in licenses_list),
-                    "used": sum(l.get("used", 0) for l in licenses_list),
-                    "internal_total": sum(l.get("total", 0) for l in internal_lics),
-                    "internal_used": sum(l.get("used", 0) for l in internal_lics),
-                    "external_total": sum(l.get("total", 0) for l in external_lics),
-                    "external_used": sum(l.get("used", 0) for l in external_lics),
+                    "total": sum(license_item.get("total", 0) for license_item in licenses_list),
+                    "used": sum(license_item.get("used", 0) for license_item in licenses_list),
+                    "internal_total": sum(license_item.get("total", 0) for license_item in internal_lics),
+                    "internal_used": sum(license_item.get("used", 0) for license_item in internal_lics),
+                    "external_total": sum(license_item.get("total", 0) for license_item in external_lics),
+                    "external_used": sum(license_item.get("used", 0) for license_item in external_lics),
                 },
                 "role_count": role_count,
                 "profile_count": profile_count,

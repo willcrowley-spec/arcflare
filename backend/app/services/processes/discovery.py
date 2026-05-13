@@ -8,6 +8,7 @@ import time
 from typing import Callable
 from uuid import UUID
 
+import litellm.exceptions as _llm_exc
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,8 +69,6 @@ def _safe_parse(text: str, label: str) -> dict:
 
 TOKEN_BUDGET_LIMIT = 100_000
 
-
-import litellm.exceptions as _llm_exc
 
 _RETRYABLE_ERRORS = (
     _llm_exc.RateLimitError,

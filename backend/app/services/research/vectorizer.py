@@ -60,7 +60,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
         chunks.append({
             "chunk_index": idx,
             "content": f"{company_name} — Size & Scale\n" + "\n".join(size_lines),
-            "section_title": f"Org Research: Size & Scale",
+            "section_title": "Org Research: Size & Scale",
             "metadata_json": {"source": "org_research", "type": "size"},
         })
         idx += 1
@@ -71,7 +71,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
         chunks.append({
             "chunk_index": idx,
             "content": f"{company_name} — Products & Services\n" + "\n".join(product_lines),
-            "section_title": f"Org Research: Products & Services",
+            "section_title": "Org Research: Products & Services",
             "metadata_json": {"source": "org_research", "type": "products"},
         })
         idx += 1
@@ -90,7 +90,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
         chunks.append({
             "chunk_index": idx,
             "content": f"{company_name} — Ideal Customer Profile\n" + "\n".join(icp_lines),
-            "section_title": f"Org Research: ICP",
+            "section_title": "Org Research: ICP",
             "metadata_json": {"source": "org_research", "type": "icp"},
         })
         idx += 1
@@ -112,7 +112,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
             chunks.append({
                 "chunk_index": idx,
                 "content": f"{company_name} — Corporate Structure\n" + "\n".join(struct_lines),
-                "section_title": f"Org Research: Corporate Structure",
+                "section_title": "Org Research: Corporate Structure",
                 "metadata_json": {"source": "org_research", "type": "structure"},
             })
             idx += 1
@@ -130,7 +130,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
             chunks.append({
                 "chunk_index": idx,
                 "content": f"{company_name} — Technology Stack\n" + "\n".join(tech_lines),
-                "section_title": f"Org Research: Technology",
+                "section_title": "Org Research: Technology",
                 "metadata_json": {"source": "org_research", "type": "technology"},
             })
             idx += 1
@@ -149,7 +149,7 @@ def _profile_to_chunks(profile: dict, company_name: str) -> list[dict]:
             chunks.append({
                 "chunk_index": idx,
                 "content": f"{company_name} — Financial Drivers\n" + "\n".join(fin_lines),
-                "section_title": f"Org Research: Financials",
+                "section_title": "Org Research: Financials",
                 "metadata_json": {"source": "org_research", "type": "financials"},
             })
             idx += 1

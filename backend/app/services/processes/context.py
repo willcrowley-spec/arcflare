@@ -348,7 +348,6 @@ async def semantic_document_search(
 
     if boosted_chunk_ids:
         boost_slots = max(1, limit // 2)
-        global_slots = limit - boost_slots
 
         comm_q = await db.execute(
             base_query.where(DocumentChunk.id.in_(boosted_chunk_ids)).limit(boost_slots)

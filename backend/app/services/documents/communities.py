@@ -221,7 +221,7 @@ async def link_chunks_to_communities(org_id: UUID, db: AsyncSession) -> None:
     chunks_q = await db.execute(
         select(DocumentChunk).join(Document).where(
             Document.org_id == org_id,
-            DocumentChunk.concept_ids != None,
+            DocumentChunk.concept_ids.is_not(None),
         )
     )
     chunks = chunks_q.scalars().all()

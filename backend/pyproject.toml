@@ -24,3 +24,9 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = [
+  "app/services/salesforce/apex_parser/ApexLexer.py",
+  "app/services/salesforce/apex_parser/ApexParser.py",
+  "app/services/salesforce/apex_parser/ApexParserListener.py",
+  "app/services/salesforce/apex_parser/ApexParserVisitor.py",
+]

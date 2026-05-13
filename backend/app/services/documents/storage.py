@@ -1,7 +1,6 @@
 """S3-compatible object storage for document files (Railway Buckets)."""
 
 import logging
-from io import BytesIO
 from uuid import UUID
 
 import boto3

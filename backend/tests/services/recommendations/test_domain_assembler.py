@@ -1,6 +1,5 @@
 """Tests for domain context assembly (Phase 1) — pure logic, no DB."""
 
-import pytest
 from uuid import uuid4
 
 from app.services.recommendations.domain_assembler import (

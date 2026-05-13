@@ -164,7 +164,6 @@ async def summarize_document_communities(org_id: UUID, db: AsyncSession) -> int:
     get summaries built from their children's summaries.
     """
     from app.models.document import DocumentChunk
-    from app.models.knowledge import Concept
 
     blocks = await resolve_prompt_blocks("community_summarization", org_id, db)
     doc_summary = blocks.get("doc_summary") or ""

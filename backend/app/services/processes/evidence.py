@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document
 from app.models.metadata import (
     MetadataAutomation,
     MetadataComponent,

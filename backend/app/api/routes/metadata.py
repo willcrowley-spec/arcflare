@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select, tuple_
 
 from app.api.deps import CurrentOrg, DbSession
@@ -100,8 +100,8 @@ async def get_metadata_summary(
         )
     ).scalar_one_or_none()
     if license_snap:
-        total_lic = sum(l.get("total", 0) for l in (license_snap.licenses_json or []))
-        used_lic = sum(l.get("used", 0) for l in (license_snap.licenses_json or []))
+        total_lic = sum(license_item.get("total", 0) for license_item in (license_snap.licenses_json or []))
+        used_lic = sum(license_item.get("used", 0) for license_item in (license_snap.licenses_json or []))
         licensing = {
             "edition": license_snap.edition,
             "total_licenses": total_lic,

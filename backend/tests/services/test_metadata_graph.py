@@ -1,4 +1,3 @@
-import pytest
 from app.services.metadata_graph import (
     _dedupe_edges,
     _edges_from_apex_class,

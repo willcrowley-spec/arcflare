@@ -1,10 +1,13 @@
 """Abstract base class and shared dataclasses for platform connectors."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.services.connectors.filtering import FilterConfig
 
 
 @dataclass

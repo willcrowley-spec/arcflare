@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -107,7 +106,7 @@ async def execute_auto_tool(
         q = await db.execute(
             select(ProcessHandoff).where(
                 ProcessHandoff.org_id == org_id,
-                ProcessHandoff.is_gap == True,
+                ProcessHandoff.is_gap.is_(True),
             )
         )
         rows = q.scalars().all()

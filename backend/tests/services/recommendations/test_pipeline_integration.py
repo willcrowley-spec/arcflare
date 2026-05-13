@@ -1,6 +1,5 @@
 """Integration smoke tests for the agent opportunity pipeline."""
 
-import pytest
 
 
 def test_pipeline_imports():
@@ -65,7 +64,6 @@ def test_agent_analyzer_parsing():
     from app.services.recommendations.agent_analyzer import (
         parse_opportunity_response,
         validate_opportunity,
-        resolve_ids,
     )
 
     valid_opp = {

@@ -1,6 +1,5 @@
 """Tests for agent analyzer - output parsing, ID resolution, validation."""
 
-import pytest
 from uuid import uuid4
 
 from app.services.recommendations.agent_analyzer import (

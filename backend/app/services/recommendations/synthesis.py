@@ -96,7 +96,11 @@ def cluster_entities(
             clusters.setdefault(label, []).append(entity)
 
         result = [c for c in clusters.values() if len(c) >= min_cluster_size]
-        logger.info("clustering_complete clusters=%d noise=%d", len(result), sum(1 for l in labels if l == -1))
+        logger.info(
+            "clustering_complete clusters=%d noise=%d",
+            len(result),
+            sum(1 for label in labels if label == -1),
+        )
         return result
 
     except ImportError:

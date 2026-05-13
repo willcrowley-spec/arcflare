@@ -322,7 +322,7 @@ def describe_component_chunks(comp: MetadataComponent) -> list[tuple[str, str]]:
 
 def _describe_licensing(snap: OrgLicenseSnapshot) -> str:
     lines = [
-        f"Salesforce Org Licensing Snapshot",
+        "Salesforce Org Licensing Snapshot",
         f"Edition: {snap.edition or 'Unknown'}",
         f"Sandbox: {'Yes' if snap.is_sandbox else 'No'}",
     ]
