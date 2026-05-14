@@ -77,6 +77,16 @@ def test_prefers_specific_embedded_object_over_shorter_object_name():
     ]
 
 
+def test_does_not_map_generic_custom_single_word_inside_unrelated_phrase():
+    result = resolve_object_references(
+        ["Customer Onboarding team roster or queue configuration"],
+        [{"api_name": "CHANNEL_ORDERS__Customer__c", "label": "Customer"}],
+    )
+
+    assert result["mapped"] == []
+    assert result["unresolved"][0]["raw"] == "Customer Onboarding team roster or queue configuration"
+
+
 def test_keeps_ambiguous_fuzzy_matches_unresolved():
     result = resolve_object_references(
         ["Policy Re"],

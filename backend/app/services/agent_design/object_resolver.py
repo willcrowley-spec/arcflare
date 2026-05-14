@@ -37,6 +37,18 @@ _BUSINESS_OBJECT_HINTS = {
     "price": ("PricebookEntry",),
     "pricebook": ("PricebookEntry",),
 }
+_SAFE_EMBEDDED_SINGLE_TOKEN_APIS = {
+    "Account",
+    "Case",
+    "Contact",
+    "Contract",
+    "Lead",
+    "Opportunity",
+    "Order",
+    "PricebookEntry",
+    "Product2",
+    "User",
+}
 
 
 def _text(value: object) -> str:
@@ -106,6 +118,8 @@ def _contained_alias_matches(raw: str, normalized: str, refs: list[dict]) -> lis
         for alias in ref["aliases"]:
             alias_tokens = set(alias.split())
             if not alias_tokens or not alias_tokens.issubset(raw_tokens):
+                continue
+            if len(alias_tokens) == 1 and ref["api_name"] not in _SAFE_EMBEDDED_SINGLE_TOKEN_APIS:
                 continue
             existing = by_api.get(ref["api_name"])
             if existing is None or len(alias_tokens) > len(existing["tokens"]):
