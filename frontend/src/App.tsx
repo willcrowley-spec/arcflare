@@ -7,6 +7,7 @@ import DocumentsPage from './pages/Documents'
 import DomainMapPage from '@/pages/Processes/DomainMap'
 import RecommendationsPage from '@/pages/Recommendations'
 import AgentsPage from '@/pages/Agents'
+import AgentBuilderPage from '@/pages/AgentBuilder'
 import PlatformDetailPage from '@/pages/Platforms'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/processes/map" element={<Navigate to="/processes" replace />} />
         <Route path="/processes/:id/map" element={<DomainMapPage />} />
         <Route path="/recommendations" element={<RecommendationsPage />} />
+        <Route path="/agent-builder/:runId" element={<AgentBuilderPage />} />
         <Route path="/agents" element={<AgentsPage />} />
       </Route>
     </Routes>

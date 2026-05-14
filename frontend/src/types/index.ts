@@ -399,6 +399,79 @@ export interface AgentUsageLog {
   success: boolean
 }
 
+export interface AgentDesignPackage {
+  id: string
+  org_id: string
+  generation_run_id: string
+  recommendation_id: string
+  version: number
+  status: string
+  package_json: Record<string, unknown>
+  validation_json: Record<string, unknown>
+  approved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentSourceFile {
+  path: string
+  kind: string
+  language: string
+  content: string
+}
+
+export interface AgentSourceBundle {
+  id: string
+  org_id: string
+  generation_run_id: string
+  design_package_id: string
+  status: string
+  source_tree_json: {
+    schema_version?: string
+    bundle_name?: string
+    compiler_version?: string
+    files?: AgentSourceFile[]
+    checks?: Record<string, unknown>
+  }
+  checks_json: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ScratchValidationRun {
+  id: string
+  org_id: string
+  source_bundle_id: string
+  status: string
+  devhub_alias: string | null
+  scratch_org_id: string | null
+  scratch_org_username: string | null
+  expires_at: string | null
+  logs_json: Array<Record<string, unknown>>
+  result_json: Record<string, unknown>
+  error: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface AgentGenerationRun {
+  id: string
+  org_id: string
+  recommendation_id: string
+  status: string
+  current_stage: string | null
+  model_json: Record<string, unknown>
+  stage_results: Record<string, unknown>
+  error: string | null
+  created_at: string
+  started_at: string
+  completed_at: string | null
+  updated_at: string
+  design_package: AgentDesignPackage | null
+  source_bundle: AgentSourceBundle | null
+  validation_runs: ScratchValidationRun[]
+}
+
 export interface BusinessEntity {
   id: string
   name: string

@@ -9,6 +9,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.routes import (
     agents,
+    agent_generations,
     chat,
     connections,
     discovery,
@@ -112,6 +113,9 @@ def create_app() -> FastAPI:
         organization.router, prefix=f"{api_prefix}/organization", tags=["organization"]
     )
     app.include_router(agents.router, prefix=f"{api_prefix}/agents", tags=["agents"])
+    app.include_router(
+        agent_generations.router, prefix=f"{api_prefix}/agent-generations", tags=["agent-generations"]
+    )
     app.include_router(discovery.router, prefix=f"{api_prefix}/discovery", tags=["discovery"])
     app.include_router(chat.router, prefix=f"{api_prefix}/chat", tags=["chat"])
     app.include_router(prompts.router, prefix=f"{api_prefix}/prompts", tags=["prompts"])

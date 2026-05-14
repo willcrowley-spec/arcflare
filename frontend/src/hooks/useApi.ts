@@ -367,6 +367,69 @@ export function useUpdateRecommendationStatus() {
   })
 }
 
+export function useGenerateAgentFromRecommendation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.recommendations.generateAgent(id),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ['agent-generations', run.id] })
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
+    },
+  })
+}
+
+export function useAgentGeneration(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['agent-generations', runId],
+    queryFn: () => api.agentGenerations.get(runId!),
+    enabled: !!runId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === 'pending' || status === 'assembling_context' || status === 'validating') {
+        return 2500
+      }
+      return false
+    },
+  })
+}
+
+export function useApproveAgentDesign() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.agentGenerations.approveDesign(id),
+    onSuccess: (design) => {
+      void qc.invalidateQueries({ queryKey: ['agent-generations', design.generation_run_id] })
+    },
+  })
+}
+
+export function useGenerateAgentSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.agentGenerations.generateSource(id),
+    onSuccess: (bundle) => {
+      void qc.invalidateQueries({ queryKey: ['agent-generations', bundle.generation_run_id] })
+    },
+  })
+}
+
+export function useValidateAgentSource() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.agentGenerations.validateSource(id),
+    onSuccess: (validation) => {
+      void qc.invalidateQueries({ queryKey: ['agent-generations'] })
+      void qc.invalidateQueries({ queryKey: ['agent-source-validations', validation.source_bundle_id] })
+    },
+  })
+}
+
+export function useDownloadAgentSource() {
+  return useMutation({
+    mutationFn: (id: string) => api.agentGenerations.downloadSource(id),
+  })
+}
+
 export function useAgents() {
   return useQuery({
     queryKey: ['agents'],

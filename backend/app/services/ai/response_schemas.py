@@ -1036,6 +1036,59 @@ AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
 }
 
 
+AGENT_DESIGN_PACKAGE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "agent": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "type": {"type": "string", "enum": ["headless", "conversational", "hybrid"]},
+                "summary": {"type": "string"},
+                "trigger": {"type": "string"},
+            },
+            "required": ["name", "type", "summary", "trigger"],
+            "additionalProperties": False,
+        },
+        "topics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "reasoning_type": {"type": "string"},
+                    "actions": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["name", "description", "reasoning_type", "actions"],
+                "additionalProperties": False,
+            },
+        },
+        "session_variables": {"type": "array", "items": {"type": "object"}},
+        "action_contracts": {"type": "array", "items": {"type": "object"}},
+        "permission_requirements": {"type": "array", "items": {"type": "object"}},
+        "test_scenarios": {"type": "array", "items": {"type": "object"}},
+        "observability": {"type": "object"},
+        "integration_requirements": {"type": "array", "items": {"type": "object"}},
+        "blockers": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "agent",
+        "topics",
+        "session_variables",
+        "action_contracts",
+        "permission_requirements",
+        "test_scenarios",
+        "observability",
+        "integration_requirements",
+        "blockers",
+        "warnings",
+    ],
+    "additionalProperties": True,
+}
+
+
 OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_domain": DISCOVERY_DOMAIN_SCHEMA,
     "discovery_structure": DISCOVERY_STRUCTURE_SCHEMA,
@@ -1050,6 +1103,7 @@ OPERATION_SCHEMAS: dict[str, dict] = {
     "discovery_v2_synthesis": DISCOVERY_V2_SYNTHESIS_SCHEMA,
     "agent_opportunity": AGENT_OPPORTUNITY_SCHEMA,
     "agent_opportunity_cross_domain": AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA,
+    "agent_design_package": AGENT_DESIGN_PACKAGE_SCHEMA,
 }
 
 

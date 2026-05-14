@@ -207,6 +207,16 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "group": "synthesis",
         "description": "Identifies agent opportunities spanning multiple business domains.",
     },
+    "agent_design_package": {
+        "model": "anthropic/claude-opus-4-6",
+        "tier": "strong",
+        "thinking_budget": 0,
+        "reasoning_effort": "high",
+        "output_format": "json",
+        "label": "Agent Design Package",
+        "group": "synthesis",
+        "description": "Produces contract-first Agentforce design packages from accepted recommendations, process evidence, and Salesforce metadata.",
+    },
     "org_research_extraction": {
         "model": "gemini/gemini-2.5-flash",
         "tier": "fast",

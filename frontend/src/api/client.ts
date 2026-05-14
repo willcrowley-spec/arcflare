@@ -1,5 +1,8 @@
 import type {
   Agent,
+  AgentDesignPackage,
+  AgentGenerationRun,
+  AgentSourceBundle,
   AnalysisConfig,
   BusinessEntity,
   ChatAction,
@@ -31,6 +34,7 @@ import type {
   PortfolioProjection,
   RecordTelemetry,
   SalesforceInitiateResponse,
+  ScratchValidationRun,
   SyncEvent,
   VelocityMetrics,
 } from '@/types'
@@ -322,6 +326,8 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }),
+    generateAgent: (id: string) =>
+      request<AgentGenerationRun>(`/recommendations/${id}/generate-agent`, { method: 'POST' }),
     summary: () => request<unknown>('/recommendations/summary'),
     portfolioProjection: (recommendation_ids: string[], global_overrides?: Record<string, unknown>) =>
       request<PortfolioProjection>('/recommendations/portfolio-projection', {
@@ -383,6 +389,26 @@ export const api = {
     usage: (id: string) => request<unknown>(`/agents/${id}/usage`),
     fleetAnalytics: () => request<FleetAnalytics>('/agents/fleet-analytics'),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+  },
+  agentGenerations: {
+    get: (id: string) => request<AgentGenerationRun>(`/agent-generations/${id}`),
+    approveDesign: (id: string) =>
+      request<AgentDesignPackage>(`/agent-generations/design-packages/${id}/approve`, {
+        method: 'POST',
+      }),
+    generateSource: (id: string) =>
+      request<AgentSourceBundle>(`/agent-generations/design-packages/${id}/generate-source`, {
+        method: 'POST',
+      }),
+    validateSource: (id: string) =>
+      request<ScratchValidationRun>(`/agent-generations/source-bundles/${id}/validate`, {
+        method: 'POST',
+      }),
+    downloadSource: async (id: string) => {
+      const res = await fetchWithAuth(`/agent-generations/source-bundles/${id}/download`)
+      if (!res.ok) throw new ApiError(res.statusText || 'Request failed', res.status, await res.text())
+      return res.blob()
+    },
   },
   prompts: {
     operations: () => request<{ operations: PromptOperation[] }>('/prompts/operations'),

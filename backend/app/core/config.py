@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     SALESFORCE_REDIRECT_URI: str = Field(
         default="http://localhost:8000/api/v1/connections/salesforce/callback"
     )
+    SALESFORCE_DEV_HUB_ALIAS: str = Field(
+        default="elevate-prod",
+        description="Salesforce CLI alias for optional Agentforce scratch org validation.",
+    )
+    AGENTFORCE_SCRATCH_VALIDATION_ENABLED: bool = Field(
+        default=False,
+        description="Feature flag for creating scratch orgs from generated agent source bundles.",
+    )
 
     ENCRYPTION_KEY: str = Field(
         default="",

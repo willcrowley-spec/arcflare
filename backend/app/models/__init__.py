@@ -1,4 +1,10 @@
 from app.models.agent import Agent, AgentUsageLog
+from app.models.agent_design import (
+    AgentDesignPackage,
+    AgentGenerationRun,
+    AgentSourceBundle,
+    ScratchValidationRun,
+)
 from app.models.chat import ChatAction, ChatMessage, ChatThread
 from app.models.connection import PlatformConnection
 from app.models.discovery import DiscoveryRun, ProcessHandoff
@@ -23,6 +29,9 @@ from app.models.sync_event import SyncEvent
 
 __all__ = [
     "Agent",
+    "AgentDesignPackage",
+    "AgentGenerationRun",
+    "AgentSourceBundle",
     "AgentUsageLog",
     "BusinessEntity",
     "BusinessProcess",
@@ -54,6 +63,7 @@ __all__ = [
     "Recommendation",
     "RecommendationRun",
     "RecordTelemetry",
+    "ScratchValidationRun",
     "SyncEvent",
     "User",
     "UserVelocitySnapshot",

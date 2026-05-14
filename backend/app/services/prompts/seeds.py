@@ -910,6 +910,26 @@ Financial signal rules:
 
 If no cross-domain opportunities exist, return empty arrays."""
 
+_AGENT_DESIGN_PACKAGE_INSTRUCTIONS = """You are an Agentforce solution architect producing an Arcflare Agent Design Package.
+
+Create a contract-first design. Do not write deployable Apex bodies. Every topic must map to explicit action contracts, every action must declare inputs and outputs, and Salesforce object access must become permission requirements. If evidence is missing, add blockers instead of guessing."""
+
+_AGENT_DESIGN_PACKAGE_PROTOCOL = """Return ONLY valid JSON matching the Agent Design Package schema:
+- agent: name, type, summary, trigger
+- topics: jobs the agent can own
+- session_variables: state carried through an agent turn
+- action_contracts: explicit Apex/Flow/prompt action contracts with inputs, outputs, permissions, errors
+- permission_requirements: object/operation requirements
+- test_scenarios: business-readable test cases
+- observability: events and trace keys
+- integration_requirements: external systems requiring middleware
+- blockers and warnings
+
+Rules:
+- Do not invent Salesforce objects not present in context.
+- Do not generate AgentScript or Apex implementation code here.
+- Add a blocker for unknown permissions, missing object evidence, or unresolved integrations."""
+
 SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "chat", "block_type": "identity", "content": _CHAT_IDENTITY},
     {"operation_id": "chat", "block_type": "rules", "content": _CHAT_RULES},
@@ -968,4 +988,6 @@ SEED_BLOCKS: list[dict[str, str]] = [
     {"operation_id": "agent_opportunity", "block_type": "protocol", "content": _AGENT_OPPORTUNITY_PROTOCOL},
     {"operation_id": "agent_opportunity_cross_domain", "block_type": "instructions", "content": _AGENT_OPPORTUNITY_CROSS_DOMAIN_INSTRUCTIONS},
     {"operation_id": "agent_opportunity_cross_domain", "block_type": "protocol", "content": _AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL},
+    {"operation_id": "agent_design_package", "block_type": "instructions", "content": _AGENT_DESIGN_PACKAGE_INSTRUCTIONS},
+    {"operation_id": "agent_design_package", "block_type": "protocol", "content": _AGENT_DESIGN_PACKAGE_PROTOCOL},
 ]

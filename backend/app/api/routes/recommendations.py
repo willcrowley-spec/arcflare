@@ -9,6 +9,7 @@ from app.api.deps import CurrentOrg, DbSession
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
 from app.schemas.common import PaginatedResponse
+from app.schemas.agent_design import AgentGenerationRunResponse
 from app.schemas.recommendation import (
     PortfolioProjectionRequest,
     PortfolioProjectionResponse,
@@ -23,6 +24,8 @@ from app.services.recommendations.recompute import (
     load_recommendation_assumption_context,
     recompute_recommendation,
 )
+from app.services.agent_design.workflow import create_generation_run
+from app.api.routes.agent_generations import _latest_generation_response
 from app.workers.analysis import generate_recommendations_task
 
 router = APIRouter()
@@ -311,6 +314,30 @@ async def generate_recommendations(
 
     generate_recommendations_task.delay(str(org.id), str(run.id))
     return {"status": "queued", "org_id": str(org.id), "run_id": str(run.id)}
+
+
+@router.post("/{recommendation_id}/generate-agent", response_model=AgentGenerationRunResponse)
+async def generate_agent_from_recommendation(
+    recommendation_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> AgentGenerationRunResponse:
+    rec = await db.get(Recommendation, recommendation_id)
+    if rec is None or rec.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    arc_decision = (rec.arc_score_json or {}).get("decision")
+    if rec.status != "accepted" and arc_decision != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Recommendation must be accepted or ARC-ready before generating an agent.",
+        )
+
+    try:
+        run = await create_generation_run(db, org_id=org.id, recommendation_id=recommendation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await _latest_generation_response(db, run)
 
 
 @router.post("/cancel")

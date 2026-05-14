@@ -26,5 +26,6 @@ celery_app.conf.include = [
     "app.workers.analysis",
     "app.workers.process_discovery",
     "app.workers.org_research",
+    "app.workers.agent_generation",
     "app.services.prompts.optimize",
 ]

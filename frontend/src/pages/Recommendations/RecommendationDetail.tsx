@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Check, CheckCheck, GitBranch, Info, MessageSquare, Pencil, Sparkles, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '@/stores/chatStore'
-import { useRecalculateRecommendation } from '@/hooks/useApi'
+import { useGenerateAgentFromRecommendation, useRecalculateRecommendation } from '@/hooks/useApi'
 import { ScoringBreakdown } from '@/pages/Recommendations/ScoringBreakdown'
 import { ValueChart, type ValueChartScenarios } from '@/pages/Recommendations/ValueChart'
 import type { Recommendation } from '@/pages/Recommendations/RecommendationCard'
@@ -643,8 +644,13 @@ function ScoringTab({ rec }: { rec: Recommendation }) {
 
 export function RecommendationDetail({ rec, onStatusChange }: RecommendationDetailProps) {
   const openContextualChat = useChatStore((s) => s.openContextualChat)
+  const navigate = useNavigate()
+  const generateAgent = useGenerateAgentFromRecommendation()
   const [tab, setTab] = useState<DetailTab>('overview')
   const auto = AUTOMATION_COPY[rec.automation_type] ?? AUTOMATION_COPY.hybrid
+  const arcDecision =
+    rec.arc_score_json && typeof rec.arc_score_json.decision === 'string' ? rec.arc_score_json.decision : null
+  const canGenerateAgent = rec.status === 'accepted' || arcDecision === 'ready'
 
   const analysis: Record<string, unknown> = useMemo(() => {
     return rec.impact_json && typeof rec.impact_json === 'object' ? rec.impact_json : {}
@@ -706,12 +712,22 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
           )}
           <button
             type="button"
-            disabled
-            title="Coming soon"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-500 disabled:cursor-not-allowed disabled:opacity-70"
+            disabled={!canGenerateAgent || generateAgent.isPending}
+            onClick={() => {
+              generateAgent.mutate(rec.id, {
+                onSuccess: (run) => navigate(`/agent-builder/${run.id}`),
+              })
+            }}
+            className={clsx(
+              'inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold shadow-sm',
+              canGenerateAgent
+                ? 'border border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100'
+                : 'border border-dashed border-slate-300 bg-slate-50 text-slate-500',
+              'disabled:cursor-not-allowed disabled:opacity-70',
+            )}
           >
             <Sparkles className="h-3.5 w-3.5" />
-            Generate Agent
+            {generateAgent.isPending ? 'Generating...' : 'Generate Agent'}
           </button>
         </div>
       </div>
