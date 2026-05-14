@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { Check, CheckCheck, GitBranch, Info, MessageSquare, Pencil, Sparkles, X } from 'lucide-react'
+import { Check, CheckCheck, GitBranch, Info, MessageSquare, Pencil, Sparkles, Undo2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '@/stores/chatStore'
 import { useGenerateAgentFromRecommendation, useRecalculateRecommendation } from '@/hooks/useApi'
@@ -706,14 +706,24 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
             </>
           )}
           {rec.status === 'accepted' && (
-            <button
-              type="button"
-              onClick={() => onStatusChange(rec.id, 'implemented')}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-navy-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-800"
-            >
-              <CheckCheck className="h-3.5 w-3.5" />
-              Mark Implemented
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onStatusChange(rec.id, 'active')}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                Unaccept
+              </button>
+              <button
+                type="button"
+                onClick={() => onStatusChange(rec.id, 'implemented')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-navy-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-800"
+              >
+                <CheckCheck className="h-3.5 w-3.5" />
+                Mark Implemented
+              </button>
+            </>
           )}
           <button
             type="button"

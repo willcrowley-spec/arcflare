@@ -317,6 +317,18 @@ export function useGenerateRecommendations() {
   })
 }
 
+export function useResetRecommendations() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (rerun?: boolean) => api.recommendations.reset(rerun ?? true),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recommendations'] })
+      void qc.invalidateQueries({ queryKey: ['recommendations', 'pipeline-status'] })
+      void qc.invalidateQueries({ queryKey: ['agent-generations'] })
+    },
+  })
+}
+
 export function useCancelRecommendations() {
   const qc = useQueryClient()
   return useMutation({

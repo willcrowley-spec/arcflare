@@ -55,6 +55,19 @@ class RecommendationStatusUpdate(BaseModel):
     status: str = Field(..., max_length=50)
 
 
+class RecommendationPortfolioResetRequest(BaseModel):
+    rerun: bool = True
+
+
+class RecommendationPortfolioResetResponse(BaseModel):
+    status: str
+    recommendations_deleted: int
+    recommendation_runs_deleted: int
+    agent_generation_runs_deleted: int
+    agents_unlinked: int
+    queued_run_id: UUID | None
+
+
 class RecalculateRequest(BaseModel):
     overrides: dict
 

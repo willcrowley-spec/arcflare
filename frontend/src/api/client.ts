@@ -298,6 +298,18 @@ export const api = {
       request<{ status: string; org_id: string; run_id: string }>('/recommendations/generate', {
         method: 'POST',
       }),
+    reset: (rerun = true) =>
+      request<{
+        status: string
+        recommendations_deleted: number
+        recommendation_runs_deleted: number
+        agent_generation_runs_deleted: number
+        agents_unlinked: number
+        queued_run_id: string | null
+      }>('/recommendations/reset', {
+        method: 'POST',
+        body: JSON.stringify({ rerun }),
+      }),
     cancel: () =>
       request<{ status: string; run_id: string }>('/recommendations/cancel', {
         method: 'POST',

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { ArrowDownWideNarrow, BarChart3, Layers, Loader2, Sparkles, X } from 'lucide-react'
+import { ArrowDownWideNarrow, BarChart3, Layers, Loader2, RotateCcw, Sparkles, X } from 'lucide-react'
 import clsx from 'clsx'
 import { SearchBar } from '@/components/SearchBar'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
@@ -11,6 +11,7 @@ import {
   useRecalculateAll,
   useRecommendationPipelineStatus,
   useRecommendations,
+  useResetRecommendations,
   useUpdateRecommendationStatus,
 } from '@/hooks/useApi'
 import { PortfolioDashboard } from './PortfolioDashboard'
@@ -255,13 +256,15 @@ export default function RecommendationsPage() {
 
   const queryClient = useQueryClient()
   const generateMutation = useGenerateRecommendations()
+  const resetMutation = useResetRecommendations()
   const cancelMutation = useCancelRecommendations()
   const recalcAllMutation = useRecalculateAll()
   const updateStatusMutation = useUpdateRecommendationStatus()
   const { data: pipelineStatus } = useRecommendationPipelineStatus()
+  const [resetArmed, setResetArmed] = useState(false)
 
   const pipelineRunning = pipelineStatus?.status === 'running' || pipelineStatus?.status === 'pending'
-  const pipelineBusy = pipelineRunning || generateMutation.isPending
+  const pipelineBusy = pipelineRunning || generateMutation.isPending || resetMutation.isPending
 
   const prevPipelineStatus = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -285,6 +288,12 @@ export default function RecommendationsPage() {
     setPage(1)
     setExpandedId(null)
   }
+
+  useEffect(() => {
+    if (!resetArmed) return undefined
+    const timeout = window.setTimeout(() => setResetArmed(false), 6000)
+    return () => window.clearTimeout(timeout)
+  }, [resetArmed])
 
   useEffect(() => {
     setPage(1)
@@ -345,6 +354,21 @@ export default function RecommendationsPage() {
     )
   }
 
+  const handleResetAndRerun = () => {
+    if (!resetArmed) {
+      setResetArmed(true)
+      return
+    }
+    resetMutation.mutate(true, {
+      onSuccess: () => {
+        setResetArmed(false)
+        setExpandedId(null)
+        portfolio.clearAll()
+        setTab('active')
+      },
+    })
+  }
+
   if (listLoading) {
     return (
       <div className="space-y-8">
@@ -398,6 +422,26 @@ export default function RecommendationsPage() {
           >
             {recalcAllMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
             {recalcAllMutation.isPending ? 'Recalculating…' : 'Refresh Projections'}
+          </button>
+          <button
+            type="button"
+            disabled={pipelineBusy}
+            aria-pressed={resetArmed}
+            aria-label="Reset generated recommendations and queue a fresh recommendation run"
+            onClick={handleResetAndRerun}
+            className={clsx(
+              'inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+              resetArmed
+                ? 'border-red-200 bg-red-50 text-red-800 hover:bg-red-100'
+                : 'border-slate-200 bg-white text-navy-900 hover:bg-slate-50',
+            )}
+          >
+            {resetMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4" />
+            )}
+            {resetMutation.isPending ? 'Resetting...' : resetArmed ? 'Confirm reset' : 'Reset & rerun'}
           </button>
           <button
             type="button"
@@ -558,7 +602,7 @@ export default function RecommendationsPage() {
             disabled={portfolio.selectedIds.size === 0}
             className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Clear portfolio
+            Clear selection
           </button>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Viewing {total === 0 ? 0 : `${startIdx}-${endIdx}`} of {total}

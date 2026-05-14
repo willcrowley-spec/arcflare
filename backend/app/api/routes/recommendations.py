@@ -14,6 +14,8 @@ from app.schemas.recommendation import (
     PortfolioProjectionRequest,
     PortfolioProjectionResponse,
     RecalculateRequest,
+    RecommendationPortfolioResetRequest,
+    RecommendationPortfolioResetResponse,
     RecommendationResponse,
     RecommendationRunResponse,
     RecommendationStatusUpdate,
@@ -24,6 +26,7 @@ from app.services.recommendations.recompute import (
     load_recommendation_assumption_context,
     recompute_recommendation,
 )
+from app.services.recommendations.reset import reset_recommendation_portfolio
 from app.services.agent_design.workflow import create_generation_run
 from app.api.routes.agent_generations import _latest_generation_response
 from app.workers.analysis import generate_recommendations_task
@@ -362,6 +365,27 @@ async def cancel_recommendation_pipeline(
     run.completed_at = datetime.now(tz=UTC)
     await db.commit()
     return {"status": "cancelled", "run_id": str(run.id)}
+
+
+@router.post(
+    "/reset",
+    response_model=RecommendationPortfolioResetResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reset_recommendation_portfolio_route(
+    body: RecommendationPortfolioResetRequest,
+    db: DbSession,
+    org: CurrentOrg,
+) -> RecommendationPortfolioResetResponse:
+    result = await reset_recommendation_portfolio(db, org_id=org.id, rerun=body.rerun)
+    return RecommendationPortfolioResetResponse(
+        status="queued" if result.queued_run_id else "cleared",
+        recommendations_deleted=result.recommendations_deleted,
+        recommendation_runs_deleted=result.recommendation_runs_deleted,
+        agent_generation_runs_deleted=result.agent_generation_runs_deleted,
+        agents_unlinked=result.agents_unlinked,
+        queued_run_id=result.queued_run_id,
+    )
 
 
 @router.post("/{recommendation_id}/recalculate", response_model=RecommendationResponse)
