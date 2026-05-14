@@ -133,3 +133,22 @@ def test_field_touchpoints_require_field_inventory_before_validation():
     assert [b for b in payload["bindings"] if b["ref_type"] == "object"]
     assert payload["unresolved_bindings"][0]["field_api_name"] == "StageName"
     assert payload["unresolved_bindings"][0]["reason"] == "field_inventory_missing"
+
+
+def test_process_touchpoint_name_type_object_shape_creates_validated_object_binding():
+    payload = build_metadata_bindings(
+        {"replaces": [{"process_id": "proc-1", "step_ids": []}], "data_requirements": []},
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Invoice readiness",
+                "system_touchpoints": [{"name": "Opportunity", "type": "object", "operation": "trigger"}],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata={"objects": [{"api_name": "Opportunity", "label": "Opportunity", "fields": []}]},
+    )
+
+    assert payload["bindings"][0]["object_api_name"] == "Opportunity"
+    assert payload["bindings"][0]["operation"] == "trigger"
+    assert payload["unresolved_bindings"] == []

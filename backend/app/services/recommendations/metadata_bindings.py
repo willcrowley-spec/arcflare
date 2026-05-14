@@ -79,12 +79,15 @@ def _touchpoint_object_and_fields(touchpoint: Any) -> tuple[str, list[str], str,
 
     if isinstance(touchpoint, Mapping):
         raw = _text(touchpoint.get("raw")) or _text(touchpoint)
+        touchpoint_type = _text(touchpoint.get("type")).lower()
         obj = _text(
             touchpoint.get("object_api_name")
             or touchpoint.get("object")
             or touchpoint.get("sobject")
             or touchpoint.get("api_name")
         )
+        if not obj and touchpoint_type in {"object", "sobject", "metadata_object"}:
+            obj = _text(touchpoint.get("name"))
         field_values: list[str] = []
         for key in ("field_api_name", "field"):
             value = _text(touchpoint.get(key))
