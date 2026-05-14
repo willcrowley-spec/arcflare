@@ -215,11 +215,22 @@ const ARC_DIMENSION_HELP: Record<string, string> = {
   risk_inverse: 'Risk posture. Higher means fewer control, complexity, and external-integration concerns.',
 }
 
-function InfoHint({ text, className }: { text: string; className?: string }) {
+function InfoHint({
+  text,
+  className,
+  align = 'start',
+}: {
+  text: string
+  className?: string
+  align?: 'start' | 'center' | 'end'
+}) {
+  const positionClass =
+    align === 'end' ? 'right-0'
+    : align === 'center' ? 'left-1/2 -translate-x-1/2'
+    : 'left-0'
   return (
     <span
       tabIndex={0}
-      title={text}
       aria-label={text}
       className={clsx(
         'group relative inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 outline-none hover:text-navy-700 focus-visible:text-navy-700',
@@ -229,7 +240,10 @@ function InfoHint({ text, className }: { text: string; className?: string }) {
       <Info className="h-3.5 w-3.5" aria-hidden />
       <span
         role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-72 -translate-x-1/2 rounded-md bg-navy-900 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white shadow-lg group-hover:block group-focus:block"
+        className={clsx(
+          'pointer-events-none absolute top-full z-30 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-md bg-navy-900 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white shadow-lg group-hover:block group-focus:block',
+          positionClass,
+        )}
       >
         {text}
       </span>
@@ -326,7 +340,10 @@ export function ScoringBreakdown({
                   >
                     {humanizeToken(parsedArc.decision)}
                   </span>
-                  <InfoHint text="Decision bands combine the numeric score with gates. Defer can still have a strong score when risk or evidence needs review before build." />
+                  <InfoHint
+                    align="end"
+                    text="Decision bands combine the numeric score with gates. Defer can still have a strong score when risk or evidence needs review before build."
+                  />
                 </span>
                 <span className="text-3xl font-semibold tabular-nums text-navy-900">{parsedArc.scorePct}</span>
               </div>
@@ -342,7 +359,10 @@ export function ScoringBreakdown({
               </span>
               <span className="inline-flex items-center gap-1.5">
                 AI confidence: {formatArcPct(parsedArc.llmConfidence)}
-                <InfoHint text="The LLM's original confidence in the recommendation. It is shown for comparison and divergence checks, not used as the final score." />
+                <InfoHint
+                  align="end"
+                  text="The LLM's original confidence in the recommendation. It is shown for comparison and divergence checks, not used as the final score."
+                />
               </span>
             </div>
           </section>

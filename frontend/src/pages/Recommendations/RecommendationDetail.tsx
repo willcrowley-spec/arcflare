@@ -143,11 +143,22 @@ function shouldShowAssumptionValue(key: string, value: unknown): boolean {
   return true
 }
 
-function InfoHint({ text, className }: { text: string; className?: string }) {
+function InfoHint({
+  text,
+  className,
+  align = 'start',
+}: {
+  text: string
+  className?: string
+  align?: 'start' | 'center' | 'end'
+}) {
+  const positionClass =
+    align === 'end' ? 'right-0'
+    : align === 'center' ? 'left-1/2 -translate-x-1/2'
+    : 'left-0'
   return (
     <span
       tabIndex={0}
-      title={text}
       aria-label={text}
       className={clsx(
         'group relative inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 outline-none hover:text-navy-700 focus-visible:text-navy-700',
@@ -157,7 +168,10 @@ function InfoHint({ text, className }: { text: string; className?: string }) {
       <Info className="h-3.5 w-3.5" aria-hidden />
       <span
         role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-72 -translate-x-1/2 rounded-md bg-navy-900 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white shadow-lg group-hover:block group-focus:block"
+        className={clsx(
+          'pointer-events-none absolute top-full z-30 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-md bg-navy-900 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white shadow-lg group-hover:block group-focus:block',
+          positionClass,
+        )}
       >
         {text}
       </span>
@@ -268,6 +282,7 @@ function InvestmentSummary({ rec }: { rec: Recommendation }) {
             {modelVersion}
             <InfoHint
               className="h-3.5 w-3.5"
+              align="end"
               text="Version of Arcflare's deterministic assumption model. It lets us explain and compare estimates over time."
             />
           </span>
