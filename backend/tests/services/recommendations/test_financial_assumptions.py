@@ -86,3 +86,38 @@ def test_build_financial_assumptions_uses_range_based_pilot_costs_and_preserves_
     assert assumptions["investment_range"]["expected"] == assumptions["investment_range"]["pilot_mvp"]
     assert assumptions["investment_range"]["enterprise_hardened"] > assumptions["investment_range"]["expected"]
     assert assumptions["technology_cost"] < 30_000
+
+
+def test_build_financial_assumptions_caps_actor_count_to_org_human_users():
+    assumptions = build_financial_assumptions(
+        {
+            "agent_type": "hybrid",
+            "complexity_estimate": "medium",
+            "topics": [{"reasoning_type": "hybrid"}],
+            "integration_points": [
+                "User_Skill_Before_Create_Update flow",
+                "UserSkillCertificationHandler Apex class",
+            ],
+            "financial_signals": {
+                "actors_impacted": [
+                    "User",
+                    "System Automation: User_Skill_Before_Create_Update",
+                    "System Automation: User_Certification_Before_Create_Update",
+                    "UserSkillCertificationHandler",
+                ],
+                "estimated_hours_per_week_saved": 6,
+                "estimated_frequency": "weekly",
+                "estimated_actor_count": 50,
+                "primary_role_type": "User",
+            },
+        },
+        org_context={"human_users": 9, "business_entity_headcount": 10},
+    )
+
+    assert assumptions is not None
+    assert assumptions["actor_count"] == 9
+    assert assumptions["hours_basis"] == "team_total"
+    assert assumptions["source_signals"]["estimated_actor_count"] == 50
+    assert assumptions["source_signals"]["org_human_user_cap"] == 9
+    assert "actor_count_capped_to_org_human_users" in assumptions["assumption_warnings"]
+    assert "non_human_actor_labels_present" in assumptions["assumption_warnings"]

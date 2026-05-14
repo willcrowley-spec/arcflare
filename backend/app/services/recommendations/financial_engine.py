@@ -116,7 +116,9 @@ def compute_base_savings(assumptions: dict) -> float:
     hours = float(resolve_assumption(assumptions, "hours_per_week") or 0)
     actors = float(resolve_assumption(assumptions, "actor_count") or 1)
     efficiency = float(resolve_assumption(assumptions, "efficiency_gain") or 0)
-    return fte_cost * (hours / 40) * actors * efficiency
+    hours_basis = str(resolve_assumption(assumptions, "hours_basis") or "per_actor").lower()
+    actor_multiplier = actors if hours_basis == "per_actor" else 1.0
+    return fte_cost * (hours / 40) * actor_multiplier * efficiency
 
 
 def compute_scenario(

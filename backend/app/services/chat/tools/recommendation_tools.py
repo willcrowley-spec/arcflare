@@ -10,7 +10,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.recommendation import Recommendation
-from app.services.recommendations.recompute import recompute_recommendation
+from app.services.recommendations.recompute import (
+    load_recommendation_assumption_context,
+    recompute_recommendation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +235,8 @@ async def execute_update_assumption(
     if isinstance(rec.scenarios_json, dict):
         prev_npv = (rec.scenarios_json.get("npv") or {}).get("expected")
 
-    result = recompute_recommendation(rec, overrides=overrides_in)
+    org_context = await load_recommendation_assumption_context(db, org_id)
+    result = recompute_recommendation(rec, overrides=overrides_in, org_context=org_context)
     new_npv = result["new_npv"]
     projections = rec.scenarios_json or {}
 

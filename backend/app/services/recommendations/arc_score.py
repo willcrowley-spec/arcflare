@@ -117,9 +117,23 @@ def _dimension(score: float, signals: Mapping[str, Any], explanation: str) -> di
     }
 
 
+def _assumption_value(
+    assumptions: Mapping[str, Any] | None,
+    key: str,
+    default: Any = None,
+) -> Any:
+    if not isinstance(assumptions, Mapping):
+        return default
+    overrides = assumptions.get("overrides")
+    if isinstance(overrides, Mapping) and key in overrides:
+        return overrides[key]
+    return assumptions.get(key, default)
+
+
 def _score_value(
     opportunity: Mapping[str, Any],
     scenarios_json: Mapping[str, Any] | None,
+    assumptions_json: Mapping[str, Any] | None = None,
 ) -> tuple[dict, list[str]]:
     signals = opportunity.get("financial_signals")
     gaps: list[str] = []
@@ -127,9 +141,32 @@ def _score_value(
         gaps.append("missing_financial_signals")
         signals = {}
 
-    hours = max(0.0, _number(signals.get("estimated_hours_per_week_saved")))
-    actor_count = max(0.0, _number(signals.get("estimated_actor_count"), 1.0))
-    frequency = str(signals.get("estimated_frequency") or "").strip().lower()
+    hours = max(
+        0.0,
+        _number(
+            _assumption_value(
+                assumptions_json,
+                "hours_per_week",
+                signals.get("estimated_hours_per_week_saved"),
+            )
+        ),
+    )
+    actor_count = max(
+        0.0,
+        _number(
+            _assumption_value(
+                assumptions_json,
+                "actor_count",
+                signals.get("estimated_actor_count"),
+            ),
+            1.0,
+        ),
+    )
+    frequency = str(
+        _assumption_value(assumptions_json, "frequency", signals.get("estimated_frequency"))
+        or ""
+    ).strip().lower()
+    hours_basis = _assumption_value(assumptions_json, "hours_basis")
     npv = _npv_from_scenarios(scenarios_json)
 
     hours_score = _clamp01(hours / 40.0)
@@ -148,6 +185,7 @@ def _score_value(
             score,
             {
                 "hours_per_week_saved": hours,
+                "hours_basis": hours_basis,
                 "actor_count": actor_count,
                 "frequency": frequency or None,
                 "expected_npv": npv,
@@ -415,13 +453,14 @@ def compute_arc_score(
     linked_process_ids: Sequence[Any] | None = None,
     linked_step_ids: Sequence[Any] | None = None,
     scenarios_json: Mapping[str, Any] | None = None,
+    assumptions_json: Mapping[str, Any] | None = None,
 ) -> dict:
     """Compute the ARC Score payload for a recommendation opportunity."""
     opp: Mapping[str, Any] = opportunity or {}
     linked_process_ids = linked_process_ids or []
     linked_step_ids = linked_step_ids or []
 
-    value, value_gaps = _score_value(opp, scenarios_json)
+    value, value_gaps = _score_value(opp, scenarios_json, assumptions_json)
     feasibility, feasibility_gaps = _score_feasibility(opp)
     suitability, suitability_gaps = _score_suitability(opp)
     evidence, evidence_gaps, blockers = _score_evidence(opp, linked_process_ids, linked_step_ids)
@@ -470,6 +509,7 @@ def apply_arc_score(recommendation: Recommendation) -> dict:
         linked_process_ids=recommendation.linked_process_ids or [],
         linked_step_ids=recommendation.linked_step_ids or [],
         scenarios_json=recommendation.scenarios_json or {},
+        assumptions_json=recommendation.assumptions_json or {},
     )
     llm_confidence = payload["llm_confidence"]
     score = payload["score"]

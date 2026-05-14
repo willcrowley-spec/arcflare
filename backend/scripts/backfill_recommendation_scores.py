@@ -19,7 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
 from app.models.recommendation import Recommendation
-from app.services.recommendations.recompute import recompute_recommendation
+from app.services.recommendations.recompute import (
+    load_recommendation_assumption_context,
+    recompute_recommendation,
+)
 
 
 def _round_money(value: Any) -> int | None:
@@ -44,6 +47,9 @@ def _before_snapshot(rec: Recommendation) -> dict[str, Any]:
         "expected_npv": (scenarios.get("npv") or {}).get("expected"),
         "expected_investment": (scenarios.get("expected") or {}).get("total_investment"),
         "technology_cost": assumptions.get("technology_cost"),
+        "actor_count": assumptions.get("actor_count"),
+        "hours_per_week": assumptions.get("hours_per_week"),
+        "hours_basis": assumptions.get("hours_basis"),
     }
 
 
@@ -58,6 +64,10 @@ def _delta(before: dict[str, Any], rec: Recommendation) -> dict[str, Any]:
         "after_expected_npv": after_npv,
         "after_expected_investment": after_investment,
         "after_technology_cost": assumptions.get("technology_cost"),
+        "after_actor_count": assumptions.get("actor_count"),
+        "after_hours_per_week": assumptions.get("hours_per_week"),
+        "after_hours_basis": assumptions.get("hours_basis"),
+        "assumption_warnings": assumptions.get("assumption_warnings") or [],
         "npv_delta": (
             _round_money(float(after_npv) - float(before["expected_npv"]))
             if before.get("expected_npv") is not None and after_npv is not None
@@ -87,9 +97,15 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
             rows = list((await session.execute(stmt)).scalars().all())
             details: list[dict[str, Any]] = []
+            org_context_cache: dict[UUID, dict[str, Any]] = {}
             for rec in rows:
                 before = _before_snapshot(rec)
-                recompute_recommendation(rec)
+                if rec.org_id not in org_context_cache:
+                    org_context_cache[rec.org_id] = await load_recommendation_assumption_context(
+                        session,
+                        rec.org_id,
+                    )
+                recompute_recommendation(rec, org_context=org_context_cache[rec.org_id])
                 details.append(_delta(before, rec))
 
             if args.apply:

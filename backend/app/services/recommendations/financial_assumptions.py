@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-ASSUMPTION_MODEL_VERSION = "agent_investment_pilot_v1"
+ASSUMPTION_MODEL_VERSION = "agent_investment_pilot_v2"
 
 ROLE_SALARY: dict[str, int] = {
     "sales_operations": 70_000,
@@ -143,6 +143,25 @@ _COMPLEXITY_GOVERNANCE = {"low": 1_500, "medium": 3_000, "high": 5_000}
 _COMPLEXITY_CHANGE_FACTOR = {"low": 0.15, "medium": 0.20, "high": 0.25}
 _COMPLEXITY_ENTERPRISE_MULTIPLIER = {"low": 1.45, "medium": 1.70, "high": 2.00}
 
+_NON_HUMAN_ACTOR_TERMS = (
+    "__c",
+    "agent_",
+    "apex",
+    "automation",
+    "class",
+    "component",
+    "controller",
+    "flow",
+    "handler",
+    "integration",
+    "object",
+    "processor",
+    "service",
+    "sync",
+    "system",
+    "trigger",
+)
+
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -156,6 +175,91 @@ def _safe_int(value: Any, default: int = 1) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _positive_int(value: Any) -> int | None:
+    parsed = _safe_int(value, 0)
+    return parsed if parsed > 0 else None
+
+
+def _org_labor_cap(org_context: dict[str, Any] | None) -> tuple[str | None, int | None]:
+    """Find the strongest available cap for humans who could perform labor."""
+    if not isinstance(org_context, dict):
+        return None, None
+
+    human_users = _positive_int(org_context.get("human_users"))
+    if human_users is not None:
+        return "human_users", human_users
+
+    business_headcount = _positive_int(org_context.get("business_entity_headcount"))
+    if business_headcount is not None:
+        return "business_entity_headcount", business_headcount
+
+    license_summary = org_context.get("license_summary")
+    if isinstance(license_summary, dict):
+        internal_used = _positive_int(license_summary.get("internal_used"))
+        if internal_used is not None:
+            return "license_summary_internal_used", internal_used
+
+    active_users = _positive_int(org_context.get("active_users"))
+    if active_users is not None:
+        return "active_users", active_users
+
+    return None, None
+
+
+def _is_non_human_actor_label(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    return any(term in text for term in _NON_HUMAN_ACTOR_TERMS)
+
+
+def _sanitize_actor_count(
+    signals: dict[str, Any],
+    *,
+    org_context: dict[str, Any] | None = None,
+) -> tuple[int, list[str], dict[str, Any]]:
+    raw_actor_count = max(1, _safe_int(signals.get("estimated_actor_count"), 1))
+    actor_count = raw_actor_count
+    warnings: list[str] = []
+    source_signals: dict[str, Any] = {
+        "estimated_actor_count": raw_actor_count,
+        "estimated_hours_per_week_saved": _safe_float(
+            signals.get("estimated_hours_per_week_saved")
+        ),
+        "estimated_frequency": signals.get("estimated_frequency"),
+        "primary_role_type": signals.get("primary_role_type"),
+    }
+
+    actors_impacted = signals.get("actors_impacted")
+    if isinstance(actors_impacted, list):
+        non_human_labels = [
+            str(label) for label in actors_impacted if _is_non_human_actor_label(label)
+        ]
+        human_like_labels = [
+            str(label)
+            for label in actors_impacted
+            if str(label).strip() and not _is_non_human_actor_label(label)
+        ]
+        source_signals["actors_impacted_count"] = len(actors_impacted)
+        source_signals["human_like_actor_labels"] = human_like_labels
+        source_signals["non_human_actor_labels"] = non_human_labels
+        if non_human_labels:
+            warnings.append("non_human_actor_labels_present")
+        if actors_impacted and not human_like_labels:
+            warnings.append("no_human_actor_labels_detected")
+
+    cap_source, cap_value = _org_labor_cap(org_context)
+    if cap_value is not None:
+        source_signals[f"{cap_source}_cap"] = cap_value
+        if cap_source == "human_users":
+            source_signals["org_human_user_cap"] = cap_value
+        if actor_count > cap_value:
+            actor_count = cap_value
+            warnings.append(f"actor_count_capped_to_org_{cap_source}")
+
+    return actor_count, sorted(set(warnings)), source_signals
 
 
 def normalize_role_salary(raw: str) -> int:
@@ -305,6 +409,7 @@ def build_financial_assumptions(
     opp_json: dict,
     *,
     existing_assumptions: dict | None = None,
+    org_context: dict[str, Any] | None = None,
 ) -> dict | None:
     """Build projection assumptions from an agent opportunity.
 
@@ -322,7 +427,10 @@ def build_financial_assumptions(
 
     role_raw = str(signals.get("primary_role_type") or "operations")
     fte_cost = normalize_role_salary(role_raw)
-    actor_count = max(1, _safe_int(signals.get("estimated_actor_count"), 1))
+    actor_count, warnings, source_signals = _sanitize_actor_count(
+        signals,
+        org_context=org_context,
+    )
     frequency = str(signals.get("estimated_frequency") or "daily").lower()
 
     components, meta = _investment_components(opp_json, actor_count)
@@ -346,6 +454,7 @@ def build_financial_assumptions(
         "assumption_model_version": ASSUMPTION_MODEL_VERSION,
         "fte_annual_cost": fte_cost,
         "hours_per_week": hours,
+        "hours_basis": "team_total",
         "frequency": frequency,
         "actor_count": actor_count,
         "role_type": role_raw.lower().strip(),
@@ -365,6 +474,8 @@ def build_financial_assumptions(
             "estimated_action_cost_usd": action_cost,
             "source": "salesforce_agentforce_flex_credit_public_pricing",
         },
+        "assumption_warnings": warnings,
+        "source_signals": source_signals,
         "source": "auto_estimated",
         "overrides": dict(overrides),
     }

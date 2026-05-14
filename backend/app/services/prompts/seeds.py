@@ -861,7 +861,9 @@ Rules:
 - process_id and step_ids must be valid UUIDs from the domain context input
 - Every process in the domain should appear in either an agent opportunity's replaces array OR in uncovered_processes
 - confidence should reflect genuine assessment — not all 0.80
-- financial_signals must be internally consistent with the processes replaced"""
+- financial_signals must be internally consistent with the processes replaced
+- estimated_actor_count means human people currently doing the work; do not count records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, or components
+- estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours"""
 
 # --- Agent opportunity cross-domain synthesis ---
 
@@ -901,6 +903,10 @@ _AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL = """Return ONLY valid JSON with this s
     }
   ]
 }
+
+Financial signal rules:
+- estimated_actor_count means human people currently doing the work; do not count records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, or components
+- estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours
 
 If no cross-domain opportunities exist, return empty arrays."""
 

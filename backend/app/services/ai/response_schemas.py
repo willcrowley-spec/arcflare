@@ -825,12 +825,18 @@ AGENT_OPPORTUNITY_SCHEMA: dict = {
                                 "type": "array",
                                 "items": {"type": "string"},
                             },
-                            "estimated_hours_per_week_saved": {"type": "number"},
+                            "estimated_hours_per_week_saved": {
+                                "type": "number",
+                                "description": "Total human effort saved per week across all actors, not per-person hours.",
+                            },
                             "estimated_frequency": {
                                 "type": "string",
                                 "enum": ["daily", "weekly", "monthly", "ad-hoc"],
                             },
-                            "estimated_actor_count": {"type": "number"},
+                            "estimated_actor_count": {
+                                "type": "number",
+                                "description": "Human people currently doing the work; exclude records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, and components.",
+                            },
                             "primary_role_type": {"type": "string"},
                         },
                         "required": [
@@ -971,9 +977,15 @@ AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
                                 "type": "array",
                                 "items": {"type": "string"},
                             },
-                            "estimated_hours_per_week_saved": {"type": "number"},
+                            "estimated_hours_per_week_saved": {
+                                "type": "number",
+                                "description": "Total human effort saved per week across all actors, not per-person hours.",
+                            },
                             "estimated_frequency": {"type": "string"},
-                            "estimated_actor_count": {"type": "number"},
+                            "estimated_actor_count": {
+                                "type": "number",
+                                "description": "Human people currently doing the work; exclude records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, and components.",
+                            },
                             "primary_role_type": {"type": "string"},
                         },
                         "required": [

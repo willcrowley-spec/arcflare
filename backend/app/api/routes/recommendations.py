@@ -19,7 +19,10 @@ from app.schemas.recommendation import (
     RecommendationSummary,
 )
 from app.services.recommendations.financial_engine import compute_portfolio_projections
-from app.services.recommendations.recompute import recompute_recommendation
+from app.services.recommendations.recompute import (
+    load_recommendation_assumption_context,
+    recompute_recommendation,
+)
 from app.workers.analysis import generate_recommendations_task
 
 router = APIRouter()
@@ -346,7 +349,8 @@ async def recalculate_recommendation(
         raise HTTPException(status_code=404, detail="Recommendation not found")
 
     previous_roi = rec.estimated_roi
-    result = recompute_recommendation(rec, overrides=body.overrides)
+    org_context = await load_recommendation_assumption_context(db, org.id)
+    result = recompute_recommendation(rec, overrides=body.overrides, org_context=org_context)
     new_npv = result["new_npv"]
 
     log = list(rec.enrichment_log or [])
@@ -382,12 +386,13 @@ async def recalculate_all_recommendations(
     updated = 0
     errors = 0
     details = []
+    org_context = await load_recommendation_assumption_context(db, org.id)
     for rec in recs:
         try:
             old_npv = None
             if rec.scenarios_json and "npv" in rec.scenarios_json:
                 old_npv = rec.scenarios_json["npv"].get("expected")
-            result = recompute_recommendation(rec)
+            result = recompute_recommendation(rec, org_context=org_context)
             updated += 1
             detail = {
                 "id": str(rec.id),

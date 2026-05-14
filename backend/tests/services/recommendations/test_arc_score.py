@@ -138,6 +138,31 @@ def test_llm_confidence_does_not_directly_determine_arc_score():
     assert result["decision"] != "ready"
 
 
+def test_value_dimension_uses_sanitized_assumption_signals_when_available():
+    result = compute_arc_score(
+        _opportunity(
+            financial_signals={
+                "actors_impacted": ["User", "System Automation: User_Skill_Before_Create_Update"],
+                "estimated_hours_per_week_saved": 6,
+                "estimated_frequency": "weekly",
+                "estimated_actor_count": 50,
+                "primary_role_type": "user",
+            }
+        ),
+        linked_process_ids=[str(uuid4())],
+        linked_step_ids=[str(uuid4())],
+        scenarios_json={"expected": {"npv": 25_000}},
+        assumptions_json={
+            "hours_per_week": 6,
+            "hours_basis": "team_total",
+            "actor_count": 9,
+        },
+    )
+
+    assert result["dimensions"]["value"]["signals"]["actor_count"] == 9
+    assert result["dimensions"]["value"]["signals"]["hours_basis"] == "team_total"
+
+
 def test_salesforce_native_touchpoints_do_not_count_as_external_integration_burden():
     native_heavy = _opportunity(
         complexity_estimate="medium",

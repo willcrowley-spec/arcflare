@@ -86,3 +86,22 @@ def test_recompute_applies_new_overrides_and_recomputes_score():
     assert rec.assumptions_json["overrides"]["technology_cost"] == 999
     assert rec.scenarios_json["expected"]["total_investment"] == 999
     assert rec.arc_score_json["score"] == rec.composite_score
+
+
+def test_recompute_uses_org_context_to_cap_inflated_actor_count():
+    rec = _recommendation()
+    rec.agent_opportunity_json["financial_signals"]["estimated_actor_count"] = 50
+    rec.agent_opportunity_json["financial_signals"]["primary_role_type"] = "User"
+    rec.agent_opportunity_json["financial_signals"]["actors_impacted"] = [
+        "User",
+        "System Automation: User_Skill_Before_Create_Update",
+        "UserSkillCertificationHandler",
+    ]
+    rec.assumptions_json = {}
+
+    recompute_recommendation(rec, org_context={"human_users": 9, "business_entity_headcount": 10})
+
+    assert rec.assumptions_json["actor_count"] == 9
+    assert rec.assumptions_json["hours_basis"] == "team_total"
+    assert "actor_count_capped_to_org_human_users" in rec.assumptions_json["assumption_warnings"]
+    assert rec.scenarios_json["expected"]["headcount_deflection"][-1] < 1

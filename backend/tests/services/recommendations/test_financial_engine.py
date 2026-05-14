@@ -1,4 +1,5 @@
 from app.services.recommendations.financial_engine import (
+    compute_base_savings,
     compute_portfolio_projections,
     compute_projections,
 )
@@ -43,3 +44,27 @@ def test_portfolio_projection_preserves_per_recommendation_automation_type_defau
     assert raw["npv"]["expected"] == (
         deterministic["npv"]["expected"] + agentic["npv"]["expected"]
     )
+
+
+def test_base_savings_treats_team_total_hours_as_already_aggregated():
+    assumptions = {
+        "fte_annual_cost": 75_000,
+        "hours_per_week": 6,
+        "hours_basis": "team_total",
+        "actor_count": 50,
+        "efficiency_gain": 0.9,
+    }
+
+    assert compute_base_savings(assumptions) == 10_125
+
+
+def test_base_savings_keeps_legacy_per_actor_hours_when_explicit():
+    assumptions = {
+        "fte_annual_cost": 75_000,
+        "hours_per_week": 6,
+        "hours_basis": "per_actor",
+        "actor_count": 50,
+        "efficiency_gain": 0.9,
+    }
+
+    assert compute_base_savings(assumptions) == 506_250
