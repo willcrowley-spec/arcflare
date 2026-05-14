@@ -651,6 +651,11 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
   const arcDecision =
     rec.arc_score_json && typeof rec.arc_score_json.decision === 'string' ? rec.arc_score_json.decision : null
   const canGenerateAgent = rec.status === 'accepted' || arcDecision === 'ready'
+  const generateAgentLabel =
+    generateAgent.isPending ? 'Generating...'
+    : canGenerateAgent ? 'Generate Agent'
+    : rec.status === 'active' ? 'Accept to generate'
+    : 'Generate Agent'
 
   const analysis: Record<string, unknown> = useMemo(() => {
     return rec.impact_json && typeof rec.impact_json === 'object' ? rec.impact_json : {}
@@ -727,10 +732,17 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
             )}
           >
             <Sparkles className="h-3.5 w-3.5" />
-            {generateAgent.isPending ? 'Generating...' : 'Generate Agent'}
+            {generateAgentLabel}
           </button>
         </div>
       </div>
+
+      {!canGenerateAgent ? (
+        <div className="border-b border-slate-200/80 bg-orange-50/60 px-6 py-2.5 text-xs text-orange-950">
+          <span className="font-semibold">Agent Builder is gated.</span>{' '}
+          Accept this recommendation first, or use an ARC-ready recommendation, then Generate Agent opens the design package workflow.
+        </div>
+      ) : null}
 
       {/* Tab bar */}
       <div className="flex gap-0 border-b border-slate-200/80 px-6" role="tablist">
