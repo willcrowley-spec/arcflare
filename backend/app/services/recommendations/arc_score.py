@@ -11,6 +11,7 @@ from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
 from app.models.recommendation import Recommendation
+from app.services.recommendations.financial_assumptions import classify_touchpoints
 
 FEATURE_VERSION = "arc_features_v1"
 SCORING_METHOD = "rules_v1"
@@ -161,6 +162,10 @@ def _score_feasibility(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
     gaps: list[str] = []
     complexity = str(opportunity.get("complexity_estimate") or "medium").strip().lower()
     integrations = _as_list(opportunity.get("integration_points"))
+    touchpoints = classify_touchpoints(integrations)
+    external_count = int(touchpoints["external_integration_count"])
+    unknown_count = int(touchpoints["unknown_touchpoint_count"])
+    native_count = int(touchpoints["native_salesforce_touchpoint_count"])
     data_requirements = _as_list(opportunity.get("data_requirements"))
     topics = _as_list(opportunity.get("topics"))
 
@@ -169,15 +174,23 @@ def _score_feasibility(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
 
     complexity_score = COMPLEXITY_SCORE.get(complexity, 0.55)
     data_score = 0.85 if data_requirements else 0.35
-    integration_count = len(integrations)
-    if integration_count == 0:
+    integration_burden = external_count + unknown_count
+    if integration_burden == 0:
         integration_score = 1.0
-    elif integration_count <= 2:
+    elif integration_burden <= 1:
+        integration_score = 0.85
+    elif integration_burden <= 2:
         integration_score = 0.75
-    elif integration_count <= 4:
+    elif integration_burden <= 4:
         integration_score = 0.45
     else:
         integration_score = 0.25
+    if native_count <= 4:
+        native_scope_score = 1.0
+    elif native_count <= 8:
+        native_scope_score = 0.85
+    else:
+        native_scope_score = 0.65
 
     topic_count = len(topics)
     if topic_count == 0:
@@ -190,21 +203,25 @@ def _score_feasibility(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
         scope_score = 0.50
 
     score = (
-        0.35 * complexity_score
+        0.30 * complexity_score
         + 0.25 * data_score
         + 0.25 * integration_score
-        + 0.15 * scope_score
+        + 0.10 * native_scope_score
+        + 0.10 * scope_score
     )
     return (
         _dimension(
             score,
             {
                 "complexity": complexity,
-                "integration_count": integration_count,
+                "integration_count": len(integrations),
+                "external_integration_count": external_count,
+                "native_touchpoint_count": native_count,
+                "unknown_touchpoint_count": unknown_count,
                 "data_requirement_count": len(data_requirements),
                 "topic_count": topic_count,
             },
-            "Feasibility from scope, complexity, data requirements, and integration burden.",
+            "Feasibility from complexity, data readiness, true external integrations, and native Salesforce scope.",
         ),
         gaps,
     )
@@ -330,6 +347,10 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
     gaps: list[str] = []
     complexity = str(opportunity.get("complexity_estimate") or "medium").strip().lower()
     integrations = _as_list(opportunity.get("integration_points"))
+    touchpoints = classify_touchpoints(integrations)
+    external_count = int(touchpoints["external_integration_count"])
+    unknown_count = int(touchpoints["unknown_touchpoint_count"])
+    native_count = int(touchpoints["native_salesforce_touchpoint_count"])
     data_requirements = _as_list(opportunity.get("data_requirements"))
     blob = _text(opportunity.get("risks"), opportunity.get("description"))
     risk_hits = [term for term in RISK_TERMS if term in blob]
@@ -340,7 +361,9 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
         score -= 0.10
     elif complexity == "high":
         score -= 0.25
-    score -= min(0.25, 0.06 * len(integrations))
+    score -= min(0.22, 0.07 * external_count)
+    score -= min(0.12, 0.04 * unknown_count)
+    score -= min(0.08, 0.01 * max(native_count - 4, 0))
     score -= min(0.30, 0.06 * len(risk_hits))
     score -= min(0.35, 0.12 * len(unsuitable_hits))
     if not data_requirements:
@@ -353,10 +376,13 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
             {
                 "complexity": complexity,
                 "integration_count": len(integrations),
+                "external_integration_count": external_count,
+                "native_touchpoint_count": native_count,
+                "unknown_touchpoint_count": unknown_count,
                 "risk_terms": risk_hits,
                 "unsuitability_terms": unsuitable_hits,
             },
-            "Inverse risk score: higher means fewer risk, control, and complexity concerns.",
+            "Inverse risk score: higher means fewer control, external integration, and complexity concerns.",
         ),
         gaps,
     )

@@ -27,6 +27,31 @@ def test_classify_touchpoints_keeps_salesforce_metadata_native():
     assert "Opportunity_Record_Page component" in classified["native_salesforce_touchpoints"]
 
 
+def test_classify_touchpoints_treats_salesforce_object_api_as_native_not_external():
+    classified = classify_touchpoints(
+        [
+            "Watcher__c and Contact object APIs",
+            "Task object API for before-insert processing",
+            "ActionItem__c object API",
+            "Account_Invoices__cio and Account_Cases__cio Data Cloud object APIs",
+            "Slack API via SlackActions Apex class",
+            "Notification channel (email or Slack) for anomaly alerts",
+        ]
+    )
+
+    assert classified["external_integrations"] == [
+        "Slack API via SlackActions Apex class",
+        "Notification channel (email or Slack) for anomaly alerts",
+    ]
+    assert "Watcher__c and Contact object APIs" in classified["native_salesforce_touchpoints"]
+    assert "Task object API for before-insert processing" in classified["native_salesforce_touchpoints"]
+    assert "ActionItem__c object API" in classified["native_salesforce_touchpoints"]
+    assert (
+        "Account_Invoices__cio and Account_Cases__cio Data Cloud object APIs"
+        in classified["native_salesforce_touchpoints"]
+    )
+
+
 def test_build_financial_assumptions_uses_range_based_pilot_costs_and_preserves_overrides():
     assumptions = build_financial_assumptions(
         {

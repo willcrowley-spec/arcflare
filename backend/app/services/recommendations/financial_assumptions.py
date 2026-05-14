@@ -54,6 +54,7 @@ _ROLE_SUFFIX_STRIP = [
 
 _NATIVE_SALESFORCE_TERMS = (
     "__c",
+    "__cio",
     "__r",
     "apex",
     "approval process",
@@ -64,10 +65,14 @@ _NATIVE_SALESFORCE_TERMS = (
     "contact",
     "controller",
     "custom object",
+    "data cloud",
+    "emailtemplate",
+    "feeditem",
     "field",
     "financialforce",
     "flow",
     "fw1__",
+    "invocable",
     "lead",
     "lightning",
     "object",
@@ -76,6 +81,7 @@ _NATIVE_SALESFORCE_TERMS = (
     "page",
     "pricebook",
     "process builder",
+    "platform event",
     "record",
     "salesforce",
     "task",
@@ -85,8 +91,8 @@ _NATIVE_SALESFORCE_TERMS = (
 )
 
 _EXTERNAL_TERMS = (
-    "api",
     "calendly",
+    "connector",
     "erp",
     "external",
     "hubspot crm",
@@ -101,6 +107,33 @@ _EXTERNAL_TERMS = (
     "teams",
     "third-party",
     "webhook",
+    "workday",
+    "zendesk",
+)
+
+_EXPLICIT_EXTERNAL_TERMS = (
+    "external",
+    "integration connector",
+    "integration for",
+    "middleware",
+    "notification channel",
+    "notification service",
+    "notification system",
+    "scheduling integration",
+    "service bus",
+    "third-party",
+    "webhook",
+)
+
+_EXTERNAL_API_PREFIXES = (
+    "calendly",
+    "hubspot",
+    "mulesoft",
+    "netsuite",
+    "quickbooks",
+    "slack",
+    "stripe",
+    "teams",
     "workday",
     "zendesk",
 )
@@ -154,28 +187,31 @@ def _is_native_salesforce_touchpoint(value: str) -> bool:
 
 def _is_external_integration(value: str) -> bool:
     text = value.lower()
+    native_hit = _is_native_salesforce_touchpoint(value)
     external_hit = any(term in text for term in _EXTERNAL_TERMS)
-    if not external_hit:
+    explicit_external = any(term in text for term in _EXPLICIT_EXTERNAL_TERMS)
+    api_hit = bool(re.search(r"\bapis?\b", text))
+    vendor_api_hit = api_hit and any(vendor in text for vendor in _EXTERNAL_API_PREFIXES)
+    salesforce_object_api = native_hit and (
+        "__c" in text
+        or "__cio" in text
+        or "salesforce" in text
+        or "data cloud object" in text
+        or bool(re.search(r"\b[a-z0-9_ ]+ object apis?\b", text))
+    )
+
+    # Salesforce-native records and metadata often contain words like "API" or
+    # package/vendor names. Those are implementation touchpoints, not external
+    # integration cost drivers, unless the text explicitly names an outside
+    # service API/connector.
+    if native_hit:
+        if vendor_api_hit and not salesforce_object_api:
+            return True
+        if explicit_external and not salesforce_object_api:
+            return True
         return False
 
-    # Salesforce-native records and metadata often contain vendor/package names.
-    # A custom object or Flow mentioning QuickBooks/HubSpot is still a native
-    # Salesforce touchpoint unless it explicitly calls an outside system/API.
-    native_hit = _is_native_salesforce_touchpoint(value)
-    explicit_external = any(
-        term in text
-        for term in (
-            "external",
-            "api",
-            "webhook",
-            "middleware",
-            "integration for",
-            "scheduling integration",
-            "notification system",
-            "alerting system",
-        )
-    )
-    return explicit_external or not native_hit
+    return external_hit or explicit_external or api_hit
 
 
 def classify_touchpoints(raw_touchpoints: list[Any] | None) -> dict[str, Any]:

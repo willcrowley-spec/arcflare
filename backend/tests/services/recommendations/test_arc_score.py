@@ -138,6 +138,48 @@ def test_llm_confidence_does_not_directly_determine_arc_score():
     assert result["decision"] != "ready"
 
 
+def test_salesforce_native_touchpoints_do_not_count_as_external_integration_burden():
+    native_heavy = _opportunity(
+        complexity_estimate="medium",
+        integration_points=[
+            "Salesforce CampaignMember object (trigger source)",
+            "Salesforce Lead object (read and write for assignment updates)",
+            "Salesforce Contact object (read for context)",
+            "Salesforce Task object (create for follow-up tasks)",
+            "HubSpot_Inc__HubSpot_Intelligence__c object (read for lead score enrichment)",
+            "Lead_After_Insert_Send_Website_Lead_Notification_Internal flow",
+        ],
+    )
+    with_external = _opportunity(
+        complexity_estimate="medium",
+        integration_points=[
+            "Salesforce CampaignMember object (trigger source)",
+            "Salesforce Lead object (read and write for assignment updates)",
+            "Slack API via SlackActions Apex class",
+            "QuickBooks external accounting system API",
+        ],
+    )
+
+    native_result = compute_arc_score(
+        native_heavy,
+        linked_process_ids=[str(uuid4())],
+        linked_step_ids=[str(uuid4())],
+        scenarios_json={"expected": {"npv": 200000}},
+    )
+    external_result = compute_arc_score(
+        with_external,
+        linked_process_ids=[str(uuid4())],
+        linked_step_ids=[str(uuid4())],
+        scenarios_json={"expected": {"npv": 200000}},
+    )
+
+    assert native_result["dimensions"]["feasibility"]["signals"]["external_integration_count"] == 0
+    assert native_result["dimensions"]["risk_inverse"]["signals"]["external_integration_count"] == 0
+    assert external_result["dimensions"]["feasibility"]["signals"]["external_integration_count"] == 2
+    assert native_result["dimensions"]["feasibility"]["score"] > external_result["dimensions"]["feasibility"]["score"]
+    assert native_result["dimensions"]["risk_inverse"]["score"] > external_result["dimensions"]["risk_inverse"]["score"]
+
+
 def test_apply_arc_score_sets_compatibility_fields_and_divergence_flag():
     rec = Recommendation(
         org_id=uuid4(),
