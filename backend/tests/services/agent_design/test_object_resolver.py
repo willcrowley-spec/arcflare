@@ -1,4 +1,4 @@
-from app.services.agent_design.object_resolver import resolve_object_references
+from app.services.agent_design.legacy_binding_adapter import resolve_object_references
 
 
 OBJECTS = [

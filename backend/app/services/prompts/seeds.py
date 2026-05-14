@@ -834,7 +834,17 @@ Return ONLY valid JSON with this exact shape:
         }
       ],
       "trigger": "What kicks this agent off",
-      "data_requirements": ["Salesforce objects this agent needs"],
+      "data_requirements": ["Human-readable business data needs. Do not treat this as a source-of-truth metadata list."],
+      "suggested_metadata_refs": [
+        {
+          "ref_type": "object|field|flow|apex|queue|external_system|unknown",
+          "raw_value": "raw metadata or business phrase from the evidence",
+          "object_api_name": "exact API name if directly present in process touchpoints, otherwise empty string",
+          "field_api_name": "exact field API name if directly present in process touchpoints, otherwise empty string",
+          "operation": "read|write|create|update|delete|execute|unknown",
+          "reason": "Why this may be relevant; Arcflare will validate it separately"
+        }
+      ],
       "integration_points": ["External systems needing Apex middleware"],
       "complexity_estimate": "low" | "medium" | "high",
       "confidence": 0.0-1.0,
@@ -863,7 +873,9 @@ Rules:
 - confidence should reflect genuine assessment — not all 0.80
 - financial_signals must be internally consistent with the processes replaced
 - estimated_actor_count means human people currently doing the work; do not count records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, or components
-- estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours"""
+- estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours
+- data_requirements is business copy only. Do not rely on it to prove Salesforce object/field access.
+- suggested_metadata_refs are untrusted hints. Only include exact API names when the input process touchpoints already contained them; never invent object or field API names."""
 
 # --- Agent opportunity cross-domain synthesis ---
 
@@ -886,7 +898,8 @@ _AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL = """Return ONLY valid JSON with this s
       "replaces": [{"process_id": "uuid", "process_name": "string", "steps_replaced": ["string"], "step_ids": ["uuid"], "replacement_type": "full" | "partial"}],
       "source_domains": ["domain names this spans"],
       "trigger": "string",
-      "data_requirements": ["string"],
+      "data_requirements": ["Human-readable business data needs. Do not treat this as a source-of-truth metadata list."],
+      "suggested_metadata_refs": [{"ref_type": "object|field|flow|apex|queue|external_system|unknown", "raw_value": "string", "object_api_name": "string or empty", "field_api_name": "string or empty", "operation": "read|write|create|update|delete|execute|unknown", "reason": "string"}],
       "integration_points": ["string"],
       "complexity_estimate": "low" | "medium" | "high",
       "confidence": 0.0-1.0,
@@ -907,6 +920,8 @@ _AGENT_OPPORTUNITY_CROSS_DOMAIN_PROTOCOL = """Return ONLY valid JSON with this s
 Financial signal rules:
 - estimated_actor_count means human people currently doing the work; do not count records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, or components
 - estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours
+- data_requirements is business copy only. Do not rely on it to prove Salesforce object/field access.
+- suggested_metadata_refs are untrusted hints. Only include exact API names when the input evidence already contained them; never invent object or field API names.
 
 If no cross-domain opportunities exist, return empty arrays."""
 

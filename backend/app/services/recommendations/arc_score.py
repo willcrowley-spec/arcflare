@@ -89,6 +89,27 @@ def _as_list(value: Any) -> list:
     return value if isinstance(value, list) else []
 
 
+def _binding_counts(opportunity: Mapping[str, Any]) -> dict[str, int]:
+    payload = opportunity.get("metadata_bindings_v1")
+    if not isinstance(payload, Mapping):
+        return {
+            "has_payload": 0,
+            "validated": 0,
+            "suggested": 0,
+            "unresolved": 0,
+            "legacy": 0,
+        }
+    bindings = [b for b in _as_list(payload.get("bindings")) if isinstance(b, Mapping)]
+    unresolved = [b for b in _as_list(payload.get("unresolved_bindings")) if isinstance(b, Mapping)]
+    return {
+        "has_payload": 1,
+        "validated": sum(1 for b in bindings if b.get("status") == "validated"),
+        "suggested": sum(1 for b in bindings if b.get("status") == "suggested"),
+        "unresolved": len(unresolved),
+        "legacy": int((payload.get("telemetry") or {}).get("bindings_from_legacy_adapter") or 0),
+    }
+
+
 def _text(*parts: Any) -> str:
     return " ".join(str(p or "") for p in parts).lower()
 
@@ -205,13 +226,27 @@ def _score_feasibility(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
     unknown_count = int(touchpoints["unknown_touchpoint_count"])
     native_count = int(touchpoints["native_salesforce_touchpoint_count"])
     data_requirements = _as_list(opportunity.get("data_requirements"))
+    binding_counts = _binding_counts(opportunity)
     topics = _as_list(opportunity.get("topics"))
 
-    if not data_requirements:
+    if binding_counts["has_payload"]:
+        if binding_counts["validated"] == 0:
+            gaps.append("missing_validated_metadata_bindings")
+        if binding_counts["unresolved"]:
+            gaps.append("unresolved_metadata_bindings")
+    elif not data_requirements:
         gaps.append("missing_data_requirements")
 
     complexity_score = COMPLEXITY_SCORE.get(complexity, 0.55)
-    data_score = 0.85 if data_requirements else 0.35
+    if binding_counts["has_payload"]:
+        if binding_counts["validated"]:
+            data_score = 0.90
+        elif binding_counts["suggested"]:
+            data_score = 0.55
+        else:
+            data_score = 0.30
+    else:
+        data_score = 0.85 if data_requirements else 0.35
     integration_burden = external_count + unknown_count
     if integration_burden == 0:
         integration_score = 1.0
@@ -257,6 +292,9 @@ def _score_feasibility(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
                 "native_touchpoint_count": native_count,
                 "unknown_touchpoint_count": unknown_count,
                 "data_requirement_count": len(data_requirements),
+                "validated_metadata_binding_count": binding_counts["validated"],
+                "suggested_metadata_binding_count": binding_counts["suggested"],
+                "unresolved_metadata_binding_count": binding_counts["unresolved"],
                 "topic_count": topic_count,
             },
             "Feasibility from complexity, data readiness, true external integrations, and native Salesforce scope.",
@@ -390,6 +428,7 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
     unknown_count = int(touchpoints["unknown_touchpoint_count"])
     native_count = int(touchpoints["native_salesforce_touchpoint_count"])
     data_requirements = _as_list(opportunity.get("data_requirements"))
+    binding_counts = _binding_counts(opportunity)
     blob = _text(opportunity.get("risks"), opportunity.get("description"))
     risk_hits = [term for term in RISK_TERMS if term in blob]
     unsuitable_hits = [term for term in UNSUITABLE_TERMS if term in blob]
@@ -404,7 +443,14 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
     score -= min(0.08, 0.01 * max(native_count - 4, 0))
     score -= min(0.30, 0.06 * len(risk_hits))
     score -= min(0.35, 0.12 * len(unsuitable_hits))
-    if not data_requirements:
+    if binding_counts["has_payload"]:
+        if binding_counts["validated"] == 0:
+            score -= 0.12
+            gaps.append("missing_validated_metadata_bindings")
+        if binding_counts["unresolved"]:
+            score -= min(0.16, 0.04 * binding_counts["unresolved"])
+            gaps.append("unresolved_metadata_bindings")
+    elif not data_requirements:
         score -= 0.10
         gaps.append("missing_data_requirements")
 
@@ -417,6 +463,8 @@ def _score_risk_inverse(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]
                 "external_integration_count": external_count,
                 "native_touchpoint_count": native_count,
                 "unknown_touchpoint_count": unknown_count,
+                "validated_metadata_binding_count": binding_counts["validated"],
+                "unresolved_metadata_binding_count": binding_counts["unresolved"],
                 "risk_terms": risk_hits,
                 "unsuitability_terms": unsuitable_hits,
             },
@@ -439,7 +487,13 @@ def _decision(
         or _number(dimensions["risk_inverse"].get("score")) < 0.55
     ):
         return "defer"
-    severe_gaps = {"missing_financial_signals", "missing_linked_steps", "missing_data_requirements"}
+    severe_gaps = {
+        "missing_financial_signals",
+        "missing_linked_steps",
+        "missing_data_requirements",
+        "missing_validated_metadata_bindings",
+        "unresolved_metadata_bindings",
+    }
     if score >= 0.75 and not severe_gaps.intersection(gaps):
         return "ready"
     if score >= 0.50:

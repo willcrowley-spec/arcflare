@@ -44,28 +44,19 @@ def _context(data_requirements):
     }
 
 
-def test_build_design_package_grounds_topic_actions_to_resolved_objects():
+def test_build_design_package_treats_string_resolver_results_as_legacy_suggestions():
     package = build_design_package_from_context(
         _context(["User Skill c records", "User Certification records"])
     )
 
-    action_objects = {
-        action["name"]: action["salesforce_objects"][0]
-        for action in package["action_contracts"]
-        if action["salesforce_objects"]
-    }
+    suggested_objects = {row["api_name"] for row in package["metadata_grounding"]["legacy_suggestions"]}
 
-    assert action_objects["ReadSkillRecordToVerifyReference"] == "User_Skill__c"
-    assert action_objects["ValidateRequiredFieldsOnUserSkill"] == "User_Skill__c"
-    assert action_objects["ReadCertificationRecordToVerifyReference"] == "User_Certification__c"
-    assert action_objects["ValidateUserCertificationFieldsAgainstBusinessRules"] == "User_Certification__c"
-    assert "__c" not in "".join(action_objects)
-
-    permission_objects = {p["object"] for p in package["permission_requirements"]}
-    assert permission_objects == {"User_Skill__c", "User_Certification__c"}
-    assert package["metadata_grounding"]["unresolved"] == []
-    assert not any("unknown_salesforce_object" in b for b in package["blockers"])
-    assert not any("missing_permission_requirement" in b for b in package["blockers"])
+    assert suggested_objects == {"User_Skill__c", "User_Certification__c"}
+    assert package["metadata_grounding"]["mapped"] == []
+    assert package["permission_requirements"] == []
+    assert all(action["salesforce_objects"] == [] for action in package["action_contracts"])
+    assert "legacy_binding_requires_review:User_Skill__c" in package["blockers"]
+    assert "legacy_binding_requires_review:User_Certification__c" in package["blockers"]
 
 
 def test_build_design_package_does_not_pick_arbitrary_object_without_data_requirements():
@@ -82,11 +73,11 @@ def test_build_design_package_blocks_unresolved_requirements_without_fake_object
     assert package["metadata_grounding"]["mapped"] == []
     assert package["metadata_grounding"]["unresolved"][0]["raw"] == "Legacy workforce planning records"
     assert all(action["salesforce_objects"] == [] for action in package["action_contracts"])
-    assert "unresolved_data_requirement:Legacy workforce planning records" in package["blockers"]
+    assert "unresolved_metadata_binding:Legacy workforce planning records" in package["blockers"]
     assert not any("unknown_salesforce_object:Legacy workforce planning records" in b for b in package["blockers"])
 
 
-def test_build_design_package_grounds_standard_crm_business_phrases():
+def test_build_design_package_keeps_standard_crm_business_phrases_as_legacy_review_suggestions():
     context = {
         "recommendation": {
             "id": "rec_2",
@@ -132,7 +123,7 @@ def test_build_design_package_grounds_standard_crm_business_phrases():
     }
 
     package = build_design_package_from_context(context)
-    mapped = {(row["raw"], row["api_name"]) for row in package["metadata_grounding"]["mapped"]}
+    mapped = {(row["raw"], row["api_name"]) for row in package["metadata_grounding"]["legacy_suggestions"]}
     unresolved = {row["raw"] for row in package["metadata_grounding"]["unresolved"]}
     permission_objects = {p["object"] for p in package["permission_requirements"]}
 
@@ -142,9 +133,6 @@ def test_build_design_package_grounds_standard_crm_business_phrases():
     assert ("Purchased product and pricing information", "Product2") in mapped
     assert ("Purchased product and pricing information", "PricebookEntry") in mapped
     assert "Customer Onboarding team roster or queue configuration" in unresolved
-    assert {"Opportunity", "Account", "Contact", "Product2", "PricebookEntry"}.issubset(permission_objects)
-    assert "Opportunity" in package["action_contracts"][0]["salesforce_objects"]
-    assert "Opportunity" in package["action_contracts"][1]["salesforce_objects"]
-    assert {"Opportunity", "Account", "Contact", "Product2"}.issubset(
-        set(package["action_contracts"][2]["salesforce_objects"])
-    )
+    assert permission_objects == set()
+    assert all(action["salesforce_objects"] == [] for action in package["action_contracts"])
+    assert any(blocker.startswith("legacy_binding_requires_review:") for blocker in package["blockers"])

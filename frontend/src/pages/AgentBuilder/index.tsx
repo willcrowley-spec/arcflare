@@ -48,6 +48,15 @@ function stringArray(value: unknown): string[] {
 }
 
 function formatBlocker(blocker: string): string {
+  if (blocker.startsWith('unresolved_metadata_binding:')) {
+    return `Unresolved metadata binding: ${blocker.replace('unresolved_metadata_binding:', '')}`
+  }
+  if (blocker.startsWith('suggested_metadata_binding:')) {
+    return `Suggested metadata binding needs validation: ${blocker.replace('suggested_metadata_binding:', '')}`
+  }
+  if (blocker.startsWith('legacy_binding_requires_review:')) {
+    return `Legacy mapping suggestion needs review: ${blocker.replace('legacy_binding_requires_review:', '')}`
+  }
   if (blocker.startsWith('unresolved_data_requirement:')) {
     return `Unmapped data requirement: ${blocker.replace('unresolved_data_requirement:', '')}`
   }
@@ -126,7 +135,7 @@ function RunHeader({ run }: { run: AgentGenerationRun }) {
         <div className="mt-4 flex flex-wrap gap-2">
           {blockers.map((blocker) => (
             <span key={blocker} className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
-              {blocker.replace(/_/g, ' ')}
+              {formatBlocker(blocker)}
             </span>
           ))}
         </div>
@@ -229,6 +238,9 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
   const grounding = pkg.metadata_grounding && typeof pkg.metadata_grounding === 'object' ? pkg.metadata_grounding as Record<string, unknown> : {}
   const mappedObjects = asArray(grounding.mapped)
   const unresolvedObjects = asArray(grounding.unresolved)
+  const legacySuggestions = asArray(grounding.legacy_suggestions)
+  const groundingWarnings = Array.isArray(grounding.warnings) ? grounding.warnings.map(String) : []
+  const legacyAdapterUsed = grounding.legacy_adapter_used === true
   const blockers = Array.isArray(validation.blockers) ? validation.blockers as string[] : []
   const canApprove = design?.status === 'draft' && blockers.length === 0
   const canRegenerate = !!design && ['blocked', 'draft'].includes(design.status) && !run.source_bundle
@@ -320,30 +332,62 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
         <div className="space-y-4">
           <Panel title="Metadata Grounding">
             <div className="space-y-3">
+              {legacyAdapterUsed ? (
+                <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                    <div>
+                      <div className="font-semibold text-amber-950">Legacy mapping mode</div>
+                      <div className="mt-0.5 text-xs leading-5 text-amber-800">
+                        These are review suggestions from old recommendation text. They cannot generate Apex or Agentforce dependencies until backed by process touchpoints or a user-approved mapping.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {mappedObjects.length > 0 ? (
                 <div className="space-y-2">
                   {mappedObjects.map((item) => (
                     <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm ring-1 ring-emerald-100">
                       <div className="font-semibold text-emerald-950">{text(item.api_name)}</div>
                       <div className="mt-0.5 text-xs text-emerald-800">
-                        Mapped "{text(item.raw)}" to {text(item.label)} via {text(item.match_method)}
+                        Validated {text(item.label)} from {text(item.source, 'metadata evidence')}.
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">No Salesforce objects were mapped from this recommendation.</p>
+                <p className="text-sm text-slate-600">No validated Salesforce metadata bindings are available for source generation.</p>
               )}
+              {legacySuggestions.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Review suggestions</div>
+                  {legacySuggestions.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+                      <div className="font-semibold text-navy-900">{text(item.api_name)}</div>
+                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                        Suggested from "{text(item.raw)}". Confirm this against process evidence before using it in generated source.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {unresolvedObjects.length > 0 ? (
                 <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Mapping tasks</div>
                   {unresolvedObjects.map((item) => (
                     <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
                       <div className="font-semibold text-amber-950">{text(item.raw)}</div>
                       <div className="mt-0.5 text-xs text-amber-800">
-                        Needs object mapping before this design can be approved.
+                        {text(item.ref_type, 'Metadata')} binding needs evidence before this design can be approved.
                       </div>
                     </div>
                   ))}
+                </div>
+              ) : null}
+              {groundingWarnings.length > 0 ? (
+                <div className="space-y-1 text-xs leading-5 text-slate-500">
+                  {groundingWarnings.map((warning) => <div key={warning}>{warning}</div>)}
                 </div>
               ) : null}
             </div>
@@ -359,7 +403,7 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-slate-600">No permissions generated because no Salesforce objects were mapped.</p>
+              <p className="text-sm text-slate-600">No permissions generated because no validated Salesforce object bindings are available.</p>
             )}
           </Panel>
           <Panel title="Readiness">

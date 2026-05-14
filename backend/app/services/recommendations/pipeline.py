@@ -8,13 +8,16 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.models.metadata import MetadataObject
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
 from app.services.recommendations.arc_score import apply_arc_score
 from app.services.recommendations.agent_analyzer import analyze_domain
 from app.services.recommendations.cross_domain import synthesize_cross_domain
 from app.services.recommendations.domain_assembler import assemble_domain_contexts
+from app.services.recommendations.metadata_bindings import build_metadata_bindings
 from app.workers.analysis import evaluate_agent_financials_task
 
 logger = logging.getLogger(__name__)
@@ -28,7 +31,19 @@ def _build_agent_recommendation(
     run_id: UUID,
     domain_id: UUID | None,
     rec_type: str = "agent_opportunity",
+    *,
+    process_contexts: list[dict] | None = None,
+    salesforce_metadata: dict | None = None,
 ) -> Recommendation:
+    opp = dict(opp or {})
+    metadata_bindings = build_metadata_bindings(
+        opp,
+        process_contexts=process_contexts or [],
+        salesforce_metadata=salesforce_metadata or {},
+    )
+    opp["metadata_bindings_v1"] = metadata_bindings
+    opp["binding_model_version"] = metadata_bindings["binding_model_version"]
+
     title = (opp.get("agent_name") or "Untitled Agent Opportunity")[:512]
 
     topic_types = {t.get("reasoning_type", "hybrid") for t in opp.get("topics", [])}
@@ -78,6 +93,8 @@ def _build_agent_recommendation(
             "data_requirements": opp.get("data_requirements", []),
             "integration_points": opp.get("integration_points", []),
             "risks": opp.get("risks", ""),
+            "metadata_bindings_v1": metadata_bindings,
+            "binding_model_version": metadata_bindings["binding_model_version"],
         },
         architecture_health_json={},
         linked_process_ids=linked_proc_ids,
@@ -98,6 +115,33 @@ def _build_agent_recommendation(
     )
     apply_arc_score(rec)
     return rec
+
+
+async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession) -> dict:
+    result = await db.execute(
+        select(MetadataObject)
+        .where(MetadataObject.org_id == org_id)
+        .options(selectinload(MetadataObject.fields))
+        .order_by(MetadataObject.api_name)
+    )
+    objects = list(result.scalars().unique().all())
+    return {
+        "objects": [
+            {
+                "api_name": obj.api_name,
+                "label": obj.label,
+                "fields": [
+                    {
+                        "api_name": field.api_name,
+                        "label": field.label,
+                        "field_type": field.field_type,
+                    }
+                    for field in (obj.fields or [])
+                ],
+            }
+            for obj in objects
+        ]
+    }
 
 
 async def run_recommendation_pipeline(
@@ -260,6 +304,13 @@ async def run_recommendation_pipeline(
         await _update_run_progress(stage_results, "phase_4_persist")
 
         # --- Phase 4: Persist recommendations, enqueue financial evaluation ---
+        salesforce_metadata = await _load_salesforce_metadata_for_bindings(org_id, db)
+        all_process_contexts = [
+            proc
+            for domain_result in all_domain_results
+            for proc in domain_result.get("_processes_raw", [])
+            if isinstance(proc, dict)
+        ]
         await db.execute(
             delete(Recommendation).where(
                 Recommendation.org_id == org_id,
@@ -279,7 +330,13 @@ async def run_recommendation_pipeline(
                 domain_id = None
             for opp in r.get("agent_opportunities", []):
                 rec = _build_agent_recommendation(
-                    opp, org_id, run_id, domain_id, rec_type="agent_opportunity"
+                    opp,
+                    org_id,
+                    run_id,
+                    domain_id,
+                    rec_type="agent_opportunity",
+                    process_contexts=r.get("_processes_raw", []),
+                    salesforce_metadata=salesforce_metadata,
                 )
                 db.add(rec)
                 created_count += 1
@@ -289,7 +346,13 @@ async def run_recommendation_pipeline(
         if cross_result is not None:
             for opp in cross_result.get("cross_domain_opportunities") or []:
                 rec = _build_agent_recommendation(
-                    opp, org_id, run_id, None, rec_type="agent_opportunity"
+                    opp,
+                    org_id,
+                    run_id,
+                    None,
+                    rec_type="agent_opportunity",
+                    process_contexts=all_process_contexts,
+                    salesforce_metadata=salesforce_metadata,
                 )
                 db.add(rec)
                 created_count += 1

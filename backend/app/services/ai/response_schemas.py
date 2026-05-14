@@ -807,6 +807,29 @@ AGENT_OPPORTUNITY_SCHEMA: dict = {
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                    "suggested_metadata_refs": {
+                        "type": "array",
+                        "description": "Optional untrusted Salesforce metadata hints from the LLM. Arcflare validates these separately; they are not deployable dependencies.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ref_type": {
+                                    "type": "string",
+                                    "enum": ["object", "field", "flow", "apex", "queue", "external_system", "unknown"],
+                                },
+                                "raw_value": {"type": "string"},
+                                "object_api_name": {"type": "string"},
+                                "field_api_name": {"type": "string"},
+                                "operation": {
+                                    "type": "string",
+                                    "enum": ["read", "write", "create", "update", "delete", "execute", "unknown"],
+                                },
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["ref_type", "raw_value", "object_api_name", "field_api_name", "operation", "reason"],
+                            "additionalProperties": False,
+                        },
+                    },
                     "integration_points": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -958,6 +981,29 @@ AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
                     "data_requirements": {
                         "type": "array",
                         "items": {"type": "string"},
+                    },
+                    "suggested_metadata_refs": {
+                        "type": "array",
+                        "description": "Optional untrusted Salesforce metadata hints from the LLM. Arcflare validates these separately; they are not deployable dependencies.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "ref_type": {
+                                    "type": "string",
+                                    "enum": ["object", "field", "flow", "apex", "queue", "external_system", "unknown"],
+                                },
+                                "raw_value": {"type": "string"},
+                                "object_api_name": {"type": "string"},
+                                "field_api_name": {"type": "string"},
+                                "operation": {
+                                    "type": "string",
+                                    "enum": ["read", "write", "create", "update", "delete", "execute", "unknown"],
+                                },
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["ref_type", "raw_value", "object_api_name", "field_api_name", "operation", "reason"],
+                            "additionalProperties": False,
+                        },
                     },
                     "integration_points": {
                         "type": "array",

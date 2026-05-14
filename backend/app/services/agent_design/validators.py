@@ -52,11 +52,22 @@ def validate_design_package(
         blockers.append("missing_agent_name")
 
     grounding = design_package.get("metadata_grounding") if isinstance(design_package.get("metadata_grounding"), dict) else {}
+    if grounding.get("legacy_adapter_used"):
+        warnings.append("legacy_string_adapter_used")
+    for suggestion in _as_list(grounding.get("legacy_suggestions")):
+        if not isinstance(suggestion, dict):
+            continue
+        api_name = _norm(suggestion.get("api_name")) or _norm(suggestion.get("raw")) or "unknown"
+        blockers.append(f"legacy_binding_requires_review:{api_name}")
     for unresolved in _as_list(grounding.get("unresolved")):
         if not isinstance(unresolved, dict):
             continue
         raw = _norm(unresolved.get("raw")) or "unknown"
-        blockers.append(f"unresolved_data_requirement:{raw}")
+        status = _norm(unresolved.get("status"))
+        if status == "suggested":
+            blockers.append(f"suggested_metadata_binding:{raw}")
+        else:
+            blockers.append(f"unresolved_metadata_binding:{raw}")
 
     topics = _as_list(design_package.get("topics"))
     if not topics:

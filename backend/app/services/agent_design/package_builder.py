@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 
-from app.services.agent_design.object_resolver import (
+from app.services.agent_design.legacy_binding_adapter import (
     resolve_object_references,
     score_text_against_resolved_object,
 )
 from app.services.agent_design.source_compiler import safe_identifier
 from app.services.agent_design.validators import validate_design_package
+from app.services.recommendations.metadata_bindings import validated_object_bindings
 
 
 def _as_list(value: object) -> list:
@@ -100,6 +101,134 @@ def _dedupe_objects(objects: list[dict]) -> list[dict]:
     return list(deduped.values())
 
 
+def _metadata_labels(context: dict) -> dict[str, str]:
+    return {
+        _text(o.get("api_name")): _text(o.get("label"), o.get("api_name"))
+        for o in _as_list((context.get("salesforce_metadata") or {}).get("objects"))
+        if isinstance(o, dict) and _text(o.get("api_name"))
+    }
+
+
+def _binding_payload(opportunity: dict) -> dict | None:
+    for key in ("metadata_bindings_v1", "metadata_bindings"):
+        value = opportunity.get(key)
+        if isinstance(value, dict) and value.get("schema_version") == "metadata_bindings_v1":
+            return value
+    return None
+
+
+def _object_refs_from_bindings(context: dict, payload: dict) -> list[dict]:
+    labels = _metadata_labels(context)
+    refs = []
+    for binding in validated_object_bindings(payload):
+        api_name = _text(binding.get("object_api_name") or binding.get("api_name"))
+        if not api_name:
+            continue
+        refs.append(
+            {
+                "api_name": api_name,
+                "label": labels.get(api_name, api_name),
+                "raw": _text(binding.get("raw_value"), api_name),
+                "source": _text(binding.get("source")),
+                "status": _text(binding.get("status")),
+                "confidence": binding.get("confidence"),
+                "evidence_ids": _as_list(binding.get("evidence_ids")),
+            }
+        )
+    return _dedupe_objects(refs)
+
+
+def _metadata_grounding_from_bindings(context: dict, payload: dict) -> dict:
+    labels = _metadata_labels(context)
+    mapped = []
+    unresolved = []
+    warnings = []
+    for binding in _as_list(payload.get("bindings")):
+        if not isinstance(binding, dict):
+            continue
+        status = _text(binding.get("status"))
+        object_api_name = _text(binding.get("object_api_name") or binding.get("api_name"))
+        if status == "validated" and object_api_name:
+            if any(row["api_name"] == object_api_name for row in mapped):
+                continue
+            mapped.append(
+                {
+                    "raw": _text(binding.get("raw_value"), object_api_name),
+                    "status": "validated",
+                    "api_name": object_api_name,
+                    "label": labels.get(object_api_name, object_api_name),
+                    "confidence": binding.get("confidence", 1.0),
+                    "source": _text(binding.get("source")),
+                    "evidence_ids": _as_list(binding.get("evidence_ids")),
+                }
+            )
+        elif status:
+            unresolved.append(
+                {
+                    "raw": _text(binding.get("raw_value"), object_api_name or "unknown"),
+                    "status": status,
+                    "ref_type": _text(binding.get("ref_type"), "object"),
+                    "api_name": object_api_name or binding.get("api_name"),
+                    "source": _text(binding.get("source")),
+                    "reason": _text(binding.get("reason"), "requires_review"),
+                    "evidence_ids": _as_list(binding.get("evidence_ids")),
+                }
+            )
+
+    for binding in _as_list(payload.get("unresolved_bindings")):
+        if not isinstance(binding, dict):
+            continue
+        unresolved.append(
+            {
+                "raw": _text(binding.get("raw_value"), binding.get("api_name") or "unknown"),
+                "status": _text(binding.get("status"), "unresolved"),
+                "ref_type": _text(binding.get("ref_type"), "object"),
+                "api_name": binding.get("api_name"),
+                "object_api_name": binding.get("object_api_name"),
+                "field_api_name": binding.get("field_api_name"),
+                "source": _text(binding.get("source")),
+                "reason": _text(binding.get("reason"), "requires_metadata_mapping"),
+                "evidence_ids": _as_list(binding.get("evidence_ids")),
+            }
+        )
+
+    if unresolved:
+        warnings.append("Some metadata bindings need analyst review before source generation.")
+
+    return {
+        "binding_model_version": payload.get("binding_model_version") or payload.get("schema_version"),
+        "mapped": mapped,
+        "unresolved": unresolved,
+        "legacy_suggestions": [],
+        "legacy_adapter_used": False,
+        "warnings": warnings,
+        "telemetry": dict(payload.get("telemetry") or {}),
+    }
+
+
+def _legacy_grounding(raw_data_requirements: list[str], context: dict) -> dict:
+    legacy = resolve_object_references(raw_data_requirements, _metadata_objects(context))
+    warnings = list(_as_list(legacy.get("warnings")))
+    if raw_data_requirements:
+        warnings.append(
+            "Legacy string adapter suggestions are review-only and cannot become source dependencies."
+        )
+    return {
+        "binding_model_version": None,
+        "mapped": [],
+        "unresolved": _as_list(legacy.get("unresolved")),
+        "legacy_suggestions": _as_list(legacy.get("mapped")),
+        "legacy_adapter_used": bool(raw_data_requirements),
+        "warnings": warnings,
+        "telemetry": {
+            "bindings_from_process_touchpoints": 0,
+            "bindings_from_llm_suggestions": 0,
+            "bindings_from_legacy_adapter": len(_as_list(legacy.get("mapped"))),
+            "unresolved_binding_count": len(_as_list(legacy.get("unresolved"))),
+        },
+    }
+
+
 def build_design_package_from_context(context: dict) -> dict:
     """Build the first reviewable Agent Design Package from recommendation context.
 
@@ -110,8 +239,13 @@ def build_design_package_from_context(context: dict) -> dict:
     opportunity = rec.get("agent_opportunity") or {}
     known_objects = _known_objects(context)
     raw_data_requirements = [_text(v) for v in _as_list(opportunity.get("data_requirements")) if _text(v)]
-    metadata_grounding = resolve_object_references(raw_data_requirements, _metadata_objects(context))
-    mapped_data_requirements = _as_list(metadata_grounding.get("mapped"))
+    binding_payload = _binding_payload(opportunity)
+    if binding_payload:
+        metadata_grounding = _metadata_grounding_from_bindings(context, binding_payload)
+        mapped_data_requirements = _object_refs_from_bindings(context, binding_payload)
+    else:
+        metadata_grounding = _legacy_grounding(raw_data_requirements, context)
+        mapped_data_requirements = []
 
     agent_name = _text(opportunity.get("agent_name"), rec.get("title") or "Generated Agent")
     agent_type = _text(opportunity.get("agent_type"), rec.get("automation_type") or "hybrid")
@@ -187,7 +321,7 @@ def build_design_package_from_context(context: dict) -> dict:
         {
             "object": obj["api_name"],
             "operations": ["read", "update"],
-            "reason": "Required by generated Agentforce action contracts.",
+            "reason": "Required by validated metadata bindings for generated Agentforce action contracts.",
         }
         for obj in mapped_data_requirements
         if isinstance(obj, dict) and obj.get("api_name") in known_objects
@@ -256,6 +390,7 @@ def build_design_package_from_context(context: dict) -> dict:
             "recommendation_id": rec.get("id"),
             "linked_process_count": len(context.get("processes") or []),
             "arc_score": rec.get("arc_score") or {},
+            "metadata_grounding": metadata_grounding,
             "processes": context.get("processes") or [],
         },
         "blockers": [],

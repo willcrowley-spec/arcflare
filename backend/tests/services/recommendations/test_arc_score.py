@@ -247,14 +247,49 @@ def test_apply_arc_score_sets_compatibility_fields_and_divergence_flag():
 def test_pipeline_recommendation_builder_applies_arc_score_fields():
     from app.services.recommendations.pipeline import _build_agent_recommendation
 
+    process_id = str(uuid4())
+    step_id = str(uuid4())
+    opportunity = _opportunity(
+        replaces=[
+            {
+                "process_id": process_id,
+                "process_name": "Inbound Case Intake",
+                "steps_replaced": ["Classify request"],
+                "step_ids": [step_id],
+                "replacement_type": "partial",
+            }
+        ]
+    )
     rec = _build_agent_recommendation(
-        _opportunity(),
+        opportunity,
         uuid4(),
         uuid4(),
         uuid4(),
+        process_contexts=[
+            {
+                "id": process_id,
+                "name": "Inbound Case Intake",
+                "system_touchpoints": ["Case.Status"],
+                "steps": [
+                    {
+                        "id": step_id,
+                        "name": "Classify request",
+                        "system_touchpoints": ["Account.Name"],
+                    }
+                ],
+            }
+        ],
+        salesforce_metadata={
+            "objects": [
+                {"api_name": "Case", "fields": [{"api_name": "Status"}]},
+                {"api_name": "Account", "fields": [{"api_name": "Name"}]},
+            ]
+        },
     )
 
     assert rec.arc_score_json["scoring_method"] == "rules_v1"
     assert rec.composite_score == rec.arc_score_json["score"]
     assert rec.base_score == rec.arc_score_json["score"]
     assert rec.llm_score == 0.72
+    assert rec.agent_opportunity_json["metadata_bindings_v1"]["bindings"]
+    assert rec.impact_json["metadata_bindings_v1"]["schema_version"] == "metadata_bindings_v1"
