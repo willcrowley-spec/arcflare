@@ -35,8 +35,8 @@ function ContainerNodeComponent({ data }: NodeProps<Node<ContainerNodeData>>) {
         'overflow-hidden rounded-lg border transition',
         style.border,
         style.body,
-        data.isDimmed && 'opacity-35',
-        data.isHighlighted && 'ring-2 ring-orange-200',
+        data.isDimmed && 'opacity-20',
+        data.isHighlighted && 'border-orange-300 shadow-md ring-2 ring-orange-200',
       )}
       style={{ width: '100%', height: '100%' }}
     >

@@ -85,8 +85,8 @@ function StepNodeComponent({ data }: NodeProps<Node<StepNodeData>>) {
       <div
         className={clsx(
           'w-[260px] overflow-hidden rounded-lg border bg-white shadow-sm ring-1 transition',
-          data.isHighlighted ? 'border-orange-300 ring-orange-200' : 'border-slate-200 ring-slate-900/5',
-          data.isDimmed && 'opacity-35',
+          data.isHighlighted ? 'border-orange-300 bg-orange-50/30 shadow-md ring-orange-200' : 'border-slate-200 ring-slate-900/5',
+          data.isDimmed && 'opacity-20',
           hasOverflow && 'cursor-pointer hover:shadow-md hover:ring-navy-200',
         )}
         onClick={() => hasOverflow && setExpanded((v) => !v)}

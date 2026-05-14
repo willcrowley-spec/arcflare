@@ -20,8 +20,8 @@ function CollapsedContainerComponent({ data }: NodeProps<Node<CollapsedData>>) {
     <div
       className={[
         'relative flex w-[260px] cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 shadow-sm transition hover:border-slate-400 hover:shadow-md',
-        data.isDimmed ? 'opacity-35' : '',
-        data.isHighlighted ? 'ring-2 ring-orange-200' : '',
+        data.isDimmed ? 'opacity-20' : '',
+        data.isHighlighted ? 'border-orange-300 bg-orange-50/30 shadow-md ring-2 ring-orange-200' : '',
       ].filter(Boolean).join(' ')}
       onClick={() => data.onToggle?.(data.processId)}
       onMouseEnter={() => setShowTooltip(true)}

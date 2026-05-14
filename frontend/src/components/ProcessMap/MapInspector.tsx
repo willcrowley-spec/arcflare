@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react'
 import type { ReactNode } from 'react'
 import { AlertTriangle, Bot, Database, FileSearch, GitBranch, MousePointer2, Users } from 'lucide-react'
 import clsx from 'clsx'
+import { InfoHint, automationPotentialHelp, valueClassificationHelp } from './ProcessMapHelp'
 
 type InspectorNodeData = {
   title?: string
@@ -73,7 +74,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function Pill({ children, tone = 'slate' }: { children: ReactNode; tone?: 'slate' | 'amber' | 'green' | 'red' | 'blue' }) {
+function Pill({
+  children,
+  tone = 'slate',
+  helpText,
+}: {
+  children: ReactNode
+  tone?: 'slate' | 'amber' | 'green' | 'red' | 'blue'
+  helpText?: string | null
+}) {
   const styles = {
     slate: 'border-slate-200 bg-slate-50 text-slate-600',
     amber: 'border-amber-200 bg-amber-50 text-amber-700',
@@ -81,7 +90,12 @@ function Pill({ children, tone = 'slate' }: { children: ReactNode; tone?: 'slate
     red: 'border-red-200 bg-red-50 text-red-700',
     blue: 'border-sky-200 bg-sky-50 text-sky-700',
   }
-  return <span className={clsx('inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold', styles[tone])}>{children}</span>
+  return (
+    <span className={clsx('inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold', styles[tone])}>
+      {children}
+      {helpText ? <InfoHint text={helpText} align="center" className="-mr-0.5 h-3.5 w-3.5" /> : null}
+    </span>
+  )
 }
 
 function CompactList({ items, empty }: { items: string[]; empty: string }) {
@@ -172,8 +186,19 @@ export function MapInspector({ selectedNode, selectedEdge, nodeNameById }: MapIn
 
         <Section title="Classification">
           <div className="flex flex-wrap gap-1.5">
-            {data.automationPotential ? <Pill tone={data.automationPotential === 'high' ? 'green' : 'blue'}>{titleCase(data.automationPotential)}</Pill> : null}
-            {data.valueClassification ? <Pill>{data.valueClassification.toUpperCase()}</Pill> : null}
+            {data.automationPotential ? (
+              <Pill
+                tone={data.automationPotential === 'high' ? 'green' : 'blue'}
+                helpText={automationPotentialHelp(data.automationPotential)}
+              >
+                {titleCase(data.automationPotential)}
+              </Pill>
+            ) : null}
+            {data.valueClassification ? (
+              <Pill helpText={valueClassificationHelp(data.valueClassification)}>
+                {data.valueClassification.toUpperCase()}
+              </Pill>
+            ) : null}
             {data.needsReview ? <Pill tone="amber">Needs review</Pill> : null}
             <Pill>{confidenceLabel(data.confidenceScore)}</Pill>
           </div>

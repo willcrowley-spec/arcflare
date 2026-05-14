@@ -158,7 +158,7 @@ function nodeHasAutomationSignal(node: DomainGraphNode): boolean {
 }
 
 function nodeHasEvidenceSignal(node: DomainGraphNode): boolean {
-  return evidenceCount(node) > 0 || typeof node.confidence_score === 'number'
+  return evidenceCount(node) > 0
 }
 
 function nodeSearchText(node: DomainGraphNode, actorLabels: string[], touchpointLabels: string[]): string {
@@ -177,7 +177,7 @@ function nodeSearchText(node: DomainGraphNode, actorLabels: string[], touchpoint
 
 function nodeLensState(
   node: DomainGraphNode,
-  visibleEdgeEndpoints: Set<string>,
+  handoffEdgeEndpoints: Set<string>,
   options: LayoutOptions,
 ): { isDimmed: boolean; isHighlighted: boolean } {
   const lens = options.lens ?? 'structure'
@@ -185,7 +185,7 @@ function nodeLensState(
   let lensMatch = true
 
   if (lens === 'handoffs') {
-    lensMatch = visibleEdgeEndpoints.has(node.id)
+    lensMatch = handoffEdgeEndpoints.has(node.id)
   } else if (lens === 'evidence') {
     lensMatch = nodeHasEvidenceSignal(node)
   } else if (lens === 'automation') {
@@ -206,7 +206,7 @@ function edgeLensState(edge: DomainGraphEdge, options: LayoutOptions): { isDimme
   if (lens === 'handoffs') {
     lensMatch = edge.kind !== 'sequence' || edge.is_gap
   } else if (lens === 'evidence') {
-    lensMatch = Boolean(edge.evidence_sources?.length) || typeof edge.confidence_score === 'number'
+    lensMatch = Boolean(edge.evidence_sources?.length)
   } else if (lens === 'automation') {
     lensMatch = false
   }
@@ -228,15 +228,17 @@ export async function computeElkLayout(
 
   const elkEdges: { id: string; sources: string[]; targets: string[] }[] = []
   const seenEdges = new Set<string>()
-  const visibleEdgeEndpoints = new Set<string>()
+  const handoffEdgeEndpoints = new Set<string>()
 
   for (const e of edges) {
     const src = leafToCollapsed.get(e.source_id) ?? e.source_id
     const tgt = leafToCollapsed.get(e.target_id) ?? e.target_id
     if (src === tgt) continue
     if (!rfMeta.has(src) || !rfMeta.has(tgt)) continue
-    visibleEdgeEndpoints.add(src)
-    visibleEdgeEndpoints.add(tgt)
+    if (e.kind !== 'sequence' || e.is_gap) {
+      handoffEdgeEndpoints.add(src)
+      handoffEdgeEndpoints.add(tgt)
+    }
     const key = `${src}->${tgt}`
     if (seenEdges.has(key)) continue
     seenEdges.add(key)
@@ -269,7 +271,7 @@ export async function computeElkLayout(
 
       const savedPosition = options.positions?.[en.id]
       const position = savedPosition ?? { x: en.x ?? 0, y: en.y ?? 0 }
-      const lensState = nodeLensState(graphNode, visibleEdgeEndpoints, options)
+      const lensState = nodeLensState(graphNode, handoffEdgeEndpoints, options)
 
       if (graphNode.is_leaf) {
         const actorLabels = compactLabels(graphNode.actors, ['name', 'role', 'type'])
@@ -361,15 +363,16 @@ export async function computeElkLayout(
         ...(options.highlightedIds?.has(src) || options.highlightedIds?.has(tgt) ? [e.id] : []),
       ]),
     })
-    const opacity = lensState.isDimmed ? 0.25 : 1
+    const opacity = lensState.isDimmed ? 0.14 : 1
+    const highlightedStroke = lensState.isHighlighted && !e.is_gap
     rfEdges.push({
       id: e.id + (isAggregate ? '-agg' : ''),
       source: src,
       target: tgt,
       type: 'handoff',
       style: {
-        stroke: e.is_gap ? '#fca5a5' : isAggregate ? '#94a3b8' : '#cbd5e1',
-        strokeWidth: e.is_gap ? 2 : 1.5,
+        stroke: e.is_gap ? '#fca5a5' : highlightedStroke ? '#f97316' : isAggregate ? '#94a3b8' : '#cbd5e1',
+        strokeWidth: e.is_gap ? 2 : highlightedStroke ? 2.25 : 1.5,
         strokeDasharray: isAggregate ? '6 3' : undefined,
         opacity,
       },
