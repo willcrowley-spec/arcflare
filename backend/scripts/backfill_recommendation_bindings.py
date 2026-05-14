@@ -106,10 +106,21 @@ async def _load_org_context(session, org_id: UUID) -> tuple[dict, list[dict]]:
 
 def _summary(payload: dict) -> dict:
     telemetry = payload.get("telemetry") or {}
+    source_counts: dict[str, int] = defaultdict(int)
+    for binding in _as_list(payload.get("bindings")):
+        source_counts[str(binding.get("source") or "unknown")] += 1
+    unresolved_reasons: dict[str, int] = defaultdict(int)
+    unresolved_types: dict[str, int] = defaultdict(int)
+    for binding in _as_list(payload.get("unresolved_bindings")):
+        unresolved_reasons[str(binding.get("reason") or "unknown")] += 1
+        unresolved_types[str(binding.get("ref_type") or "unknown")] += 1
     return {
         "validated": sum(1 for b in _as_list(payload.get("bindings")) if b.get("status") == "validated"),
         "suggested": sum(1 for b in _as_list(payload.get("bindings")) if b.get("status") == "suggested"),
         "unresolved": len(_as_list(payload.get("unresolved_bindings"))),
+        "source_counts": dict(sorted(source_counts.items())),
+        "unresolved_reasons": dict(sorted(unresolved_reasons.items())),
+        "unresolved_types": dict(sorted(unresolved_types.items())),
         "telemetry": telemetry,
     }
 
@@ -137,6 +148,9 @@ async def _run(args: argparse.Namespace) -> dict:
                 "unresolved": 0,
                 "already_had_bindings": 0,
                 "updated": 0,
+                "source_counts": {},
+                "unresolved_reasons": {},
+                "unresolved_types": {},
             }
             for rec in rows:
                 if rec.org_id not in org_cache:
@@ -156,6 +170,9 @@ async def _run(args: argparse.Namespace) -> dict:
                 summary = _summary(payload)
                 for key in ("validated", "suggested", "unresolved"):
                     totals[key] += int(summary[key])
+                for key in ("source_counts", "unresolved_reasons", "unresolved_types"):
+                    for name, count in summary[key].items():
+                        totals[key][name] = totals[key].get(name, 0) + count
 
                 details.append(
                     {
