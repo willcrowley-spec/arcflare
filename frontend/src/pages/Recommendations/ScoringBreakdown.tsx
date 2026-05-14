@@ -201,6 +201,48 @@ function LegacyScoringBreakdown({
   )
 }
 
+function hasLegacySignalValues(signals: Record<string, number>): boolean {
+  return [...GATE_KEYS, ...REFINEMENT_KEYS].some((key) => {
+    const value = signals[key]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+  })
+}
+
+function MissingArcScore({
+  compositeScore,
+  llmScore,
+  divergenceFlag,
+}: {
+  compositeScore: number | null
+  llmScore: number | null
+  divergenceFlag: boolean
+}) {
+  return (
+    <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 ring-1 ring-amber-100">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-wide text-amber-950">ARC Score not computed</h3>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-amber-950/80">
+            This recommendation was generated before the current scoring model was stored. Recalculate it to
+            populate ARC dimensions, evidence gaps, and score provenance.
+          </p>
+        </div>
+        <div className="text-right text-xs text-amber-950/80">
+          <div>
+            Stored score:{' '}
+            <span className="font-semibold tabular-nums text-amber-950">{formatScoreValue(compositeScore)}</span>
+          </div>
+          <div>
+            AI confidence:{' '}
+            <span className="font-semibold tabular-nums text-amber-950">{formatScoreValue(llmScore)}</span>
+          </div>
+          {divergenceFlag ? <div className="font-semibold text-amber-950">Review flag is set</div> : null}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export function ScoringBreakdown({
   arcScore,
   signals,
@@ -211,6 +253,7 @@ export function ScoringBreakdown({
   className,
 }: ScoringBreakdownProps) {
   const parsedArc = parseArcScore(arcScore)
+  const hasLegacySignals = hasLegacySignalValues(signals)
 
   return (
     <div className={clsx('space-y-6', className)}>
@@ -299,12 +342,18 @@ export function ScoringBreakdown({
             </section>
           ) : null}
         </>
-      ) : (
+      ) : hasLegacySignals ? (
         <LegacyScoringBreakdown
           signals={signals}
           baseScore={baseScore}
           llmScore={llmScore}
           compositeScore={compositeScore}
+          divergenceFlag={divergenceFlag}
+        />
+      ) : (
+        <MissingArcScore
+          compositeScore={compositeScore}
+          llmScore={llmScore}
           divergenceFlag={divergenceFlag}
         />
       )}

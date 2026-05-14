@@ -214,6 +214,7 @@ async def _anchor_context(
                     "llm_score": rec.llm_score,
                     "composite_score": rec.composite_score,
                     "score_divergence_flag": rec.score_divergence_flag,
+                    "arc_score_json": dict(rec.arc_score_json) if rec.arc_score_json else {},
                 },
                 "assumptions": assumptions,
                 "projections_summary": {

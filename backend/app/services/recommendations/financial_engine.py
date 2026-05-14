@@ -87,7 +87,25 @@ def resolve_assumption(assumptions: dict, key: str) -> Any:
     return assumptions.get(key)
 
 
-def compute_total_investment(assumptions: dict) -> float:
+def compute_total_investment(assumptions: dict, scenario_name: str | None = None) -> float:
+    overrides = assumptions.get("overrides", {})
+    if isinstance(overrides, dict):
+        if overrides.get("total_investment") is not None:
+            return float(overrides["total_investment"])
+        if overrides.get("technology_cost") is not None:
+            return float(overrides["technology_cost"])
+
+    investment_range = resolve_assumption(assumptions, "investment_range")
+    if isinstance(investment_range, dict):
+        if scenario_name == "conservative":
+            value = investment_range.get("enterprise_hardened")
+        elif scenario_name in {"optimistic", "expected"}:
+            value = investment_range.get("expected") or investment_range.get("pilot_mvp")
+        else:
+            value = investment_range.get("expected") or investment_range.get("pilot_mvp")
+        if value is not None:
+            return float(value)
+
     tech_cost = float(resolve_assumption(assumptions, "technology_cost") or 0)
     cm_factor = float(resolve_assumption(assumptions, "change_management_factor") or 0.4)
     return tech_cost * (1 + cm_factor)
@@ -105,9 +123,10 @@ def compute_scenario(
     assumptions: dict,
     multiplier: float,
     years: int = DEFAULT_PROJECTION_YEARS,
+    scenario_name: str | None = None,
 ) -> dict:
     base_savings = compute_base_savings(assumptions)
-    total_investment = compute_total_investment(assumptions)
+    total_investment = compute_total_investment(assumptions, scenario_name=scenario_name)
     annual_op_cost = float(resolve_assumption(assumptions, "annual_operational_cost") or 0)
     ramp = resolve_assumption(assumptions, "adoption_ramp") or [0.1, 0.5, 0.85, 0.95, 1.0]
     productivity_dip = float(resolve_assumption(assumptions, "productivity_dip") or 0.05)
@@ -185,7 +204,7 @@ def compute_projections(
     merged = _assumptions_with_type_defaults(assumptions, automation_type)
     scenarios = {}
     for name, mult in SCENARIO_MULTIPLIERS.items():
-        scenarios[name] = compute_scenario(merged, mult)
+        scenarios[name] = compute_scenario(merged, mult, scenario_name=name)
 
     return {
         **scenarios,
@@ -212,7 +231,10 @@ def compute_portfolio_projections(
         else:
             merged.append(a)
 
-    individual = [compute_projections(a) for a in merged]
+    individual = [
+        compute_projections(a, automation_type=a.get("_automation_type"))
+        for a in merged
+    ]
 
     years = DEFAULT_PROJECTION_YEARS
     portfolio: dict = {}

@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from decimal import Decimal
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -18,14 +18,12 @@ from app.schemas.recommendation import (
     RecommendationStatusUpdate,
     RecommendationSummary,
 )
-from app.services.recommendations.financial_engine import (
-    compute_portfolio_projections,
-    compute_projections,
-)
-from app.services.recommendations.arc_score import apply_arc_score
-from app.workers.analysis import build_financial_assumptions, generate_recommendations_task
+from app.services.recommendations.financial_engine import compute_portfolio_projections
+from app.services.recommendations.recompute import recompute_recommendation
+from app.workers.analysis import generate_recommendations_task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _SORTABLE = {
     "arc_score": Recommendation.composite_score,
@@ -150,7 +148,9 @@ async def portfolio_projection(
         if rec is None or rec.org_id != org.id:
             raise HTTPException(status_code=404, detail=f"Recommendation not found: {rid}")
         rec_rows.append(rec)
-        assumptions_list.append(dict(rec.assumptions_json) if rec.assumptions_json else {})
+        assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
+        assumptions["_automation_type"] = rec.automation_type or "hybrid"
+        assumptions_list.append(assumptions)
 
     raw = compute_portfolio_projections(assumptions_list, body.global_overrides or None)
     by_automation_type: dict[str, int] = {}
@@ -345,20 +345,9 @@ async def recalculate_recommendation(
     if rec is None or rec.org_id != org.id:
         raise HTTPException(status_code=404, detail="Recommendation not found")
 
-    assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
-    overrides = dict(assumptions.get("overrides", {}))
-    overrides.update(body.overrides)
-    assumptions["overrides"] = overrides
-    rec.assumptions_json = assumptions
-
-    projections = compute_projections(
-        assumptions, automation_type=rec.automation_type
-    )
     previous_roi = rec.estimated_roi
-    new_npv = projections["npv"]["expected"]
-    rec.scenarios_json = projections
-    rec.estimated_roi = Decimal(str(new_npv))
-    apply_arc_score(rec)
+    result = recompute_recommendation(rec, overrides=body.overrides)
+    new_npv = result["new_npv"]
 
     log = list(rec.enrichment_log or [])
     log.append(
@@ -368,7 +357,7 @@ async def recalculate_recommendation(
             "changes": dict(body.overrides),
             "roi_impact": {
                 "before": float(previous_roi) if previous_roi is not None else None,
-                "after": float(new_npv),
+                "after": float(new_npv) if new_npv is not None else None,
             },
         }
     )
@@ -385,34 +374,20 @@ async def recalculate_all_recommendations(
     org: CurrentOrg,
 ) -> dict:
     """Recalculate financial projections for ALL recommendations (any status) using current engine."""
-    import traceback
-
     q = await db.execute(
         select(Recommendation).where(Recommendation.org_id == org.id)
     )
     recs = list(q.scalars().all())
-    print(f"[recalc] org={org.id} found {len(recs)} recommendations", flush=True)
+    logger.info("recommendations_recalculate_all org=%s total=%d", org.id, len(recs))
     updated = 0
     errors = 0
     details = []
     for rec in recs:
         try:
-            opp = rec.agent_opportunity_json
-            if isinstance(opp, dict) and opp:
-                assumptions = build_financial_assumptions(opp)
-            else:
-                assumptions = None
-            if assumptions is None:
-                assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
             old_npv = None
             if rec.scenarios_json and "npv" in rec.scenarios_json:
                 old_npv = rec.scenarios_json["npv"].get("expected")
-            projections = compute_projections(assumptions, automation_type=rec.automation_type)
-            rec.assumptions_json = assumptions
-            rec.scenarios_json = projections
-            rec.estimated_roi = Decimal(str(projections["npv"]["expected"]))
-            rec.financial_evaluation_status = "completed"
-            apply_arc_score(rec)
+            result = recompute_recommendation(rec)
             updated += 1
             detail = {
                 "id": str(rec.id),
@@ -420,17 +395,23 @@ async def recalculate_all_recommendations(
                 "type": rec.automation_type,
                 "status": rec.status,
                 "old_npv": old_npv,
-                "new_npv": projections["npv"]["expected"],
+                "new_npv": result["new_npv"],
+                "financial_status": result["financial_status"],
+                "arc_score": (rec.arc_score_json or {}).get("score"),
             }
             details.append(detail)
-            print(f"[recalc] OK {detail}", flush=True)
         except Exception as exc:
             errors += 1
-            print(f"[recalc] FAIL rec={rec.id} err={exc}", flush=True)
-            traceback.print_exc()
+            logger.exception("recommendations_recalculate_all_failed rec=%s", rec.id)
             details.append({"id": str(rec.id), "error": str(exc)})
     await db.commit()
-    print(f"[recalc] DONE updated={updated} errors={errors} total={len(recs)}", flush=True)
+    logger.info(
+        "recommendations_recalculate_all_done org=%s updated=%d errors=%d total=%d",
+        org.id,
+        updated,
+        errors,
+        len(recs),
+    )
     return {"updated": updated, "errors": errors, "total": len(recs), "details": details}
 
 

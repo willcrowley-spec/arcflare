@@ -1,4 +1,8 @@
-"""ROI estimation helpers."""
+"""Deprecated legacy ROI estimation helper.
+
+The active path uses ``financial_assumptions.py`` plus ``financial_engine.py``
+through the centralized ``recompute.py`` boundary.
+"""
 
 from decimal import Decimal
 

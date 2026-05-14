@@ -1,4 +1,9 @@
-"""Score and rank recommendation candidates."""
+"""Deprecated legacy recommendation scorer.
+
+The active recommendation pipeline writes agent opportunities through
+``pipeline.py`` and computes ARC Score through ``recompute.py``. This module is
+kept temporarily for import compatibility only.
+"""
 
 from datetime import UTC, datetime
 from uuid import UUID

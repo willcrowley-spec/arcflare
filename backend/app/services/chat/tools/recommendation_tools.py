@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.recommendation import Recommendation
-from app.services.recommendations.financial_engine import compute_projections
+from app.services.recommendations.recompute import recompute_recommendation
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +39,8 @@ RECOMMENDATION_TOOLS: list[dict] = [
     {
         "name": "get_scoring_breakdown",
         "description": (
-            "Returns quantitative scoring for a recommendation: base_score, llm_score, composite_score, "
-            "divergence flag, and the signal breakdown from analysis inputs. Read-only."
+            "Returns quantitative ARC Score details for a recommendation: dimensions, evidence gaps, "
+            "base_score, llm_score, composite_score, and divergence flag. Read-only."
         ),
         "parameters": {
             "type": "object",
@@ -160,6 +159,7 @@ async def handle_get_recommendation_details(
             "composite_score": rec.composite_score,
             "score_divergence_flag": rec.score_divergence_flag,
             "llm_rationale": rec.llm_rationale,
+            "arc_score_json": dict(rec.arc_score_json) if rec.arc_score_json else {},
         },
         "assumptions": assumptions,
         "scenarios": scenarios,
@@ -193,11 +193,6 @@ async def handle_get_scoring_breakdown(
     if rec is None:
         return {"ok": False, "error": "Recommendation not found"}
 
-    analysis = list(rec.analysis_inputs_json) if rec.analysis_inputs_json else []
-    breakdown: dict[str, Any] = {}
-    if analysis and isinstance(analysis[0], dict):
-        breakdown = dict(analysis[0])
-
     return {
         "ok": True,
         "recommendation_id": str(rec.id),
@@ -205,7 +200,8 @@ async def handle_get_scoring_breakdown(
         "llm_score": rec.llm_score,
         "composite_score": rec.composite_score,
         "score_divergence_flag": rec.score_divergence_flag,
-        "signal_breakdown": breakdown,
+        "arc_score_json": dict(rec.arc_score_json) if rec.arc_score_json else {},
+        "signal_breakdown": (rec.arc_score_json or {}).get("dimensions", {}),
     }
 
 
@@ -231,23 +227,14 @@ async def execute_update_assumption(
     if rec is None:
         raise ValueError("Recommendation not found")
 
-    assumptions = dict(rec.assumptions_json) if rec.assumptions_json else {}
-    merged_overrides = dict(assumptions.get("overrides", {}))
-    merged_overrides.update(overrides_in)
-    assumptions["overrides"] = merged_overrides
-    rec.assumptions_json = assumptions
-
     previous_roi = rec.estimated_roi
     prev_npv = None
     if isinstance(rec.scenarios_json, dict):
         prev_npv = (rec.scenarios_json.get("npv") or {}).get("expected")
 
-    projections = compute_projections(
-        assumptions, automation_type=rec.automation_type
-    )
-    new_npv = projections["npv"]["expected"]
-    rec.scenarios_json = projections
-    rec.estimated_roi = Decimal(str(new_npv))
+    result = recompute_recommendation(rec, overrides=overrides_in)
+    new_npv = result["new_npv"]
+    projections = rec.scenarios_json or {}
 
     log = list(rec.enrichment_log or [])
     log.append(
@@ -257,7 +244,7 @@ async def execute_update_assumption(
             "changes": dict(overrides_in),
             "roi_impact": {
                 "before": float(previous_roi) if previous_roi is not None else prev_npv,
-                "after": float(new_npv),
+                "after": float(new_npv) if new_npv is not None else None,
             },
         },
     )
@@ -274,17 +261,18 @@ async def execute_update_assumption(
     )
 
     delta = None
-    if prev_npv is not None:
+    if new_npv is not None and prev_npv is not None:
         delta = float(new_npv) - float(prev_npv)
-    elif previous_roi is not None:
+    elif new_npv is not None and previous_roi is not None:
         delta = float(new_npv) - float(previous_roi)
 
     return {
         "ok": True,
         "recommendation_id": str(rec.id),
-        "npv_by_scenario": projections["npv"],
+        "npv_by_scenario": projections.get("npv"),
         "npv_expected": new_npv,
         "npv_impact_expected": delta,
-        "payback_month": projections["payback_month"],
+        "payback_month": projections.get("payback_month"),
         "estimated_roi": float(rec.estimated_roi) if rec.estimated_roi is not None else None,
+        "arc_score": rec.arc_score_json,
     }
