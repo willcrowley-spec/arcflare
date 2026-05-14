@@ -84,3 +84,67 @@ def test_build_design_package_blocks_unresolved_requirements_without_fake_object
     assert all(action["salesforce_objects"] == [] for action in package["action_contracts"])
     assert "unresolved_data_requirement:Legacy workforce planning records" in package["blockers"]
     assert not any("unknown_salesforce_object:Legacy workforce planning records" in b for b in package["blockers"])
+
+
+def test_build_design_package_grounds_standard_crm_business_phrases():
+    context = {
+        "recommendation": {
+            "id": "rec_2",
+            "title": "Closed-Won Onboarding Handoff Agent",
+            "description": "Prepare onboarding after closed won.",
+            "agent_opportunity": {
+                "agent_name": "Closed-Won Onboarding Handoff Agent",
+                "agent_type": "hybrid",
+                "topics": [
+                    {
+                        "topic_name": "Closed-Won Detection and Handoff Initiation",
+                        "description": "Monitors Opportunity stage transitions.",
+                        "reasoning_type": "deterministic",
+                        "actions_needed": [
+                            "Validate Opportunity is in Closed Won status with required fields complete",
+                            "Write handoff initiated timestamp and status to Opportunity record",
+                        ],
+                    },
+                    {
+                        "topic_name": "Onboarding Package Assembly",
+                        "description": "Compiles account, contact, and product details.",
+                        "reasoning_type": "agentic",
+                        "actions_needed": ["Retrieve Opportunity Account Contact and Product records"],
+                    },
+                ],
+                "data_requirements": [
+                    "Opportunity record with all deal fields",
+                    "Associated Account and Contact records",
+                    "Purchased product and pricing information",
+                    "Customer Onboarding team roster or queue configuration",
+                ],
+            },
+        },
+        "salesforce_metadata": {
+            "objects": [
+                {"api_name": "Opportunity", "label": "Opportunity"},
+                {"api_name": "Account", "label": "Account"},
+                {"api_name": "Contact", "label": "Contact"},
+                {"api_name": "Product2", "label": "Product"},
+                {"api_name": "PricebookEntry", "label": "Price Book Entry"},
+            ],
+        },
+    }
+
+    package = build_design_package_from_context(context)
+    mapped = {(row["raw"], row["api_name"]) for row in package["metadata_grounding"]["mapped"]}
+    unresolved = {row["raw"] for row in package["metadata_grounding"]["unresolved"]}
+    permission_objects = {p["object"] for p in package["permission_requirements"]}
+
+    assert ("Opportunity record with all deal fields", "Opportunity") in mapped
+    assert ("Associated Account and Contact records", "Account") in mapped
+    assert ("Associated Account and Contact records", "Contact") in mapped
+    assert ("Purchased product and pricing information", "Product2") in mapped
+    assert ("Purchased product and pricing information", "PricebookEntry") in mapped
+    assert "Customer Onboarding team roster or queue configuration" in unresolved
+    assert {"Opportunity", "Account", "Contact", "Product2", "PricebookEntry"}.issubset(permission_objects)
+    assert "Opportunity" in package["action_contracts"][0]["salesforce_objects"]
+    assert "Opportunity" in package["action_contracts"][1]["salesforce_objects"]
+    assert {"Opportunity", "Account", "Contact", "Product2"}.issubset(
+        set(package["action_contracts"][2]["salesforce_objects"])
+    )

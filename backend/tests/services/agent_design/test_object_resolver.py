@@ -34,6 +34,49 @@ def test_resolves_api_labels_and_record_language_to_salesforce_objects():
     assert result["unresolved"] == []
 
 
+def test_resolves_embedded_and_multi_object_business_phrases():
+    result = resolve_object_references(
+        [
+            "Opportunity record with all deal fields",
+            "Associated Account and Contact records",
+            "Purchased product and pricing information",
+            "Contract or agreement metadata",
+        ],
+        [
+            {"api_name": "Opportunity", "label": "Opportunity"},
+            {"api_name": "Account", "label": "Account"},
+            {"api_name": "Contact", "label": "Contact"},
+            {"api_name": "Product2", "label": "Product"},
+            {"api_name": "PricebookEntry", "label": "Price Book Entry"},
+            {"api_name": "Contract", "label": "Contract"},
+        ],
+    )
+
+    mapped = {(row["raw"], row["api_name"]) for row in result["mapped"]}
+
+    assert ("Opportunity record with all deal fields", "Opportunity") in mapped
+    assert ("Associated Account and Contact records", "Account") in mapped
+    assert ("Associated Account and Contact records", "Contact") in mapped
+    assert ("Purchased product and pricing information", "Product2") in mapped
+    assert ("Purchased product and pricing information", "PricebookEntry") in mapped
+    assert ("Contract or agreement metadata", "Contract") in mapped
+    assert result["unresolved"] == []
+
+
+def test_prefers_specific_embedded_object_over_shorter_object_name():
+    result = resolve_object_references(
+        ["User Skill c records"],
+        [
+            {"api_name": "User", "label": "User"},
+            {"api_name": "User_Skill__c", "label": "User Skill"},
+        ],
+    )
+
+    assert [(row["raw"], row["api_name"]) for row in result["mapped"]] == [
+        ("User Skill c records", "User_Skill__c")
+    ]
+
+
 def test_keeps_ambiguous_fuzzy_matches_unresolved():
     result = resolve_object_references(
         ["Policy Re"],

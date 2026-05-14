@@ -69,19 +69,35 @@ def _topic_search_text(topic: dict) -> str:
     )
 
 
-def _best_topic_object(topic: dict, mapped_objects: list[dict]) -> dict | None:
+def _matching_objects_for_text(value: object, mapped_objects: list[dict]) -> list[dict]:
     if not mapped_objects:
-        return None
+        return []
     if len(mapped_objects) == 1:
-        return mapped_objects[0]
-    search_text = _topic_search_text(topic)
+        return mapped_objects
+    search_text = _text(value)
     ranked = sorted(
         ((score_text_against_resolved_object(search_text, obj), obj) for obj in mapped_objects),
         key=lambda pair: pair[0],
         reverse=True,
     )
+    direct = [obj for score, obj in ranked if score >= 1.0]
+    if direct:
+        return direct
     best_score, best = ranked[0]
-    return best if best_score > 0 else mapped_objects[0]
+    return [best] if best_score >= 0.72 else []
+
+
+def _topic_objects(topic: dict, mapped_objects: list[dict]) -> list[dict]:
+    return _matching_objects_for_text(_topic_search_text(topic), mapped_objects)
+
+
+def _dedupe_objects(objects: list[dict]) -> list[dict]:
+    deduped: dict[str, dict] = {}
+    for obj in objects:
+        api_name = _text(obj.get("api_name"))
+        if api_name and api_name not in deduped:
+            deduped[api_name] = obj
+    return list(deduped.values())
 
 
 def build_design_package_from_context(context: dict) -> dict:
@@ -108,11 +124,14 @@ def build_design_package_from_context(context: dict) -> dict:
             continue
         topic_name = _text(topic.get("topic_name"), "Agent Topic")
         topic_action_names = []
-        target_ref = _best_topic_object(topic, mapped_data_requirements)
-        target_object = _text(target_ref.get("api_name")) if target_ref else ""
-        target_label = _text(target_ref.get("label"), target_object or "record") if target_ref else "record"
+        default_refs = _topic_objects(topic, mapped_data_requirements)
         for raw_action in _as_list(topic.get("actions_needed")) or ["Review context"]:
             contract_name = _action_contract_name(topic_name, _text(raw_action), seen_action_names)
+            target_refs = _dedupe_objects(
+                _matching_objects_for_text(f"{topic_name} {raw_action}", mapped_data_requirements) or default_refs
+            )
+            target_objects = [_text(ref.get("api_name")) for ref in target_refs if _text(ref.get("api_name"))]
+            target_label = ", ".join(_text(ref.get("label"), ref.get("api_name")) for ref in target_refs) or "record"
             topic_action_names.append(contract_name)
             action_contracts.append(
                 {
@@ -123,14 +142,14 @@ def build_design_package_from_context(context: dict) -> dict:
                         f"{contract_name} is a draft Apex-backed Agentforce action for "
                         f"{topic_name}. Review and replace TODO logic before deploy."
                     ),
-                    "salesforce_objects": [target_object] if target_object else [],
+                    "salesforce_objects": target_objects,
                     "inputs": [
                         {
                             "name": "recordId",
                             "type": "Id",
                             "required": True,
                             "description": f"Primary {target_label} record for the action.",
-                            "object": target_object or None,
+                            "object": target_objects[0] if target_objects else None,
                         }
                     ],
                     "outputs": [
@@ -147,7 +166,9 @@ def build_design_package_from_context(context: dict) -> dict:
                             "description": "Human-readable reason for the recommendation.",
                         },
                     ],
-                    "permissions": [f"{target_object}:read", f"{target_object}:update"] if target_object else [],
+                    "permissions": [
+                        permission for obj in target_objects for permission in (f"{obj}:read", f"{obj}:update")
+                    ],
                     "error_states": ["MISSING_ACCESS", "RECORD_NOT_FOUND", "REVIEW_REQUIRED"],
                     "human_in_loop": True,
                 }

@@ -31,6 +31,12 @@ _NOISE_WORDS = {
     "sobject",
     "sobjects",
 }
+_BUSINESS_OBJECT_HINTS = {
+    "agreement": ("Contract",),
+    "pricing": ("PricebookEntry",),
+    "price": ("PricebookEntry",),
+    "pricebook": ("PricebookEntry",),
+}
 
 
 def _text(value: object) -> str:
@@ -93,6 +99,52 @@ def _unresolved(raw: str, *, status: str, reason: str, candidates: list[dict] | 
     return row
 
 
+def _contained_alias_matches(raw: str, normalized: str, refs: list[dict]) -> list[dict]:
+    raw_tokens = set(normalized.split())
+    by_api: dict[str, dict] = {}
+    for ref in refs:
+        for alias in ref["aliases"]:
+            alias_tokens = set(alias.split())
+            if not alias_tokens or not alias_tokens.issubset(raw_tokens):
+                continue
+            existing = by_api.get(ref["api_name"])
+            if existing is None or len(alias_tokens) > len(existing["tokens"]):
+                by_api[ref["api_name"]] = {"ref": ref, "tokens": alias_tokens}
+
+    specific_matches = []
+    matches = list(by_api.values())
+    for match in matches:
+        tokens = match["tokens"]
+        if any(tokens < other["tokens"] for other in matches):
+            continue
+        specific_matches.append(match)
+
+    return [
+        _mapped(
+            raw,
+            match["ref"],
+            confidence=min(0.99, 0.93 + (len(match["tokens"]) * 0.02)),
+            method="contained_alias",
+        )
+        for match in sorted(specific_matches, key=lambda m: (-len(m["tokens"]), m["ref"]["api_name"]))
+    ]
+
+
+def _hint_matches(raw: str, normalized: str, refs: list[dict], mapped_api_names: set[str]) -> list[dict]:
+    raw_tokens = set(normalized.split())
+    refs_by_api = {ref["api_name"].lower(): ref for ref in refs}
+    matches = []
+    for token in raw_tokens:
+        for api_name in _BUSINESS_OBJECT_HINTS.get(token, ()):
+            if api_name in mapped_api_names:
+                continue
+            ref = refs_by_api.get(api_name.lower())
+            if ref is not None:
+                mapped_api_names.add(api_name)
+                matches.append(_mapped(raw, ref, confidence=0.9, method=f"business_hint:{token}"))
+    return matches
+
+
 def resolve_object_references(
     raw_values: Iterable[object],
     metadata_objects: Iterable[dict],
@@ -153,6 +205,18 @@ def resolve_object_references(
                     ],
                 )
             )
+            continue
+
+        contained_matches = _contained_alias_matches(raw, normalized, refs)
+        hinted_matches = _hint_matches(
+            raw,
+            normalized,
+            refs,
+            {row["api_name"] for row in contained_matches},
+        )
+        if contained_matches or hinted_matches:
+            mapped.extend(contained_matches)
+            mapped.extend(hinted_matches)
             continue
 
         candidates: list[tuple[float, dict]] = []
