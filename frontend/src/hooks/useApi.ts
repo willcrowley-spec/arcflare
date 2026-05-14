@@ -403,6 +403,16 @@ export function useApproveAgentDesign() {
   })
 }
 
+export function useRegenerateAgentDesign() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.agentGenerations.regenerateDesign(id),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ['agent-generations', run.id] })
+    },
+  })
+}
+
 export function useGenerateAgentSource() {
   const qc = useQueryClient()
   return useMutation({

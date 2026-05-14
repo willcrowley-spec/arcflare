@@ -86,6 +86,83 @@ async def create_generation_run(
     return run
 
 
+async def regenerate_design_package(
+    db: AsyncSession,
+    *,
+    org_id: UUID,
+    run_id: UUID,
+) -> AgentGenerationRun:
+    run = await db.get(AgentGenerationRun, run_id)
+    if run is None or run.org_id != org_id:
+        raise ValueError("generation_run_not_found")
+
+    latest_design = (
+        await db.execute(
+            select(AgentDesignPackage)
+            .where(
+                AgentDesignPackage.generation_run_id == run.id,
+                AgentDesignPackage.org_id == org_id,
+            )
+            .order_by(AgentDesignPackage.version.desc(), AgentDesignPackage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if latest_design is None:
+        raise ValueError("design_package_not_found")
+    if latest_design.status not in {"draft", "blocked"}:
+        raise ValueError("design_package_not_repairable")
+
+    existing_source = (
+        await db.execute(
+            select(AgentSourceBundle)
+            .where(
+                AgentSourceBundle.generation_run_id == run.id,
+                AgentSourceBundle.org_id == org_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing_source is not None:
+        raise ValueError("design_package_not_repairable")
+
+    rec = await db.get(Recommendation, run.recommendation_id)
+    if rec is None or rec.org_id != org_id:
+        raise ValueError("recommendation_not_found")
+
+    context = await assemble_generation_context(db, org_id=org_id, recommendation=rec)
+    package_json = build_design_package_from_context(context)
+    validation = validate_design_package(package_json, known_salesforce_objects=await _known_objects(db, org_id))
+    design_status = "blocked" if validation["blockers"] else "draft"
+
+    latest_design.status = "superseded"
+    design = AgentDesignPackage(
+        org_id=org_id,
+        generation_run_id=run.id,
+        recommendation_id=run.recommendation_id,
+        version=int(latest_design.version or 1) + 1,
+        status=design_status,
+        package_json=package_json,
+        validation_json=validation,
+    )
+    db.add(design)
+
+    run.status = "blocked" if validation["blockers"] else "awaiting_review"
+    run.current_stage = "design"
+    stage = dict(getattr(run, "stage_results", None) or {})
+    stage["design"] = {
+        "status": design_status,
+        "blockers": validation["blockers"],
+        "warnings": validation["warnings"],
+        "version": design.version,
+        "regenerated_from_version": latest_design.version,
+    }
+    run.stage_results = stage
+    run.error = None
+    await db.commit()
+    await db.refresh(run)
+    return run
+
+
 async def approve_design_package(
     db: AsyncSession,
     *,

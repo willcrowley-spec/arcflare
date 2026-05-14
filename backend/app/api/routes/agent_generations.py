@@ -25,6 +25,7 @@ from app.services.agent_design.workflow import (
     approve_design_package,
     create_validation_run,
     generate_source_bundle,
+    regenerate_design_package,
 )
 
 router = APIRouter()
@@ -150,6 +151,21 @@ async def validate_agent_source_bundle(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ScratchValidationRunResponse.model_validate(validation)
+
+
+@router.post("/{run_id}/regenerate-design", response_model=AgentGenerationRunResponse)
+async def regenerate_agent_design(
+    run_id: UUID,
+    db: DbSession,
+    org: CurrentOrg,
+) -> AgentGenerationRunResponse:
+    try:
+        run = await regenerate_design_package(db, org_id=org.id, run_id=run_id)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 409 if detail == "design_package_not_repairable" else 404
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return await _latest_generation_response(db, run)
 
 
 @router.get("/{run_id}", response_model=AgentGenerationRunResponse)

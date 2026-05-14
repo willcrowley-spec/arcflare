@@ -14,6 +14,7 @@ import {
   Loader2,
   Lock,
   Play,
+  RefreshCw,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -21,6 +22,7 @@ import {
   useApproveAgentDesign,
   useDownloadAgentSource,
   useGenerateAgentSource,
+  useRegenerateAgentDesign,
   useValidateAgentSource,
 } from '@/hooks/useApi'
 import type { AgentGenerationRun, AgentSourceFile } from '@/types'
@@ -39,6 +41,26 @@ function asArray(value: unknown): Record<string, unknown>[] {
 function text(value: unknown, fallback = '-'): string {
   if (value == null || value === '') return fallback
   return String(value)
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+function formatBlocker(blocker: string): string {
+  if (blocker.startsWith('unresolved_data_requirement:')) {
+    return `Unmapped data requirement: ${blocker.replace('unresolved_data_requirement:', '')}`
+  }
+  if (blocker.startsWith('unknown_salesforce_object:')) {
+    return `Unknown Salesforce object: ${blocker.replace('unknown_salesforce_object:', '')}`
+  }
+  if (blocker.startsWith('missing_permission_requirement:')) {
+    return `Missing permission requirement: ${blocker.replace('missing_permission_requirement:', '')}`
+  }
+  if (blocker.startsWith('missing_action_permissions:')) {
+    return `Missing action permissions: ${blocker.replace('missing_action_permissions:', '')}`
+  }
+  return blocker.replace(/_/g, ' ')
 }
 
 function fileLabel(path: string): string {
@@ -197,14 +219,19 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function DesignPanel({ run }: { run: AgentGenerationRun }) {
   const approve = useApproveAgentDesign()
+  const regenerate = useRegenerateAgentDesign()
   const design = run.design_package
   const pkg = design?.package_json ?? {}
   const validation = design?.validation_json ?? {}
   const topics = asArray(pkg.topics)
   const actions = asArray(pkg.action_contracts)
   const permissions = asArray(pkg.permission_requirements)
+  const grounding = pkg.metadata_grounding && typeof pkg.metadata_grounding === 'object' ? pkg.metadata_grounding as Record<string, unknown> : {}
+  const mappedObjects = asArray(grounding.mapped)
+  const unresolvedObjects = asArray(grounding.unresolved)
   const blockers = Array.isArray(validation.blockers) ? validation.blockers as string[] : []
   const canApprove = design?.status === 'draft' && blockers.length === 0
+  const canRegenerate = !!design && ['blocked', 'draft'].includes(design.status) && !run.source_bundle
 
   return (
     <section className="space-y-5">
@@ -213,15 +240,28 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
           <h2 className="text-sm font-bold uppercase tracking-wide text-navy-900">Design Package</h2>
           <p className="mt-1 text-sm text-slate-600">Review topics, action contracts, permissions, and tests before source generation.</p>
         </div>
-        <button
-          type="button"
-          disabled={!canApprove || approve.isPending || !design}
-          onClick={() => design && approve.mutate(design.id)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-navy-800 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Lock className="h-3.5 w-3.5" />
-          {design?.status === 'approved' || design?.status === 'source_generated' ? 'Approved' : 'Approve design'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {canRegenerate ? (
+            <button
+              type="button"
+              disabled={regenerate.isPending || !design}
+              onClick={() => design && regenerate.mutate(run.id)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={clsx('h-3.5 w-3.5', regenerate.isPending && 'animate-spin')} />
+              Regenerate design
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={!canApprove || approve.isPending || !design}
+            onClick={() => design && approve.mutate(design.id)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-navy-800 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Lock className="h-3.5 w-3.5" />
+            {design?.status === 'approved' || design?.status === 'source_generated' ? 'Approved' : 'Approve design'}
+          </button>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -265,7 +305,7 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                     <tr key={text(action.name)} className="border-b border-slate-100 last:border-0">
                       <td className="py-3 pr-4 font-medium text-navy-900">{text(action.name)}</td>
                       <td className="py-3 pr-4 text-slate-600">{text(action.target_type)}</td>
-                      <td className="py-3 pr-4 text-slate-600">{(Array.isArray(action.salesforce_objects) ? action.salesforce_objects : []).join(', ') || '—'}</td>
+                      <td className="py-3 pr-4 text-slate-600">{(Array.isArray(action.salesforce_objects) ? action.salesforce_objects : []).join(', ') || '-'}</td>
                       <td className="py-3 text-slate-600">
                         {(Array.isArray(action.inputs) ? action.inputs.length : 0)} in / {(Array.isArray(action.outputs) ? action.outputs.length : 0)} out
                       </td>
@@ -278,20 +318,54 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
         </div>
 
         <div className="space-y-4">
-          <Panel title="Permission Requirements">
-            <div className="space-y-2">
-              {permissions.map((perm) => (
-                <div key={text(perm.object)} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                  <div className="font-semibold text-navy-900">{text(perm.object)}</div>
-                  <div className="text-xs text-slate-600">{(Array.isArray(perm.operations) ? perm.operations : []).join(', ')}</div>
+          <Panel title="Metadata Grounding">
+            <div className="space-y-3">
+              {mappedObjects.length > 0 ? (
+                <div className="space-y-2">
+                  {mappedObjects.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm ring-1 ring-emerald-100">
+                      <div className="font-semibold text-emerald-950">{text(item.api_name)}</div>
+                      <div className="mt-0.5 text-xs text-emerald-800">
+                        Mapped "{text(item.raw)}" to {text(item.label)} via {text(item.match_method)}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <p className="text-sm text-slate-600">No Salesforce objects were mapped from this recommendation.</p>
+              )}
+              {unresolvedObjects.length > 0 ? (
+                <div className="space-y-2">
+                  {unresolvedObjects.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
+                      <div className="font-semibold text-amber-950">{text(item.raw)}</div>
+                      <div className="mt-0.5 text-xs text-amber-800">
+                        Needs object mapping before this design can be approved.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
+          </Panel>
+          <Panel title="Permission Requirements">
+            {permissions.length > 0 ? (
+              <div className="space-y-2">
+                {permissions.map((perm) => (
+                  <div key={text(perm.object)} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                    <div className="font-semibold text-navy-900">{text(perm.object)}</div>
+                    <div className="text-xs text-slate-600">{stringArray(perm.operations).join(', ')}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600">No permissions generated because no Salesforce objects were mapped.</p>
+            )}
           </Panel>
           <Panel title="Readiness">
             {blockers.length > 0 ? (
               <ul className="space-y-2 text-sm text-amber-900">
-                {blockers.map((b) => <li key={b}>{b.replace(/_/g, ' ')}</li>)}
+                {blockers.map((b) => <li key={b}>{formatBlocker(b)}</li>)}
               </ul>
             ) : (
               <p className="text-sm text-slate-600">No blockers. Approval locks this package for source generation.</p>

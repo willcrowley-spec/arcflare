@@ -392,6 +392,10 @@ export const api = {
   },
   agentGenerations: {
     get: (id: string) => request<AgentGenerationRun>(`/agent-generations/${id}`),
+    regenerateDesign: (id: string) =>
+      request<AgentGenerationRun>(`/agent-generations/${id}/regenerate-design`, {
+        method: 'POST',
+      }),
     approveDesign: (id: string) =>
       request<AgentDesignPackage>(`/agent-generations/design-packages/${id}/approve`, {
         method: 'POST',

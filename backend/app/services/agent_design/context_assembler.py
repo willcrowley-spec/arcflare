@@ -37,7 +37,6 @@ async def assemble_generation_context(
         select(MetadataObject)
         .where(MetadataObject.org_id == org_id)
         .order_by(MetadataObject.api_name)
-        .limit(250)
     )
     objects = list(objects_q.scalars().all())
 

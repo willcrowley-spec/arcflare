@@ -51,6 +51,13 @@ def validate_design_package(
     if not _norm(agent.get("name")):
         blockers.append("missing_agent_name")
 
+    grounding = design_package.get("metadata_grounding") if isinstance(design_package.get("metadata_grounding"), dict) else {}
+    for unresolved in _as_list(grounding.get("unresolved")):
+        if not isinstance(unresolved, dict):
+            continue
+        raw = _norm(unresolved.get("raw")) or "unknown"
+        blockers.append(f"unresolved_data_requirement:{raw}")
+
     topics = _as_list(design_package.get("topics"))
     if not topics:
         blockers.append("missing_topics")
@@ -80,10 +87,11 @@ def validate_design_package(
             blockers.append(f"missing_action_inputs:{name}")
         if not _as_list(action.get("outputs")):
             blockers.append(f"missing_action_outputs:{name}")
-        if not _as_list(action.get("permissions")):
+        action_objects = _object_names_from_contract(action)
+        if action_objects and not _as_list(action.get("permissions")):
             blockers.append(f"missing_action_permissions:{name}")
 
-        for obj in _object_names_from_contract(action):
+        for obj in action_objects:
             referenced_objects.add(obj)
             if known and obj not in known:
                 blockers.append(f"unknown_salesforce_object:{obj}")

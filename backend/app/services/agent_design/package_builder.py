@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import re
+
+from app.services.agent_design.object_resolver import (
+    resolve_object_references,
+    score_text_against_resolved_object,
+)
 from app.services.agent_design.source_compiler import safe_identifier
 from app.services.agent_design.validators import validate_design_package
 
@@ -20,18 +26,24 @@ def _known_objects(context: dict) -> set[str]:
     }
 
 
-def _best_object_name(raw: str, known_objects: set[str]) -> str:
-    candidate = raw.strip()
-    if candidate in known_objects:
-        return candidate
-    for known in sorted(known_objects):
-        if known.lower() == candidate.lower():
-            return known
-    return candidate
+def _metadata_objects(context: dict) -> list[dict]:
+    return [
+        {"api_name": _text(o.get("api_name")), "label": _text(o.get("label"))}
+        for o in _as_list((context.get("salesforce_metadata") or {}).get("objects"))
+        if isinstance(o, dict) and _text(o.get("api_name"))
+    ]
+
+
+def _clean_action_text(value: str) -> str:
+    cleaned = str(value or "")
+    cleaned = re.sub(r"__c\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.replace("_", " ")
+    cleaned = re.sub(r"\bc\b(?=\s+(?:record|records|object|objects)\b)", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
 
 
 def _action_contract_name(topic_name: str, action_name: str, seen: set[str]) -> str:
-    base = safe_identifier(action_name or topic_name or "AgentAction", fallback="AgentAction")
+    base = safe_identifier(_clean_action_text(action_name or topic_name or "AgentAction"), fallback="AgentAction")
     if not base.lower().endswith("action"):
         base = base.removesuffix("Actions")
     name = base
@@ -46,6 +58,32 @@ def _action_contract_name(topic_name: str, action_name: str, seen: set[str]) -> 
     return name
 
 
+def _topic_search_text(topic: dict) -> str:
+    actions = " ".join(_text(action) for action in _as_list(topic.get("actions_needed")))
+    return " ".join(
+        [
+            _text(topic.get("topic_name")),
+            _text(topic.get("description")),
+            actions,
+        ]
+    )
+
+
+def _best_topic_object(topic: dict, mapped_objects: list[dict]) -> dict | None:
+    if not mapped_objects:
+        return None
+    if len(mapped_objects) == 1:
+        return mapped_objects[0]
+    search_text = _topic_search_text(topic)
+    ranked = sorted(
+        ((score_text_against_resolved_object(search_text, obj), obj) for obj in mapped_objects),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    best_score, best = ranked[0]
+    return best if best_score > 0 else mapped_objects[0]
+
+
 def build_design_package_from_context(context: dict) -> dict:
     """Build the first reviewable Agent Design Package from recommendation context.
 
@@ -56,9 +94,8 @@ def build_design_package_from_context(context: dict) -> dict:
     opportunity = rec.get("agent_opportunity") or {}
     known_objects = _known_objects(context)
     raw_data_requirements = [_text(v) for v in _as_list(opportunity.get("data_requirements")) if _text(v)]
-    data_requirements = [_best_object_name(v, known_objects) for v in raw_data_requirements]
-    if not data_requirements and known_objects:
-        data_requirements = [next(iter(sorted(known_objects)))]
+    metadata_grounding = resolve_object_references(raw_data_requirements, _metadata_objects(context))
+    mapped_data_requirements = _as_list(metadata_grounding.get("mapped"))
 
     agent_name = _text(opportunity.get("agent_name"), rec.get("title") or "Generated Agent")
     agent_type = _text(opportunity.get("agent_type"), rec.get("automation_type") or "hybrid")
@@ -71,9 +108,11 @@ def build_design_package_from_context(context: dict) -> dict:
             continue
         topic_name = _text(topic.get("topic_name"), "Agent Topic")
         topic_action_names = []
+        target_ref = _best_topic_object(topic, mapped_data_requirements)
+        target_object = _text(target_ref.get("api_name")) if target_ref else ""
+        target_label = _text(target_ref.get("label"), target_object or "record") if target_ref else "record"
         for raw_action in _as_list(topic.get("actions_needed")) or ["Review context"]:
             contract_name = _action_contract_name(topic_name, _text(raw_action), seen_action_names)
-            target_object = data_requirements[0] if data_requirements else "Record"
             topic_action_names.append(contract_name)
             action_contracts.append(
                 {
@@ -84,14 +123,14 @@ def build_design_package_from_context(context: dict) -> dict:
                         f"{contract_name} is a draft Apex-backed Agentforce action for "
                         f"{topic_name}. Review and replace TODO logic before deploy."
                     ),
-                    "salesforce_objects": [target_object] if target_object != "Record" else [],
+                    "salesforce_objects": [target_object] if target_object else [],
                     "inputs": [
                         {
                             "name": "recordId",
                             "type": "Id",
                             "required": True,
-                            "description": f"Primary {target_object} record for the action.",
-                            "object": target_object if target_object != "Record" else None,
+                            "description": f"Primary {target_label} record for the action.",
+                            "object": target_object or None,
                         }
                     ],
                     "outputs": [
@@ -108,9 +147,7 @@ def build_design_package_from_context(context: dict) -> dict:
                             "description": "Human-readable reason for the recommendation.",
                         },
                     ],
-                    "permissions": [f"{target_object}:read", f"{target_object}:update"]
-                    if target_object != "Record"
-                    else [],
+                    "permissions": [f"{target_object}:read", f"{target_object}:update"] if target_object else [],
                     "error_states": ["MISSING_ACCESS", "RECORD_NOT_FOUND", "REVIEW_REQUIRED"],
                     "human_in_loop": True,
                 }
@@ -127,13 +164,14 @@ def build_design_package_from_context(context: dict) -> dict:
 
     permission_requirements = [
         {
-            "object": obj,
+            "object": obj["api_name"],
             "operations": ["read", "update"],
             "reason": "Required by generated Agentforce action contracts.",
         }
-        for obj in data_requirements
-        if obj in known_objects
+        for obj in mapped_data_requirements
+        if isinstance(obj, dict) and obj.get("api_name") in known_objects
     ]
+    permission_requirements = list({p["object"]: p for p in permission_requirements}.values())
 
     test_scenarios = []
     for replacement in _as_list(opportunity.get("replaces")):
@@ -192,6 +230,7 @@ def build_design_package_from_context(context: dict) -> dict:
             for item in _as_list(opportunity.get("integration_points"))
             if _text(item)
         ],
+        "metadata_grounding": metadata_grounding,
         "source_evidence": {
             "recommendation_id": rec.get("id"),
             "linked_process_count": len(context.get("processes") or []),
