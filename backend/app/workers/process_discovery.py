@@ -119,7 +119,9 @@ def process_discovery_task(org_id: str) -> str:
                     _update("extraction", "pulling", 0, len(domains))
                     extraction_results = await run_v2_phase3(
                         UUID(org_id), run_id, session, domains, bundles,
-                        progress_cb=_progress_cb, model_config=org_config,
+                        progress_cb=_progress_cb,
+                        model_config=org_config,
+                        concurrency=settings.PROCESS_DISCOVERY_DOMAIN_CONCURRENCY,
                     )
                     _update("extraction", "done", len(extraction_results), len(extraction_results))
 
@@ -127,7 +129,9 @@ def process_discovery_task(org_id: str) -> str:
                     _update("verification", "pulling", 0, len(domains))
                     verified_results = await run_v2_phase4(
                         UUID(org_id), session, extraction_results, bundles,
-                        progress_cb=_progress_cb, model_config=org_config,
+                        progress_cb=_progress_cb,
+                        model_config=org_config,
+                        concurrency=settings.PROCESS_DISCOVERY_DOMAIN_CONCURRENCY,
                     )
                     _update("verification", "done", len(verified_results), len(verified_results))
 
@@ -174,6 +178,7 @@ def process_discovery_task(org_id: str) -> str:
                         "v2_processes": process_count,
                         "v2_handoffs": len(synthesis.get("cross_domain_handoffs", [])),
                         "v2_quality": quality,
+                        "v2_domain_concurrency": settings.PROCESS_DISCOVERY_DOMAIN_CONCURRENCY,
                     }
                     await session.commit()
 

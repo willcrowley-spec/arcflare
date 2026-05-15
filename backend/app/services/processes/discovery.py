@@ -352,7 +352,11 @@ async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
 
     operation = kwargs.get("operation", "")
     tier = kwargs.get("tier", "fast")
-    model = resolve_model(operation=operation, tier=tier)
+    model = resolve_model(
+        operation=operation,
+        tier=tier,
+        model_config=kwargs.get("model_config"),
+    )
     limiter = get_limiter(model)
 
     prompt_val = kwargs.get("prompt", "")
@@ -1875,6 +1879,7 @@ async def run_v2_phase3(
     bundles: list,
     progress_cb: ProgressCallback = None,
     model_config: dict | None = None,
+    concurrency: int = 8,
 ) -> list[dict]:
     """v2 Phase 3: Per-domain extraction in parallel. Returns list of extraction results."""
     from app.services.processes.prompts import build_v2_phase3_prompt
@@ -1882,58 +1887,65 @@ async def run_v2_phase3(
     if progress_cb:
         progress_cb("extraction", "running", 0, len(domains))
 
-    async def _extract_domain(domain: dict, bundle) -> dict:
-        evidence_text = bundle.as_tagged_text()
-        if not evidence_text.strip():
-            logger.warning("v2_phase3_empty_bundle domain=%s", domain.get("name", "?"))
-            return {"processes": [], "domain": domain}
+    limit = max(1, int(concurrency or 1))
+    semaphore = asyncio.Semaphore(limit)
+    prompt_lock = asyncio.Lock()
 
-        prompt = await build_v2_phase3_prompt(org_id, db, domain, evidence_text)
-        result, parsed = await _async_llm_call(
-            prompt=prompt, max_tokens=8000, tier="fast",
-            operation="discovery_v2_extraction", label=f"v2_phase3_{domain.get('name', '?')}",
-            model_config=model_config,
-        )
-        parsed = _normalize_v2_extraction_result(parsed)
-        issues = _v2_extraction_contract_issues(parsed)
-        if issues:
-            repair_prompt = PromptParts(
-                system=prompt.system,
-                context=prompt.context,
-                variable=(
-                    f"{prompt.variable}\n\n"
-                    "## Repair required before final answer\n"
-                    "Your previous extraction failed Arcflare's process-shape contract:\n"
-                    + "\n".join(f"- {issue}" for issue in issues[:12])
-                    + "\nReturn the full corrected JSON object. Do not omit child steps, citations, actors, triggers, or touchpoints."
-                ),
-            )
-            logger.warning(
-                "v2_phase3_contract_retry domain=%s issues=%s",
-                domain.get("name", "?"),
-                issues,
-            )
+    async def _extract_domain(domain: dict, bundle) -> dict:
+        async with semaphore:
+            evidence_text = bundle.as_tagged_text()
+            if not evidence_text.strip():
+                logger.warning("v2_phase3_empty_bundle domain=%s", domain.get("name", "?"))
+                return {"processes": [], "domain": domain}
+
+            async with prompt_lock:
+                prompt = await build_v2_phase3_prompt(org_id, db, domain, evidence_text)
             result, parsed = await _async_llm_call(
-                prompt=repair_prompt, max_tokens=10000, tier="fast",
-                operation="discovery_v2_extraction", label=f"v2_phase3_repair_{domain.get('name', '?')}",
+                prompt=prompt, max_tokens=8000, tier="fast",
+                operation="discovery_v2_extraction", label=f"v2_phase3_{domain.get('name', '?')}",
                 model_config=model_config,
             )
             parsed = _normalize_v2_extraction_result(parsed)
             issues = _v2_extraction_contract_issues(parsed)
             if issues:
-                raise ValueError(
-                    f"v2 extraction contract failed for domain '{domain.get('name', '?')}': "
-                    + "; ".join(issues[:12])
+                repair_prompt = PromptParts(
+                    system=prompt.system,
+                    context=prompt.context,
+                    variable=(
+                        f"{prompt.variable}\n\n"
+                        "## Repair required before final answer\n"
+                        "Your previous extraction failed Arcflare's process-shape contract:\n"
+                        + "\n".join(f"- {issue}" for issue in issues[:12])
+                        + "\nReturn the full corrected JSON object. Do not omit child steps, citations, actors, triggers, or touchpoints."
+                    ),
                 )
-        logger.info(
-            "v2_phase3_domain_done domain=%s processes=%d tokens_in=%d tokens_out=%d",
-            domain.get("name", "?"),
-            len(parsed.get("processes", [])),
-            result.input_tokens, result.output_tokens,
-        )
-        parsed["domain"] = domain
-        return parsed
+                logger.warning(
+                    "v2_phase3_contract_retry domain=%s issues=%s",
+                    domain.get("name", "?"),
+                    issues,
+                )
+                result, parsed = await _async_llm_call(
+                    prompt=repair_prompt, max_tokens=10000, tier="fast",
+                    operation="discovery_v2_extraction", label=f"v2_phase3_repair_{domain.get('name', '?')}",
+                    model_config=model_config,
+                )
+                parsed = _normalize_v2_extraction_result(parsed)
+                issues = _v2_extraction_contract_issues(parsed)
+                if issues:
+                    raise ValueError(
+                        f"v2 extraction contract failed for domain '{domain.get('name', '?')}': "
+                        + "; ".join(issues[:12])
+                    )
+            logger.info(
+                "v2_phase3_domain_done domain=%s processes=%d tokens_in=%d tokens_out=%d",
+                domain.get("name", "?"),
+                len(parsed.get("processes", [])),
+                result.input_tokens, result.output_tokens,
+            )
+            parsed["domain"] = domain
+            return parsed
 
+    logger.info("v2_phase3_concurrency domains=%d concurrency=%d", len(domains), limit)
     tasks = [_extract_domain(d, b) for d, b in zip(domains, bundles)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1965,6 +1977,7 @@ async def run_v2_phase4(
     bundles: list,
     progress_cb: ProgressCallback = None,
     model_config: dict | None = None,
+    concurrency: int = 8,
 ) -> list[dict]:
     """v2 Phase 4: Evidence verification in parallel. Returns updated extraction results."""
     from app.services.processes.evidence import (
@@ -1976,37 +1989,48 @@ async def run_v2_phase4(
     if progress_cb:
         progress_cb("verification", "running", 0, len(extraction_results))
 
+    limit = max(1, int(concurrency or 1))
+    semaphore = asyncio.Semaphore(limit)
+    prompt_lock = asyncio.Lock()
+
     async def _verify_domain(extraction: dict, bundle) -> dict:
-        pairs = build_verification_pairs(bundle, extraction)
-        if not pairs:
+        async with semaphore:
+            pairs = build_verification_pairs(bundle, extraction)
+            if not pairs:
+                return extraction
+
+            async with prompt_lock:
+                prompt = await build_v2_phase4_prompt(org_id, db, pairs)
+            result, parsed = await _async_llm_call(
+                prompt=prompt, max_tokens=6000, tier="fast",
+                operation="discovery_v2_verification",
+                label=f"v2_phase4_{extraction.get('domain', {}).get('name', '?')}",
+                model_config=model_config,
+            )
+
+            verifications = parsed.get("verifications", [])
+            if verifications:
+                updated, ref_verdicts = apply_verification_results(extraction, verifications)
+                updated["_ref_verdicts"] = ref_verdicts
+                logger.info(
+                    "v2_phase4_domain_done domain=%s verified=%d tokens_in=%d tokens_out=%d",
+                    extraction.get("domain", {}).get("name", "?"),
+                    len(verifications),
+                    result.input_tokens, result.output_tokens,
+                )
+                return updated
+
+            logger.warning(
+                "v2_phase4_no_verifications domain=%s",
+                extraction.get("domain", {}).get("name", "?"),
+            )
             return extraction
 
-        prompt = await build_v2_phase4_prompt(org_id, db, pairs)
-        result, parsed = await _async_llm_call(
-            prompt=prompt, max_tokens=6000, tier="fast",
-            operation="discovery_v2_verification",
-            label=f"v2_phase4_{extraction.get('domain', {}).get('name', '?')}",
-            model_config=model_config,
-        )
-
-        verifications = parsed.get("verifications", [])
-        if verifications:
-            updated, ref_verdicts = apply_verification_results(extraction, verifications)
-            updated["_ref_verdicts"] = ref_verdicts
-            logger.info(
-                "v2_phase4_domain_done domain=%s verified=%d tokens_in=%d tokens_out=%d",
-                extraction.get("domain", {}).get("name", "?"),
-                len(verifications),
-                result.input_tokens, result.output_tokens,
-            )
-            return updated
-
-        logger.warning(
-            "v2_phase4_no_verifications domain=%s",
-            extraction.get("domain", {}).get("name", "?"),
-        )
-        return extraction
-
+    logger.info(
+        "v2_phase4_concurrency domains=%d concurrency=%d",
+        len(extraction_results),
+        limit,
+    )
     tasks = [_verify_domain(e, b) for e, b in zip(extraction_results, bundles)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
