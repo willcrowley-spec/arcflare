@@ -49,6 +49,32 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : []
 }
 
+function metadataApiName(item: Record<string, unknown>): string {
+  return text(item.api_name ?? item.object_api_name ?? item.raw, '')
+}
+
+function commonMetadataName(value: unknown): string {
+  const raw = text(value, '')
+  if (!raw) return '-'
+  if (raw.includes(' ') && !raw.includes('_')) return raw
+  const withoutSuffix = raw.replace(/__(c|e|b|mdt)$/i, '')
+  return withoutSuffix
+    .replace(/_/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim() || raw
+}
+
+function evidenceLabel(item: Record<string, unknown>): string {
+  const label = text(item.label, '')
+  if (label) return label
+  return commonMetadataName(metadataApiName(item) || item.raw)
+}
+
+function evidenceCardKey(item: Record<string, unknown>, prefix: string): string {
+  return `${prefix}-${metadataApiName(item)}-${text(item.raw, '')}-${text(item.reason, '')}-${text(item.source, '')}`
+}
+
 function formatBlocker(blocker: string): string {
   if (blocker.startsWith('upstream_metadata_evidence_missing:')) {
     return `Upstream metadata evidence missing: ${blocker.replace('upstream_metadata_evidence_missing:', '')}`
@@ -446,6 +472,50 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
+type EvidenceTone = 'validated' | 'dependency' | 'warning' | 'external' | 'neutral'
+
+const evidenceToneClasses: Record<EvidenceTone, string> = {
+  validated: 'bg-emerald-50 text-emerald-950 ring-emerald-100',
+  dependency: 'bg-slate-50 text-navy-900 ring-slate-200',
+  warning: 'bg-amber-50 text-amber-950 ring-amber-100',
+  external: 'bg-orange-50 text-orange-950 ring-orange-100',
+  neutral: 'bg-slate-50 text-navy-900 ring-slate-200',
+}
+
+const evidenceBodyClasses: Record<EvidenceTone, string> = {
+  validated: 'text-emerald-800',
+  dependency: 'text-slate-600',
+  warning: 'text-amber-800',
+  external: 'text-orange-800',
+  neutral: 'text-slate-600',
+}
+
+function EvidenceCard({
+  item,
+  tone = 'neutral',
+  children,
+}: {
+  item: Record<string, unknown>
+  tone?: EvidenceTone
+  children: ReactNode
+}) {
+  const apiName = metadataApiName(item)
+  const label = evidenceLabel(item)
+  const showApiName = Boolean(apiName && apiName !== label)
+
+  return (
+    <div className={clsx('min-w-0 rounded-lg px-3 py-2 text-sm ring-1', evidenceToneClasses[tone])}>
+      <div className="min-w-0 font-semibold leading-snug [overflow-wrap:anywhere]">{label}</div>
+      {showApiName ? (
+        <div className="mt-0.5 min-w-0 text-[11px] font-medium leading-4 opacity-80 [overflow-wrap:anywhere]" title={apiName}>
+          API: {apiName}
+        </div>
+      ) : null}
+      <div className={clsx('mt-0.5 text-xs leading-5', evidenceBodyClasses[tone])}>{children}</div>
+    </div>
+  )
+}
+
 function DesignPanel({ run }: { run: AgentGenerationRun }) {
   const approve = useApproveAgentDesign()
   const regenerate = useRegenerateAgentDesign()
@@ -572,12 +642,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
               {mappedObjects.length > 0 ? (
                 <div className="space-y-2">
                   {mappedObjects.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm ring-1 ring-emerald-100">
-                      <div className="font-semibold text-emerald-950">{text(item.api_name)}</div>
-                      <div className="mt-0.5 text-xs text-emerald-800">
+                    <EvidenceCard key={evidenceCardKey(item, 'mapped')} item={item} tone="validated">
+                      <div>
                         Object access validated from {text(item.source, 'process evidence')}.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : (
@@ -587,12 +656,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Validated automations</div>
                   {validatedDependencies.map((item) => (
-                    <div key={`${text(item.ref_type)}-${text(item.api_name)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
-                      <div className="font-semibold text-navy-900">{text(item.api_name)}</div>
-                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                    <EvidenceCard key={evidenceCardKey(item, 'dependency')} item={item} tone="dependency">
+                      <div>
                         {text(item.ref_type, 'Metadata')} dependency validated from {text(item.source, 'process evidence')}.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
@@ -600,12 +668,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Legacy diagnostics</div>
                   {legacySuggestions.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
-                      <div className="font-semibold text-navy-900">{text(item.api_name)}</div>
-                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                    <EvidenceCard key={evidenceCardKey(item, 'legacy')} item={item} tone="neutral">
+                      <div>
                         Suggested from old recommendation text. It is diagnostic only; generated source requires a fresh typed assessment.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
@@ -613,12 +680,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Upstream evidence incomplete</div>
                   {upstreamDefects.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
-                      <div className="font-semibold text-amber-950">{text(item.raw)}</div>
-                      <div className="mt-0.5 text-xs text-amber-800">
+                    <EvidenceCard key={evidenceCardKey(item, 'upstream')} item={item} tone="warning">
+                      <div>
                         Arcflare found this in process evidence, but it was not validated in the Salesforce metadata inventory. Rerun metadata sync or assessment before generating source.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
@@ -626,12 +692,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">External contracts needed</div>
                   {externalDependencies.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-orange-50 px-3 py-2 text-sm ring-1 ring-orange-100">
-                      <div className="font-semibold text-orange-950">{text(item.raw)}</div>
-                      <div className="mt-0.5 text-xs text-orange-800">
+                    <EvidenceCard key={evidenceCardKey(item, 'external')} item={item} tone="external">
+                      <div>
                         External dependencies need an Apex/API contract before Arcflare can generate deployable Agentforce actions.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
@@ -639,12 +704,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Advisory signals</div>
                   {advisorySuggestions.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.ref_type)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
-                      <div className="font-semibold text-navy-900">{text(item.raw)}</div>
-                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                    <EvidenceCard key={evidenceCardKey(item, 'advisory')} item={item} tone="neutral">
+                      <div>
                         This came from AI analysis and is not used as a source dependency unless future process evidence validates it.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
@@ -652,12 +716,11 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <div className="space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Legacy unresolved evidence</div>
                   {unresolvedObjects.map((item) => (
-                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
-                      <div className="font-semibold text-amber-950">{text(item.raw)}</div>
-                      <div className="mt-0.5 text-xs text-amber-800">
+                    <EvidenceCard key={evidenceCardKey(item, 'unresolved')} item={item} tone="warning">
+                      <div>
                         This old design package should be regenerated after rerunning the recommendation pipeline.
                       </div>
-                    </div>
+                    </EvidenceCard>
                   ))}
                 </div>
               ) : null}
