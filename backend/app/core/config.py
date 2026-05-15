@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = Field(default="")
     CEREBRAS_API_KEY: str = Field(default="")
 
-    LLM_PROVIDER: str = Field(default="anthropic", description="openai, anthropic, gemini, or cerebras")
+    LLM_PROVIDER: str = Field(default="cerebras", description="openai, anthropic, gemini, or cerebras")
     LLM_LITE_MODEL: str = Field(default="")
     LLM_FAST_MODEL: str = Field(default="")
     LLM_STRONG_MODEL: str = Field(default="")

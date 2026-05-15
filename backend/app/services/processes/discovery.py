@@ -171,6 +171,175 @@ def _as_list(val: object) -> list:
     return []
 
 
+def _text(val: object) -> str:
+    return str(val or "").strip()
+
+
+def _normalize_v2_fields(raw_fields: object, object_api_name: str) -> list[str]:
+    fields: list[str] = []
+    for item in _as_list(raw_fields):
+        if isinstance(item, dict):
+            value = _text(item.get("api_name") or item.get("field_api_name") or item.get("name"))
+        else:
+            value = _text(item)
+        if not value:
+            continue
+        if "." in value:
+            obj_part, field_part = value.split(".", 1)
+            if not object_api_name or obj_part.lower() == object_api_name.lower():
+                value = field_part
+        fields.append(value)
+    return sorted(dict.fromkeys(fields))
+
+
+def _normalize_v2_touchpoint(raw: object) -> dict | None:
+    """Normalize LLM touchpoints into the canonical persisted process shape.
+
+    The strict extraction schema emits a compact `{name, type, operation, fields}`
+    shape. Downstream binding code also understands `object_api_name` and
+    `automation_name`, so add those deterministic aliases here instead of making
+    later stages infer them from prose.
+    """
+    if isinstance(raw, str):
+        name = _text(raw)
+        if not name:
+            return None
+        if "." in name:
+            obj, field = name.split(".", 1)
+            return {
+                "name": obj,
+                "type": "object",
+                "operation": "read",
+                "fields": [field],
+                "object_api_name": obj,
+                "evidence_refs": [],
+            }
+        return {
+            "name": name,
+            "type": "object",
+            "operation": "read",
+            "fields": [],
+            "object_api_name": name,
+            "evidence_refs": [],
+        }
+
+    if not isinstance(raw, dict):
+        return None
+
+    kind = _text(raw.get("type") or raw.get("ref_type")).lower()
+    name = _text(
+        raw.get("name")
+        or raw.get("api_name")
+        or raw.get("object_api_name")
+        or raw.get("automation_name")
+        or raw.get("component_api_name")
+    )
+    if not name:
+        return None
+
+    if kind in {"sobject", "metadata_object"}:
+        kind = "object"
+    elif kind in {"flow", "workflow_rule", "apex_trigger", "validation_rule", "approval_process"}:
+        kind = "automation"
+    elif kind in {"apex", "apex_class", "prompt"}:
+        kind = "component"
+    elif kind in {"external_system", "external", "api", "queue", "schema_mapping"}:
+        kind = "integration"
+    elif kind not in {"object", "automation", "component", "integration"}:
+        kind = "object"
+
+    operation = _text(raw.get("operation")) or ("trigger" if kind == "automation" else "read")
+    if operation == "update":
+        operation = "write"
+    if operation not in {"read", "write", "create", "trigger"}:
+        operation = "read" if kind == "object" else "trigger"
+
+    fields = _normalize_v2_fields(raw.get("fields"), name if kind == "object" else "")
+    out = {
+        **raw,
+        "name": name,
+        "type": kind,
+        "operation": operation,
+        "fields": fields,
+        "evidence_refs": [_text(r) for r in _as_list(raw.get("evidence_refs")) if _text(r)],
+    }
+    if kind == "object":
+        out["object_api_name"] = name
+    elif kind == "automation":
+        out["automation_name"] = name
+    else:
+        out["api_name"] = name
+    return out
+
+
+def _normalize_v2_process_node(raw: object, *, is_child: bool = False) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    node = dict(raw)
+    node["name"] = _text(node.get("name")) or "Unnamed"
+    node["level"] = "step" if is_child else "process"
+    node["evidence_refs"] = [_text(r) for r in _as_list(node.get("evidence_refs")) if _text(r)]
+    node["actors"] = _as_list(node.get("actors"))
+    node["trigger_conditions"] = _as_list(node.get("trigger_conditions"))
+    node["system_touchpoints"] = [
+        tp for tp in (_normalize_v2_touchpoint(tp) for tp in _as_list(node.get("system_touchpoints")))
+        if tp is not None
+    ]
+    node["decision_logic"] = _as_list(node.get("decision_logic"))
+    node["success_criteria"] = _as_list(node.get("success_criteria"))
+    node["failure_modes"] = _as_list(node.get("failure_modes"))
+    if not is_child:
+        node["children"] = [
+            child
+            for child in (_normalize_v2_process_node(c, is_child=True) for c in _as_list(node.get("children")))
+            if child is not None
+        ]
+    return node
+
+
+def _normalize_v2_extraction_result(parsed: dict) -> dict:
+    result = dict(parsed or {})
+    result["processes"] = [
+        proc
+        for proc in (_normalize_v2_process_node(p) for p in _as_list(result.get("processes")))
+        if proc is not None
+    ]
+    result["intra_domain_handoffs"] = _as_list(result.get("intra_domain_handoffs"))
+    return result
+
+
+def _v2_extraction_contract_issues(parsed: dict) -> list[str]:
+    """Return blocking shape issues that must not be persisted as good data."""
+    issues: list[str] = []
+    processes = _as_list(parsed.get("processes"))
+    if not processes:
+        return ["no_processes"]
+
+    for proc_idx, proc in enumerate(processes):
+        if not isinstance(proc, dict):
+            issues.append(f"process[{proc_idx}]:not_object")
+            continue
+        label = _text(proc.get("name")) or f"process[{proc_idx}]"
+        for key in ("evidence_refs", "actors", "trigger_conditions", "system_touchpoints"):
+            if not _as_list(proc.get(key)):
+                issues.append(f"{label}:missing_{key}")
+        children = _as_list(proc.get("children"))
+        if not children:
+            issues.append(f"{label}:missing_child_steps")
+            continue
+        for child_idx, child in enumerate(children):
+            if not isinstance(child, dict):
+                issues.append(f"{label}.child[{child_idx}]:not_object")
+                continue
+            child_label = _text(child.get("name")) or f"{label}.child[{child_idx}]"
+            if child.get("level") != "step":
+                issues.append(f"{child_label}:child_must_be_step")
+            for key in ("evidence_refs", "actors", "trigger_conditions", "system_touchpoints"):
+                if not _as_list(child.get(key)):
+                    issues.append(f"{child_label}:missing_{key}")
+    return issues[:20]
+
+
 async def _async_llm_call(**kwargs) -> tuple[LLMResult, dict]:
     """Run _call_with_retry in a thread with adaptive rate limiting.
 
@@ -1725,6 +1894,37 @@ async def run_v2_phase3(
             operation="discovery_v2_extraction", label=f"v2_phase3_{domain.get('name', '?')}",
             model_config=model_config,
         )
+        parsed = _normalize_v2_extraction_result(parsed)
+        issues = _v2_extraction_contract_issues(parsed)
+        if issues:
+            repair_prompt = PromptParts(
+                system=prompt.system,
+                context=prompt.context,
+                variable=(
+                    f"{prompt.variable}\n\n"
+                    "## Repair required before final answer\n"
+                    "Your previous extraction failed Arcflare's process-shape contract:\n"
+                    + "\n".join(f"- {issue}" for issue in issues[:12])
+                    + "\nReturn the full corrected JSON object. Do not omit child steps, citations, actors, triggers, or touchpoints."
+                ),
+            )
+            logger.warning(
+                "v2_phase3_contract_retry domain=%s issues=%s",
+                domain.get("name", "?"),
+                issues,
+            )
+            result, parsed = await _async_llm_call(
+                prompt=repair_prompt, max_tokens=10000, tier="fast",
+                operation="discovery_v2_extraction", label=f"v2_phase3_repair_{domain.get('name', '?')}",
+                model_config=model_config,
+            )
+            parsed = _normalize_v2_extraction_result(parsed)
+            issues = _v2_extraction_contract_issues(parsed)
+            if issues:
+                raise ValueError(
+                    f"v2 extraction contract failed for domain '{domain.get('name', '?')}': "
+                    + "; ".join(issues[:12])
+                )
         logger.info(
             "v2_phase3_domain_done domain=%s processes=%d tokens_in=%d tokens_out=%d",
             domain.get("name", "?"),
@@ -1738,15 +1938,19 @@ async def run_v2_phase3(
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     extraction_results: list[dict] = []
+    failures: list[str] = []
     for i, r in enumerate(results):
         if isinstance(r, Exception):
             logger.error("v2_phase3_failed domain=%s error=%s", domains[i].get("name"), r)
-            extraction_results.append({"processes": [], "domain": domains[i]})
+            failures.append(f"{domains[i].get('name', '?')}: {r}")
         else:
             extraction_results.append(r)
 
         if progress_cb:
             progress_cb("extraction", "running", i + 1, len(domains))
+
+    if failures:
+        raise RuntimeError("v2 extraction failed quality gates: " + " | ".join(failures[:5]))
 
     if progress_cb:
         progress_cb("extraction", "done", len(domains), len(domains))

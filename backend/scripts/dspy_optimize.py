@@ -163,7 +163,7 @@ def main():
     parser = argparse.ArgumentParser(description="DSPy optimization for discovery pipeline")
     parser.add_argument("--stage", required=True, choices=list(STAGE_SIGNATURES.keys()),
                        help="Pipeline stage to optimize")
-    parser.add_argument("--model", default="anthropic/claude-sonnet-4-6",
+    parser.add_argument("--model", default="cerebras/gpt-oss-120b",
                        help="LiteLLM model string for optimization")
     parser.add_argument("--preset", default="light", choices=["light", "medium", "heavy"],
                        help="MIPROv2 preset (light=~10 trials, medium=~40, heavy=~100+)")

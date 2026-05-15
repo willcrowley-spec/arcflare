@@ -1,4 +1,4 @@
-from app.services.ai.operations import get_reasoning_effort, resolve_model
+from app.services.ai.operations import get_reasoning_effort, get_structured_mode, resolve_model
 
 
 def test_recommendation_operations_default_to_cerebras_hosted_models():
@@ -35,6 +35,7 @@ def test_upstream_generation_operations_are_cerebras_first():
         "entity_extraction",
         "process_matching",
         "discovery_v2_domain",
+        "discovery_v2_extraction",
         "discovery_v2_verification",
         "discovery_v2_synthesis",
         "org_research_extraction",
@@ -44,8 +45,10 @@ def test_upstream_generation_operations_are_cerebras_first():
         assert resolve_model(operation=operation, tier="strong") == expected
 
 
-def test_discovery_v2_extraction_stays_on_gemini_until_schema_is_compacted():
-    assert resolve_model(operation="discovery_v2_extraction", tier="fast").startswith("gemini/")
+def test_discovery_v2_extraction_uses_high_reasoning_cerebras_strict_schema():
+    assert resolve_model(operation="discovery_v2_extraction", tier="fast") == "cerebras/gpt-oss-120b"
+    assert get_reasoning_effort("discovery_v2_extraction") == "high"
+    assert get_structured_mode("discovery_v2_extraction") == "json_schema"
 
 
 def test_cerebras_schema_size_guard_blocks_oversized_strict_schema():

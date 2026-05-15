@@ -718,8 +718,8 @@ The output of this extraction will be used to recommend which business processes
 - HOW suitable for automation — based on rule-based vs judgment-based, data availability, exception rate
 
 ## Hierarchy
-- **Process** — a complete business workflow with a clear trigger and outcome (e.g., "Lead Qualification"). Has 2-8 children.
-- **Subprocess/Step** — atomic units of work or logical groupings within a process. If a step contains "and", split it.
+- **Process** — a complete business workflow with a clear trigger and outcome (e.g., "Lead Qualification"). Has 2-8 direct child steps.
+- **Step** — an atomic unit of work. If a step contains "and", split it.
 
 ## Extraction Rules
 1. Derive processes ONLY from the evidence provided. Do not hallucinate processes that have no metadata or document support.
@@ -730,7 +730,7 @@ The output of this extraction will be used to recommend which business processes
 6. If you cannot find evidence for a claim, do NOT include it. Absence is better than fabrication.
 7. Set needs_review=true for anything with confidence < 0.6.
 8. Value classification: VA = directly produces customer-facing value, BVA = business-necessary but internal, NVA = waste/rework/manual workaround.
-9. Field evidence is mandatory when evidence exposes fields. For object touchpoints, populate system_touchpoints[].fields with exact Object.Field API evidence. If no field evidence exists, use fields=[] and keep needs_review=true.
+9. Field evidence is mandatory when evidence exposes fields. For object touchpoints, populate system_touchpoints[].fields with exact field API names visible in the evidence (for example, Priority or Case.Priority; Arcflare will normalize the object prefix). If no field evidence exists, use fields=[] and keep needs_review=true.
 10. Process children are mandatory. If a process is genuinely atomic and has no lower-level decomposition, emit one child step representing the atomic work and cite the same evidence."""
 
 _V2_PHASE3_PROTOCOL = """Return a JSON object with "processes" array and optional "intra_domain_handoffs" array.

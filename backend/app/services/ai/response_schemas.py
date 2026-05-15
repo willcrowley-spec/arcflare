@@ -482,7 +482,7 @@ _V2_ACTOR = {
         "type": {"type": "string", "enum": ["user", "integration", "system"]},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["name", "type"],
+    "required": ["name", "type", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -492,7 +492,7 @@ _V2_TRIGGER = {
         "description": {"type": "string"},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["description"],
+    "required": ["description", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -505,7 +505,7 @@ _V2_TOUCHPOINT = {
         "fields": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["name", "type"],
+    "required": ["name", "type", "operation", "fields", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -515,7 +515,7 @@ _V2_DECISION = {
         "description": {"type": "string"},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["description"],
+    "required": ["description", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -525,7 +525,7 @@ _V2_SUCCESS = {
         "description": {"type": "string"},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["description"],
+    "required": ["description", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -536,7 +536,7 @@ _V2_FAILURE = {
         "impact": {"type": "string"},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
-    "required": ["mode"],
+    "required": ["mode", "impact", "evidence_refs"],
     "additionalProperties": False,
 }
 
@@ -544,7 +544,7 @@ _V2_CHILD = {
     "type": "object",
     "properties": {
         "name": {"type": "string"},
-        "level": {"type": "string", "enum": ["subprocess", "step"]},
+        "level": {"type": "string", "enum": ["step"]},
         "description": {"type": "string"},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
         "actors": {"type": "array", "items": _V2_ACTOR},
@@ -605,56 +605,151 @@ DISCOVERY_V2_DOMAIN_SCHEMA: dict = {
 DISCOVERY_V2_EXTRACTION_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "processes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "level": {"type": "string", "enum": ["process"]},
-                    "description": {"type": "string"},
-                    "narrative": {"type": "string"},
-                    "evidence_refs": _EVIDENCE_REF_ARRAY,
-                    "confidence": {"type": "number"},
-                    "needs_review": {"type": "boolean"},
-                    "actors": {"type": "array", "items": _V2_ACTOR},
-                    "trigger_conditions": {"type": "array", "items": _V2_TRIGGER},
-                    "system_touchpoints": {"type": "array", "items": _V2_TOUCHPOINT},
-                    "decision_logic": {"type": "array", "items": _V2_DECISION},
-                    "success_criteria": {"type": "array", "items": _V2_SUCCESS},
-                    "failure_modes": {"type": "array", "items": _V2_FAILURE},
-                    "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
-                    "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
-                    "children": {"type": "array", "items": _V2_CHILD},
-                },
-                "required": [
-                    "name", "description", "evidence_refs", "confidence",
-                    "actors", "trigger_conditions", "system_touchpoints",
-                    "value_classification", "automation_potential", "children",
-                ],
-                "additionalProperties": False,
-            },
-        },
-        "intra_domain_handoffs": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string"},
-                    "target": {"type": "string"},
-                    "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
-                    "description": {"type": "string"},
-                    "evidence_refs": _EVIDENCE_REF_ARRAY,
-                    "confidence": {"type": "number"},
-                },
-                "required": ["source", "target", "type"],
-                "additionalProperties": False,
-            },
-        },
+        "processes": {"type": "array", "items": {"$ref": "#/$defs/process"}},
+        "intra_domain_handoffs": {"type": "array", "items": {"$ref": "#/$defs/handoff"}},
     },
     "required": ["processes"],
     "additionalProperties": False,
+    "$defs": {
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "actor": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "type": {"type": "string", "enum": ["user", "integration", "system"]},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["name", "type", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "trigger": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["description", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "touchpoint": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "type": {"type": "string", "enum": ["object", "automation", "component", "integration"]},
+                "operation": {"type": "string", "enum": ["read", "write", "create", "trigger"]},
+                "fields": {"type": "array", "items": {"type": "string"}},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["name", "type", "operation", "fields", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "decision": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["description", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "success": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["description", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "failure": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "impact": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+            },
+            "required": ["mode", "impact", "evidence_refs"],
+            "additionalProperties": False,
+        },
+        "child": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "level": {"type": "string", "enum": ["step"]},
+                "description": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+                "actors": {"type": "array", "items": {"$ref": "#/$defs/actor"}},
+                "trigger_conditions": {"type": "array", "items": {"$ref": "#/$defs/trigger"}},
+                "system_touchpoints": {"type": "array", "items": {"$ref": "#/$defs/touchpoint"}},
+                "decision_logic": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+                "success_criteria": {"type": "array", "items": {"$ref": "#/$defs/success"}},
+                "failure_modes": {"type": "array", "items": {"$ref": "#/$defs/failure"}},
+                "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+                "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+                "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                "estimated_duration": {"type": "string", "enum": ["minutes", "hours", "days"]},
+                "estimated_frequency": {"type": "string", "enum": ["per_transaction", "daily", "weekly", "monthly"]},
+                "confidence": {"type": "number"},
+                "needs_review": {"type": "boolean"},
+                "sequencing": {
+                    "type": "object",
+                    "properties": {
+                        "position": {"type": "integer"},
+                        "parallel_group": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "required": [
+                "name", "level", "description", "evidence_refs",
+                "actors", "trigger_conditions", "system_touchpoints",
+                "value_classification", "automation_potential", "complexity_score",
+                "confidence", "needs_review",
+            ],
+            "additionalProperties": False,
+        },
+        "process": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "level": {"type": "string", "enum": ["process"]},
+                "description": {"type": "string"},
+                "narrative": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+                "confidence": {"type": "number"},
+                "needs_review": {"type": "boolean"},
+                "actors": {"type": "array", "items": {"$ref": "#/$defs/actor"}},
+                "trigger_conditions": {"type": "array", "items": {"$ref": "#/$defs/trigger"}},
+                "system_touchpoints": {"type": "array", "items": {"$ref": "#/$defs/touchpoint"}},
+                "decision_logic": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+                "success_criteria": {"type": "array", "items": {"$ref": "#/$defs/success"}},
+                "failure_modes": {"type": "array", "items": {"$ref": "#/$defs/failure"}},
+                "value_classification": {"type": "string", "enum": ["VA", "BVA", "NVA"]},
+                "complexity_score": {"type": "string", "enum": ["low", "medium", "high"]},
+                "automation_potential": {"type": "string", "enum": ["high", "medium", "low", "none"]},
+                "children": {"type": "array", "items": {"$ref": "#/$defs/child"}},
+            },
+            "required": [
+                "name", "level", "description", "evidence_refs", "confidence", "needs_review",
+                "actors", "trigger_conditions", "system_touchpoints",
+                "value_classification", "automation_potential", "complexity_score", "children",
+            ],
+            "additionalProperties": False,
+        },
+        "handoff": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string"},
+                "target": {"type": "string"},
+                "type": {"type": "string", "enum": ["integration", "manual", "automated", "unknown"]},
+                "description": {"type": "string"},
+                "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["source", "target", "type", "description", "evidence_refs", "confidence"],
+            "additionalProperties": False,
+        },
+    },
 }
 
 DISCOVERY_V2_VERIFICATION_SCHEMA: dict = {
