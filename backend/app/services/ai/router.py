@@ -32,6 +32,17 @@ def _provider_from_model(model: str) -> str:
     return model.split("/", 1)[0] if "/" in model else "unknown"
 
 
+def _provider_kwargs_for_model(model: str) -> dict:
+    """Return provider-specific LiteLLM kwargs for hosted model backends."""
+    if model.startswith("cerebras/"):
+        return {
+            "api_base": "https://api.cerebras.ai/v1",
+            "custom_llm_provider": "cerebras",
+            "extra_headers": {"X-Cerebras-3rd-Party-Integration": "litellm"},
+        }
+    return {}
+
+
 @dataclass
 class PromptParts:
     """Structured prompt with cacheable tiers for prompt caching.
@@ -170,6 +181,7 @@ def llm_call(
             "max_tokens": max_tokens,
             "messages": messages,
         }
+        kwargs.update(_provider_kwargs_for_model(model))
 
         schema = get_response_schema(operation)
         output_fmt = get_output_format(operation)
@@ -320,6 +332,7 @@ def stream_chat_with_tools(
             tools=tools or None,
             max_tokens=max_tokens,
             stream=True,
+            **_provider_kwargs_for_model(model),
         )
 
         text_buffer = ""

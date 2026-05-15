@@ -36,12 +36,19 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="")
     ANTHROPIC_API_KEY: str = Field(default="")
     GEMINI_API_KEY: str = Field(default="")
+    CEREBRAS_API_KEY: str = Field(default="")
 
-    LLM_PROVIDER: str = Field(default="anthropic", description="openai, anthropic, or gemini")
+    LLM_PROVIDER: str = Field(default="anthropic", description="openai, anthropic, gemini, or cerebras")
     LLM_LITE_MODEL: str = Field(default="")
     LLM_FAST_MODEL: str = Field(default="")
     LLM_STRONG_MODEL: str = Field(default="")
     LLM_RATE_DELAY: float = Field(default=0.0, description="Seconds between LLM calls")
+    RECOMMENDATION_DOMAIN_CONCURRENCY: int = Field(
+        default=4,
+        ge=1,
+        le=12,
+        description="Maximum number of domain recommendation analyses to run in parallel.",
+    )
 
     EMBEDDING_MODEL: str = Field(default="gemini-embedding-2-preview", description="Gemini embedding model name")
     EMBEDDING_DIMS: int = Field(default=768, description="Embedding vector dimensions (MRL-truncated from 3072)")

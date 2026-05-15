@@ -159,7 +159,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "v2 Phase 5: identifies cross-domain handoffs and gaps from verified process trees.",
     },
     "recommendations": {
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -169,7 +169,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "LLM scoring pass: generates automation narratives, financial assumptions, and executive summaries for each recommendation candidate.",
     },
     "recommendations_composite": {
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -188,7 +188,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Recommendation enrichment chat — helps users evaluate ROI, refine assumptions, and discuss automation approaches.",
     },
     "agent_opportunity": {
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -198,7 +198,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Domain-level analysis identifying Agentforce agent opportunities across processes and steps.",
     },
     "agent_opportunity_cross_domain": {
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -208,7 +208,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Identifies agent opportunities spanning multiple business domains.",
     },
     "agent_design_package": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -295,6 +295,11 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
         "lite": "gemini/gemini-3.1-flash-lite-preview",
         "fast": "gemini/gemini-2.5-flash",
         "strong": "gemini/gemini-2.5-pro",
+    },
+    "cerebras": {
+        "lite": "cerebras/llama3.1-8b",
+        "fast": "cerebras/gpt-oss-120b",
+        "strong": "cerebras/gpt-oss-120b",
     },
 }
 

@@ -1,6 +1,7 @@
 """Full recommendation pipeline orchestration (async) — 4-phase agent opportunity engine."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ from sqlalchemy.orm import selectinload
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataObject
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
+from app.core.config import get_settings
+from app.services.ai.operations import resolve_model
+from app.services.prompts.resolver import resolve_prompt_blocks
 from app.services.recommendations.arc_score import apply_arc_score
 from app.services.recommendations.agent_analyzer import analyze_domain
 from app.services.recommendations.cross_domain import synthesize_cross_domain
@@ -23,6 +27,57 @@ from app.workers.analysis import evaluate_agent_financials_task
 logger = logging.getLogger(__name__)
 
 _MAX_ERROR_LEN = 50_000
+
+
+async def analyze_domain_contexts(
+    domain_contexts: list[dict],
+    *,
+    org_id: UUID,
+    db: AsyncSession,
+    prompt_blocks: dict[str, str],
+    concurrency: int,
+    analyzer=analyze_domain,
+    cancel_check=None,
+    heartbeat=None,
+) -> list[dict]:
+    """Analyze domains with bounded parallelism.
+
+    The analyzer itself offloads provider calls to worker threads. Database access
+    for cancellation/heartbeat is guarded because the pipeline owns one session.
+    """
+    limit = max(1, int(concurrency or 1))
+    semaphore = asyncio.Semaphore(limit)
+    db_lock = asyncio.Lock()
+
+    async def _locked_cancel_check() -> None:
+        if cancel_check is None:
+            return
+        async with db_lock:
+            await cancel_check()
+
+    async def _locked_heartbeat() -> None:
+        if heartbeat is None:
+            return
+        async with db_lock:
+            await heartbeat()
+
+    async def _run_one(domain_ctx: dict) -> dict:
+        async with semaphore:
+            result = await analyzer(
+                domain_ctx,
+                org_id,
+                db,
+                cancel_check=_locked_cancel_check if cancel_check else None,
+                heartbeat=_locked_heartbeat if heartbeat else None,
+                prompt_blocks=prompt_blocks,
+            )
+            result["_domain_name"] = domain_ctx["domain"]["name"]
+            result["_domain_db_id"] = domain_ctx.get("_domain_db_id")
+            result["_discovery_run_id"] = domain_ctx.get("_discovery_run_id")
+            result["_processes_raw"] = domain_ctx.get("processes", [])
+            return result
+
+    return list(await asyncio.gather(*(_run_one(ctx) for ctx in domain_contexts)))
 
 
 def _build_agent_recommendation(
@@ -275,27 +330,25 @@ async def run_recommendation_pipeline(
         await _update_run_progress(stage_results, "phase_2")
 
         # --- Phase 2: Per-domain agent opportunity analysis ---
-        all_domain_results: list[dict] = []
         t0 = time.perf_counter()
-        for domain_ctx in domain_contexts:
-            result = await analyze_domain(
-                domain_ctx,
-                org_id,
-                db,
-                cancel_check=_check_cancelled,
-                heartbeat=_heartbeat,
-            )
-            result["_domain_name"] = domain_ctx["domain"]["name"]
-            result["_domain_db_id"] = domain_ctx.get("_domain_db_id")
-            result["_discovery_run_id"] = domain_ctx.get("_discovery_run_id")
-            result["_processes_raw"] = domain_ctx.get("processes", [])
-            all_domain_results.append(result)
+        settings = get_settings()
+        agent_prompt_blocks = await resolve_prompt_blocks("agent_opportunity", org_id, db)
+        all_domain_results = await analyze_domain_contexts(
+            domain_contexts,
+            org_id=org_id,
+            db=db,
+            prompt_blocks=agent_prompt_blocks,
+            concurrency=settings.RECOMMENDATION_DOMAIN_CONCURRENCY,
+            cancel_check=_check_cancelled,
+            heartbeat=_heartbeat,
+        )
         total_opportunities = sum(
             len(r.get("agent_opportunities", [])) for r in all_domain_results
         )
         stage_results["phase_2"] = {
             "total_opportunities": total_opportunities,
             "domains_analyzed": len(all_domain_results),
+            "domain_concurrency": settings.RECOMMENDATION_DOMAIN_CONCURRENCY,
             "seconds": round(time.perf_counter() - t0, 4),
         }
         logger.info(
@@ -409,7 +462,8 @@ async def run_recommendation_pipeline(
                     "discovery_run_id": str(pipeline_discovery_run_id)
                     if pipeline_discovery_run_id
                     else None,
-                    "model": "anthropic/claude-sonnet-4-6",
+                    "model": resolve_model(operation="agent_opportunity", tier="strong"),
+                    "domain_concurrency": get_settings().RECOMMENDATION_DOMAIN_CONCURRENCY,
                     "pipeline": "agent_opportunity_4phase",
                     "heartbeat_at": datetime.now(timezone.utc).isoformat(),
                 },

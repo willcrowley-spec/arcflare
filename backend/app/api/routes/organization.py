@@ -62,6 +62,7 @@ async def get_model_catalog(org: CurrentOrg) -> dict:
         ("gemini", "GEMINI_API_KEY", "Google Gemini"),
         ("anthropic", "ANTHROPIC_API_KEY", "Anthropic"),
         ("openai", "OPENAI_API_KEY", "OpenAI"),
+        ("cerebras", "CEREBRAS_API_KEY", "Cerebras"),
     ]
     for pid, key_attr, name in provider_checks:
         key_val = (getattr(settings, key_attr, "") or "").strip()

@@ -1,6 +1,7 @@
 """Phase 2: LLM-driven agent opportunity analysis per domain."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Callable
@@ -77,11 +78,12 @@ async def analyze_domain(
     *,
     cancel_check: Callable | None = None,
     heartbeat: Callable | None = None,
+    prompt_blocks: dict[str, str] | None = None,
 ) -> dict:
     """Run Phase 2 agent opportunity analysis for a single domain."""
     from app.services.ai.router import llm_call, parse_json_response
 
-    blocks = await resolve_prompt_blocks("agent_opportunity", org_id, db)
+    blocks = prompt_blocks or await resolve_prompt_blocks("agent_opportunity", org_id, db)
 
     ctx_for_llm = {k: v for k, v in domain_context.items() if not k.startswith("_")}
     domain_json = json.dumps(ctx_for_llm, indent=2, default=str)
@@ -92,7 +94,8 @@ async def analyze_domain(
         await cancel_check()
 
     try:
-        result = llm_call(
+        result = await asyncio.to_thread(
+            llm_call,
             prompt=prompt,
             max_tokens=16000,
             tier="strong",
