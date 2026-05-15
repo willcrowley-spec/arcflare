@@ -77,6 +77,28 @@ def test_compile_source_bundle_apex_uses_safe_defaults_and_contract_io():
     assert "TODO" in apex["content"]
 
 
+def test_compile_source_bundle_groups_action_artifacts_and_uses_exact_manifest_members():
+    bundle = compile_source_bundle(_design_package())
+    paths = {f["path"]: f for f in bundle["files"]}
+    groups = {g["id"]: g for g in bundle["artifact_groups"]}
+    action_group = groups["action:ClassifyCase"]
+
+    assert action_group["display_name"] == "Classify Case"
+    assert action_group["common_name"] == "Classify Case"
+    assert action_group["kind"] == "action_contract"
+    assert action_group["target_name"] == "ClassifyCaseAction"
+    assert action_group["files"]["apex_class"].endswith("ClassifyCaseAction.cls")
+    assert action_group["files"]["apex_meta"].endswith("ClassifyCaseAction.cls-meta.xml")
+    assert action_group["files"]["apex_test"].endswith("ClassifyCaseActionTest.cls")
+    assert action_group["files"]["apex_test_meta"].endswith("ClassifyCaseActionTest.cls-meta.xml")
+
+    package_xml = paths["manifest/package.xml"]["content"]
+    assert "<members>ClassifyCaseAction</members>" in package_xml
+    assert "<members>ClassifyCaseActionTest</members>" in package_xml
+    assert "<members>CaseIntakeAgent</members>" in package_xml
+    assert "<members>*</members>" not in package_xml
+
+
 def test_compile_source_bundle_is_deterministic():
     first = compile_source_bundle(_design_package())
     second = compile_source_bundle(_design_package())

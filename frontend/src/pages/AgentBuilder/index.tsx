@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import clsx from 'clsx'
@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   Code2,
   Download,
+  FileText,
   FileCode2,
   FlaskConical,
   GitBranch,
@@ -15,6 +16,7 @@ import {
   Lock,
   Play,
   RefreshCw,
+  Search,
   ShieldCheck,
 } from 'lucide-react'
 import {
@@ -25,7 +27,7 @@ import {
   useRegenerateAgentDesign,
   useValidateAgentSource,
 } from '@/hooks/useApi'
-import type { AgentGenerationRun, AgentSourceFile } from '@/types'
+import type { AgentGenerationRun, AgentSourceArtifactGroup, AgentSourceFile } from '@/types'
 
 const STAGES = [
   { key: 'scope', label: 'Scope', icon: GitBranch },
@@ -92,6 +94,190 @@ function downloadBlob(blob: Blob, name: string) {
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+const SOURCE_TAB_LABELS: Record<string, string> = {
+  contract: 'Contract',
+  dependencies: 'Dependencies',
+  apex_class: 'Apex Class',
+  apex_meta: 'Meta XML',
+  apex_test: 'Test',
+  apex_test_meta: 'Test Meta',
+  agent_script: 'Agent Script',
+  permission_set: 'Permission Set',
+  manifest: 'Manifest',
+  sfdx_project: 'Project JSON',
+  scratch_def: 'Scratch Def',
+  readme: 'README',
+}
+
+function sourceKindLabel(kind: string): string {
+  return kind.replace(/_/g, ' ')
+}
+
+function sourceBadgeClass(status: unknown): string {
+  const value = String(status || '').toLowerCase()
+  if (value === 'scaffold') return 'bg-amber-50 text-amber-900 ring-amber-200'
+  if (value === 'deployable_candidate' || value === 'bounded_implementation') return 'bg-emerald-50 text-emerald-900 ring-emerald-200'
+  return 'bg-slate-100 text-slate-700 ring-slate-200'
+}
+
+function humanizeIdentifier(value: string): string {
+  return value
+    .replace(/Action(Test)?$/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .trim()
+}
+
+function buildFallbackArtifactGroups(files: AgentSourceFile[]): AgentSourceArtifactGroup[] {
+  const groups: AgentSourceArtifactGroup[] = []
+  const actionGroups = new Map<string, AgentSourceArtifactGroup>()
+  const used = new Set<string>()
+
+  for (const file of files) {
+    const match = file.path.match(/\/classes\/([^/]+?)(Test)?\.cls(-meta\.xml)?$/)
+    if (!match) continue
+    const classBase = match[1]
+    const isTest = Boolean(match[2])
+    const isMeta = Boolean(match[3])
+    const actionName = classBase.replace(/Action$/, '')
+    const groupId = `action:${actionName}`
+    const existing = actionGroups.get(groupId) ?? {
+      id: groupId,
+      kind: 'action_contract',
+      display_name: humanizeIdentifier(classBase),
+      common_name: humanizeIdentifier(classBase),
+      action_name: actionName,
+      target_type: 'apex',
+      target_name: classBase,
+      capability_type: 'action',
+      implementation_status: 'scaffold',
+      files: {},
+    }
+    const fileKey = isTest ? (isMeta ? 'apex_test_meta' : 'apex_test') : (isMeta ? 'apex_meta' : 'apex_class')
+    existing.files = { ...(existing.files ?? {}), [fileKey]: file.path }
+    actionGroups.set(groupId, existing)
+    used.add(file.path)
+  }
+
+  const specialGroups: AgentSourceArtifactGroup[] = []
+  for (const file of files) {
+    if (used.has(file.path)) continue
+    if (file.kind === 'agent_script') {
+      specialGroups.push({
+        id: 'agent_script',
+        kind: 'agent_script',
+        display_name: fileLabel(file.path).replace('.agent', ' Agent Script'),
+        common_name: fileLabel(file.path).replace('.agent', ' Agent Script'),
+        files: { agent_script: file.path },
+      })
+      used.add(file.path)
+    } else if (file.kind === 'permission_set') {
+      specialGroups.push({
+        id: 'permissions',
+        kind: 'permission_set',
+        display_name: 'Permission set',
+        common_name: 'Permission set',
+        files: { permission_set: file.path },
+      })
+      used.add(file.path)
+    } else if (['manifest', 'project_config', 'scratch_org_definition'].includes(file.kind)) {
+      let configGroup = specialGroups.find((group) => group.id === 'project_config')
+      if (!configGroup) {
+        configGroup = {
+          id: 'project_config',
+          kind: 'project_config',
+          display_name: 'Salesforce DX project config',
+          common_name: 'Salesforce DX project config',
+          files: {},
+        }
+        specialGroups.push(configGroup)
+      }
+      const key = file.kind === 'manifest' ? 'manifest' : file.kind === 'scratch_org_definition' ? 'scratch_def' : 'sfdx_project'
+      configGroup.files = { ...(configGroup.files ?? {}), [key]: file.path }
+      used.add(file.path)
+    } else if (file.kind === 'readme') {
+      specialGroups.push({
+        id: 'readme',
+        kind: 'documentation',
+        display_name: 'Review README',
+        common_name: 'Review README',
+        files: { readme: file.path },
+      })
+      used.add(file.path)
+    }
+  }
+
+  groups.push(...specialGroups)
+  groups.push(...Array.from(actionGroups.values()).sort((a, b) => (a.common_name ?? '').localeCompare(b.common_name ?? '')))
+  for (const file of files) {
+    if (!used.has(file.path)) {
+      groups.push({
+        id: file.path,
+        kind: file.kind || 'source_file',
+        display_name: fileLabel(file.path),
+        common_name: fileLabel(file.path),
+        files: { source: file.path },
+      })
+    }
+  }
+  return groups
+}
+
+function groupSearchText(group: AgentSourceArtifactGroup): string {
+  return [
+    group.display_name,
+    group.common_name,
+    group.action_name,
+    group.target_name,
+    group.kind,
+    group.capability_type,
+    ...(group.salesforce_objects ?? []),
+    ...(group.source_topics ?? []),
+    ...Object.values(group.files ?? {}),
+  ].filter(Boolean).join(' ').toLowerCase()
+}
+
+function filesByPath(files: AgentSourceFile[]): Record<string, AgentSourceFile> {
+  return Object.fromEntries(files.map((file) => [file.path, file]))
+}
+
+function sourceTabs(
+  group: AgentSourceArtifactGroup | undefined,
+  lookup: Record<string, AgentSourceFile>,
+): { key: string; label: string; type: 'contract' | 'dependencies' | 'file'; file?: AgentSourceFile }[] {
+  if (!group) return []
+  const tabs: { key: string; label: string; type: 'contract' | 'dependencies' | 'file'; file?: AgentSourceFile }[] = []
+  if (group.contract) {
+    tabs.push({ key: 'contract', label: SOURCE_TAB_LABELS.contract, type: 'contract' })
+  }
+  const preferredOrder = [
+    'apex_class',
+    'apex_meta',
+    'apex_test',
+    'apex_test_meta',
+    'agent_script',
+    'permission_set',
+    'manifest',
+    'sfdx_project',
+    'scratch_def',
+    'readme',
+    'source',
+  ]
+  const groupFiles = group.files ?? {}
+  const keys = [
+    ...preferredOrder.filter((key) => groupFiles[key]),
+    ...Object.keys(groupFiles).filter((key) => !preferredOrder.includes(key)).sort(),
+  ]
+  for (const key of keys) {
+    const file = lookup[groupFiles[key]]
+    if (file) {
+      tabs.push({ key, label: SOURCE_TAB_LABELS[key] ?? fileLabel(file.path), type: 'file', file })
+    }
+  }
+  tabs.push({ key: 'dependencies', label: SOURCE_TAB_LABELS.dependencies, type: 'dependencies' })
+  return tabs
 }
 
 function RunHeader({ run }: { run: AgentGenerationRun }) {
@@ -498,9 +684,35 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
   const source = run.source_bundle
   const design = run.design_package
   const files = source?.source_tree_json.files ?? []
-  const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null)
-  const selectedFile = files.find((f) => f.path === selected) ?? files[0]
+  const lookup = useMemo(() => filesByPath(files), [files])
+  const groups = useMemo(() => {
+    const existing = source?.source_tree_json.artifact_groups
+    return existing && existing.length > 0 ? existing : buildFallbackArtifactGroups(files)
+  }, [files, source?.source_tree_json.artifact_groups])
+  const [query, setQuery] = useState('')
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(groups[0]?.id ?? null)
+  const [selectedTabKey, setSelectedTabKey] = useState<string>('contract')
+  const filteredGroups = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return groups
+    return groups.filter((group) => groupSearchText(group).includes(needle))
+  }, [groups, query])
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? filteredGroups[0] ?? groups[0]
+  const tabs = useMemo(() => sourceTabs(selectedGroup, lookup), [lookup, selectedGroup])
+  const selectedTab = tabs.find((tab) => tab.key === selectedTabKey) ?? tabs[0]
   const canGenerate = design?.status === 'approved'
+
+  useEffect(() => {
+    if (!selectedGroup || selectedGroup.id !== selectedGroupId) {
+      setSelectedGroupId(selectedGroup?.id ?? null)
+    }
+  }, [selectedGroup, selectedGroupId])
+
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.some((tab) => tab.key === selectedTabKey)) {
+      setSelectedTabKey(tabs[0].key)
+    }
+  }, [selectedTabKey, tabs])
 
   const handleDownload = () => {
     if (!source) return
@@ -539,29 +751,137 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
       </div>
 
       {files.length > 0 ? (
-        <div className="grid min-h-[520px] overflow-hidden rounded-lg border border-slate-200 bg-white lg:grid-cols-[340px_minmax(0,1fr)]">
-          <div className="border-b border-slate-200 bg-slate-50 lg:border-b-0 lg:border-r">
-            {files.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                onClick={() => setSelected(file.path)}
-                className={clsx(
-                  'flex w-full items-start gap-2 border-b border-slate-100 px-4 py-3 text-left text-sm hover:bg-white',
-                  selectedFile?.path === file.path && 'bg-white text-navy-900',
-                )}
-              >
-                <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                <span className="min-w-0">
-                  <span className="block truncate font-semibold">{fileLabel(file.path)}</span>
-                  <span className="block truncate text-xs text-slate-500">{file.path}</span>
-                </span>
-              </button>
-            ))}
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span className="font-semibold text-navy-900">{groups.length} artifact groups</span>
+                <span>{files.length} source files</span>
+                <span>{source?.source_tree_json.compiler_version ?? 'compiler unknown'}</span>
+              </div>
+              <label className="relative block w-full lg:w-80">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search action, class, object, topic..."
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-navy-900 outline-none ring-orange-300 placeholder:text-slate-400 focus:border-orange-300 focus:ring-2"
+                />
+              </label>
+            </div>
           </div>
-          <pre className="overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-            <code>{selectedFile?.content ?? ''}</code>
-          </pre>
+          <div className="grid min-h-[560px] lg:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="max-h-[680px] overflow-auto border-b border-slate-200 bg-white lg:border-b-0 lg:border-r">
+              {filteredGroups.length > 0 ? filteredGroups.map((group) => {
+                const active = selectedGroup?.id === group.id
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedGroupId(group.id)
+                      setSelectedTabKey(group.contract ? 'contract' : Object.keys(group.files ?? {})[0] ?? 'dependencies')
+                    }}
+                    className={clsx(
+                      'flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left text-sm hover:bg-slate-50',
+                      active && 'bg-navy-50 text-navy-900 ring-1 ring-inset ring-navy-200',
+                    )}
+                  >
+                    {group.kind === 'action_contract' ? (
+                      <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-navy-700" />
+                    ) : (
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{group.common_name ?? group.display_name ?? group.id}</span>
+                      <span className="mt-0.5 block truncate text-xs text-slate-500">
+                        {group.target_name ?? sourceKindLabel(group.kind)}
+                      </span>
+                      <span className="mt-2 flex flex-wrap gap-1.5">
+                        {group.capability_type ? (
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-600 ring-1 ring-slate-200">
+                            {sourceKindLabel(group.capability_type)}
+                          </span>
+                        ) : null}
+                        {group.implementation_status ? (
+                          <span className={clsx('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1', sourceBadgeClass(group.implementation_status))}>
+                            {sourceKindLabel(group.implementation_status)}
+                          </span>
+                        ) : null}
+                        {(group.salesforce_objects ?? []).slice(0, 2).map((objectName) => (
+                          <span key={objectName} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200">
+                            {objectName}
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  </button>
+                )
+              }) : (
+                <div className="px-4 py-8 text-sm text-slate-500">No source artifacts match that search.</div>
+              )}
+            </div>
+            <div className="min-w-0 bg-white">
+              {selectedGroup ? (
+                <div className="flex h-full min-h-[560px] flex-col">
+                  <div className="border-b border-slate-200 px-4 py-3">
+                    <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-bold text-navy-900">
+                          {selectedGroup.common_name ?? selectedGroup.display_name ?? selectedGroup.id}
+                        </h3>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {selectedGroup.target_name ?? sourceKindLabel(selectedGroup.kind)}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(selectedGroup.source_topics ?? []).slice(0, 3).map((topic) => (
+                          <span key={topic} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                            {topic}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-1 overflow-x-auto">
+                      {tabs.map((tab) => (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => setSelectedTabKey(tab.key)}
+                          className={clsx(
+                            'whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs font-semibold',
+                            selectedTab?.key === tab.key
+                              ? 'bg-navy-900 text-white'
+                              : 'text-slate-600 hover:bg-slate-100 hover:text-navy-900',
+                          )}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    {selectedTab?.type === 'contract' ? (
+                      <ContractSummary group={selectedGroup} />
+                    ) : selectedTab?.type === 'dependencies' ? (
+                      <DependencySummary group={selectedGroup} />
+                    ) : (
+                      <div className="h-full">
+                        <div className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs text-slate-500">
+                          {selectedTab?.file?.path}
+                        </div>
+                        <pre className="min-h-[500px] overflow-auto bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                          <code>{selectedTab?.file?.content ?? ''}</code>
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 py-8 text-sm text-slate-500">Select an artifact group to review its contract and source files.</div>
+              )}
+            </div>
+          </div>
         </div>
       ) : (
         <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-600">
@@ -569,6 +889,160 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
         </div>
       )}
     </section>
+  )
+}
+
+function ContractSummary({ group }: { group: AgentSourceArtifactGroup }) {
+  const contract = group.contract ?? {}
+  const inputs = asArray(contract.inputs)
+  const outputs = asArray(contract.outputs)
+  const operations = asArray(contract.operations)
+  const permissions = stringArray(contract.permissions)
+  return (
+    <div className="space-y-5 p-4">
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Purpose</div>
+        <p className="mt-1 max-w-4xl text-sm leading-6 text-navy-900">{text(contract.purpose ?? contract.description, 'Review this action contract before using the generated source.')}</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Metric label="Target" value={text(group.target_name ?? contract.target_name)} />
+        <Metric label="Capability" value={sourceKindLabel(text(group.capability_type ?? contract.capability_type, 'action'))} />
+        <Metric label="Status" value={sourceKindLabel(text(group.implementation_status ?? contract.implementation_status, 'scaffold'))} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ContractTable title="Inputs" rows={inputs} />
+        <ContractTable title="Outputs" rows={outputs} />
+      </div>
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Operations</div>
+        {operations.length > 0 ? (
+          <div className="mt-2 overflow-hidden rounded-lg border border-slate-200">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Object</th>
+                  <th className="px-3 py-2">Field</th>
+                  <th className="px-3 py-2">Operation</th>
+                  <th className="px-3 py-2">Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operations.map((operation, index) => (
+                  <tr key={`${text(operation.object_api_name)}-${text(operation.field_api_name)}-${index}`} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-medium text-navy-900">{text(operation.object_api_name)}</td>
+                    <td className="px-3 py-2 text-slate-600">{text(operation.field_api_name)}</td>
+                    <td className="px-3 py-2 text-slate-600">{text(operation.operation)}</td>
+                    <td className="px-3 py-2 text-slate-500">{stringArray(operation.evidence_ids).join(', ') || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">No field-level operations were attached to this artifact.</p>
+        )}
+      </div>
+      {permissions.length > 0 ? (
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Permissions</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {permissions.map((permission) => (
+              <span key={permission} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-navy-900 ring-1 ring-slate-200">
+                {permission}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ContractTable({ title, rows }: { title: string; rows: Record<string, unknown>[] }) {
+  return (
+    <div>
+      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-2 overflow-hidden rounded-lg border border-slate-200">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Required</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length > 0 ? rows.map((row) => (
+              <tr key={text(row.name)} className="border-t border-slate-100">
+                <td className="px-3 py-2 font-medium text-navy-900">{text(row.name)}</td>
+                <td className="px-3 py-2 text-slate-600">{text(row.type)}</td>
+                <td className="px-3 py-2 text-slate-600">{row.required === false ? 'No' : 'Yes'}</td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={3} className="px-3 py-4 text-sm text-slate-500">No {title.toLowerCase()} declared.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function DependencySummary({ group }: { group: AgentSourceArtifactGroup }) {
+  const contract = group.contract ?? {}
+  const sourceProcesses = asArray(contract.source_processes)
+  const files = group.files ?? {}
+  return (
+    <div className="space-y-5 p-4">
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Salesforce Dependencies</div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(group.salesforce_objects ?? []).length > 0 ? group.salesforce_objects?.map((objectName) => (
+            <span key={objectName} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-navy-900 ring-1 ring-slate-200">
+              {objectName}
+            </span>
+          )) : <span className="text-sm text-slate-600">No Salesforce objects attached.</span>}
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Source Topics</div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(group.source_topics ?? []).length > 0 ? group.source_topics?.map((topic) => (
+            <span key={topic} className="rounded-full bg-navy-50 px-2.5 py-1 text-xs font-semibold text-navy-900 ring-1 ring-navy-200">
+              {topic}
+            </span>
+          )) : <span className="text-sm text-slate-600">No source topics attached.</span>}
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Linked Processes</div>
+        {sourceProcesses.length > 0 ? (
+          <div className="mt-2 space-y-2">
+            {sourceProcesses.map((process) => (
+              <div key={text(process.process_id)} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+                <div className="font-semibold text-navy-900">{text(process.process_name, 'Linked process')}</div>
+                <div className="mt-0.5 text-xs text-slate-500">{text(process.process_id)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">No linked processes attached.</p>
+        )}
+      </div>
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Files In This Group</div>
+        <div className="mt-2 overflow-hidden rounded-lg border border-slate-200">
+          {Object.entries(files).map(([key, path]) => (
+            <div key={`${key}-${path}`} className="border-t border-slate-100 px-3 py-2 first:border-t-0">
+              <div className="text-xs font-semibold text-slate-500">{SOURCE_TAB_LABELS[key] ?? key}</div>
+              <div className="break-all text-sm font-medium text-navy-900">{path}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 

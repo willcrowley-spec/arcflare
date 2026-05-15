@@ -44,7 +44,9 @@ def validate_design_package(
     not present generated Agentforce/Apex artifacts as deployable yet.
     """
     known = set(known_salesforce_objects or [])
-    blockers: list[str] = []
+    blockers: list[str] = [
+        str(item) for item in _as_list(design_package.get("blockers")) if _norm(item)
+    ]
     warnings: list[str] = []
 
     agent = design_package.get("agent") if isinstance(design_package.get("agent"), dict) else {}

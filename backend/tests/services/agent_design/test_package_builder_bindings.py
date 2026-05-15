@@ -252,3 +252,169 @@ def test_design_package_blocks_upstream_defects_not_mapping_tasks():
     assert package["metadata_grounding"]["unresolved"] == []
     assert "upstream_metadata_evidence_missing:Legacy_Workflow__c" in package["blockers"]
     assert not any(blocker.startswith("unresolved_metadata_binding:") for blocker in package["blockers"])
+
+
+def test_case_triage_micro_actions_are_grouped_into_cohesive_contracts():
+    package = build_design_package_from_context(
+        {
+            "recommendation": {
+                "id": "rec-case-triage",
+                "title": "Case Triage & Routing Agent",
+                "automation_type": "hybrid",
+                "agent_opportunity": {
+                    "agent_name": "Case Triage & Routing Agent",
+                    "agent_type": "headless",
+                    "description": "Classifies, prioritizes, and routes support cases.",
+                    "topics": [
+                        {
+                            "topic_name": "Initial Case Classification",
+                            "description": "Classify inbound cases.",
+                            "reasoning_type": "hybrid",
+                            "actions_needed": [
+                                "Read Case.Subject",
+                                "Read Case.Description",
+                                "Apply NLP classification model",
+                                "Update Case.Category__c",
+                            ],
+                        },
+                        {
+                            "topic_name": "Priority Determination",
+                            "description": "Determine support priority.",
+                            "reasoning_type": "hybrid",
+                            "actions_needed": [
+                                "Read Case.Severity__c",
+                                "Read Account.Tier__c",
+                                "Compute priority using business rules",
+                                "Update Case.Priority",
+                            ],
+                        },
+                        {
+                            "topic_name": "Queue Assignment",
+                            "description": "Assign the case to the right queue.",
+                            "reasoning_type": "deterministic",
+                            "actions_needed": [
+                                "Read Case.Category__c",
+                                "Read Case.Priority",
+                                "Lookup queue mapping",
+                                "Update Case.OwnerId",
+                            ],
+                        },
+                    ],
+                    "metadata_binding_manifest_v1": {
+                        "schema_version": "metadata_binding_manifest_v1",
+                        "binding_model_version": "metadata_binding_manifest_v1",
+                        "bindings": [
+                            {
+                                "ref_type": "object",
+                                "api_name": "Case",
+                                "object_api_name": "Case",
+                                "operation": "create",
+                                "source": "process_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case"],
+                            },
+                            *[
+                                {
+                                    "ref_type": "field",
+                                    "api_name": f"Case.{field}",
+                                    "object_api_name": "Case",
+                                    "field_api_name": field,
+                                    "operation": operation,
+                                    "source": "step_touchpoint",
+                                    "confidence": 1.0,
+                                    "status": "validated",
+                                    "evidence_ids": ["process:proc-case", "step:step-case"],
+                                }
+                                for field, operation in [
+                                    ("Subject", "read"),
+                                    ("Description", "read"),
+                                    ("Severity__c", "read"),
+                                    ("Category__c", "update"),
+                                    ("Priority", "update"),
+                                    ("OwnerId", "update"),
+                                ]
+                            ],
+                            {
+                                "ref_type": "field",
+                                "api_name": "Account.Tier__c",
+                                "object_api_name": "Account",
+                                "field_api_name": "Tier__c",
+                                "operation": "read",
+                                "source": "step_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case", "step:step-account"],
+                            },
+                        ],
+                        "advisory_bindings": [],
+                        "unresolved_bindings": [],
+                        "quality_gates": {
+                            "agent_ready": True,
+                            "missing_evidence": [],
+                            "unresolved_external_dependencies": [],
+                        },
+                        "telemetry": {"bindings_from_process_touchpoints": 1},
+                    },
+                },
+            },
+            "salesforce_metadata": {
+                "objects": [
+                    {
+                        "api_name": "Case",
+                        "label": "Case",
+                        "fields": [
+                            "Subject",
+                            "Description",
+                            "Severity__c",
+                            "Category__c",
+                            "Priority",
+                            "OwnerId",
+                        ],
+                    },
+                    {
+                        "api_name": "Account",
+                        "label": "Account",
+                        "fields": ["Tier__c"],
+                    },
+                ]
+            },
+        }
+    )
+
+    action_names = {action["name"] for action in package["action_contracts"]}
+    micro_action_names = {
+        "ReadCaseSubject",
+        "ReadCaseDescription",
+        "ReadCaseSeverity",
+        "ReadCaseCategory",
+        "ReadCasePriority",
+        "UpdateCaseCategory",
+        "UpdateCasePriority",
+        "UpdateCaseOwnerId",
+    }
+
+    assert len(package["action_contracts"]) <= 4
+    assert action_names.isdisjoint(micro_action_names)
+    assert {"LoadCaseTriageContext", "ClassifyCase", "ApplyCaseTriageDecision"} <= action_names
+    assert all(action["common_name"] for action in package["action_contracts"])
+    assert all(action["source_group_id"] for action in package["action_contracts"])
+    assert all(action["validated_bindings"] for action in package["action_contracts"])
+
+    context_action = next(a for a in package["action_contracts"] if a["name"] == "LoadCaseTriageContext")
+    write_action = next(a for a in package["action_contracts"] if a["name"] == "ApplyCaseTriageDecision")
+
+    assert context_action["capability_type"] == "read_context"
+    assert {op["field_api_name"] for op in context_action["operations"]} >= {
+        "Subject",
+        "Description",
+        "Severity__c",
+    }
+    assert write_action["capability_type"] == "writeback"
+    assert {op["field_api_name"] for op in write_action["operations"]} >= {
+        "Category__c",
+        "Priority",
+        "OwnerId",
+    }
+    assert set(write_action["permissions"]) == {"Case:read", "Case:update"}
+    assert package["blockers"] == []

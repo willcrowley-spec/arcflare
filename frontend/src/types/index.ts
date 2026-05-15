@@ -420,6 +420,22 @@ export interface AgentSourceFile {
   content: string
 }
 
+export interface AgentSourceArtifactGroup {
+  id: string
+  kind: string
+  display_name?: string
+  common_name?: string
+  action_name?: string
+  target_type?: string
+  target_name?: string
+  capability_type?: string
+  implementation_status?: string
+  salesforce_objects?: string[]
+  source_topics?: string[]
+  files?: Record<string, string>
+  contract?: Record<string, unknown>
+}
+
 export interface AgentSourceBundle {
   id: string
   org_id: string
@@ -431,6 +447,7 @@ export interface AgentSourceBundle {
     bundle_name?: string
     compiler_version?: string
     files?: AgentSourceFile[]
+    artifact_groups?: AgentSourceArtifactGroup[]
     checks?: Record<string, unknown>
   }
   checks_json: Record<string, unknown>
