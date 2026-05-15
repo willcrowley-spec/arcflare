@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import get_settings
-from app.models.metadata import MetadataObject
+from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataObject
 from app.models.process import BusinessProcess
 from app.models.recommendation import Recommendation
 from app.services.recommendations.arc_score import apply_arc_score
@@ -84,6 +84,20 @@ async def _load_org_context(session, org_id: UUID) -> tuple[dict, list[dict]]:
         .order_by(MetadataObject.api_name)
     )
     objects = list(objects_q.scalars().unique().all())
+    automations_q = await session.execute(
+        select(MetadataAutomation)
+        .where(MetadataAutomation.org_id == org_id)
+        .order_by(MetadataAutomation.api_name)
+    )
+    automations = list(automations_q.scalars().all())
+
+    components_q = await session.execute(
+        select(MetadataComponent)
+        .where(MetadataComponent.org_id == org_id)
+        .order_by(MetadataComponent.api_name)
+    )
+    components = list(components_q.scalars().all())
+
     metadata = {
         "objects": [
             {
@@ -92,7 +106,27 @@ async def _load_org_context(session, org_id: UUID) -> tuple[dict, list[dict]]:
                 "fields": [{"api_name": field.api_name, "label": field.label} for field in (obj.fields or [])],
             }
             for obj in objects
-        ]
+        ],
+        "automations": [
+            {
+                "api_name": automation.api_name,
+                "label": automation.label,
+                "automation_type": automation.automation_type,
+                "related_object": automation.related_object,
+                "status": automation.status,
+            }
+            for automation in automations
+        ],
+        "components": [
+            {
+                "api_name": component.api_name,
+                "label": component.label,
+                "component_category": component.component_category,
+                "related_object": component.related_object,
+                "status": component.status,
+            }
+            for component in components
+        ],
     }
 
     processes_q = await session.execute(
@@ -158,8 +192,11 @@ async def _run(args: argparse.Namespace) -> dict:
                 metadata, process_contexts = org_cache[rec.org_id]
 
                 opportunity = _recommendation_opportunity(rec)
-                existing = opportunity.get("metadata_bindings_v1")
-                if isinstance(existing, dict) and existing.get("schema_version") == "metadata_bindings_v1":
+                existing = opportunity.get("metadata_binding_manifest_v1") or opportunity.get("metadata_bindings_v1")
+                if isinstance(existing, dict) and existing.get("schema_version") in {
+                    "metadata_binding_manifest_v1",
+                    "metadata_bindings_v1",
+                }:
                     totals["already_had_bindings"] += 1
 
                 payload = build_metadata_bindings(
@@ -185,9 +222,11 @@ async def _run(args: argparse.Namespace) -> dict:
                 )
 
                 if args.apply:
+                    opportunity["metadata_binding_manifest_v1"] = payload
                     opportunity["metadata_bindings_v1"] = payload
                     opportunity["binding_model_version"] = payload["binding_model_version"]
                     impact = dict(rec.impact_json or {})
+                    impact["metadata_binding_manifest_v1"] = payload
                     impact["metadata_bindings_v1"] = payload
                     impact["binding_model_version"] = payload["binding_model_version"]
                     rec.agent_opportunity_json = opportunity
