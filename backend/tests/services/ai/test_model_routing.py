@@ -1,4 +1,4 @@
-from app.services.ai.operations import resolve_model
+from app.services.ai.operations import get_reasoning_effort, resolve_model
 
 
 def test_recommendation_operations_default_to_cerebras_hosted_models():
@@ -19,3 +19,7 @@ def test_cerebras_provider_kwargs_are_added_for_litellm_calls():
     assert kwargs["api_base"] == "https://api.cerebras.ai/v1"
     assert kwargs["custom_llm_provider"] == "cerebras"
     assert kwargs["extra_headers"]["X-Cerebras-3rd-Party-Integration"] == "litellm"
+
+
+def test_cross_domain_recommendation_synthesis_uses_low_cerebras_reasoning():
+    assert get_reasoning_effort("agent_opportunity_cross_domain") == "low"

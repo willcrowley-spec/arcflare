@@ -103,7 +103,7 @@ async def synthesize_cross_domain(
     try:
         result = llm_call(
             prompt=prompt,
-            max_tokens=8192,
+            max_tokens=16000,
             tier="strong",
             operation="agent_opportunity_cross_domain",
         )

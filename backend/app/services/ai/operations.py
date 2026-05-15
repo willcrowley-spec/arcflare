@@ -201,7 +201,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
-        "reasoning_effort": "high",
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "Cross-Domain Agent Synthesis",
         "group": "synthesis",
