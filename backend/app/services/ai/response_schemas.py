@@ -502,6 +502,7 @@ _V2_TOUCHPOINT = {
         "name": {"type": "string"},
         "type": {"type": "string", "enum": ["object", "automation", "component", "integration"]},
         "operation": {"type": "string", "enum": ["read", "write", "create", "trigger"]},
+        "fields": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": _EVIDENCE_REF_ARRAY,
     },
     "required": ["name", "type"],
@@ -630,7 +631,7 @@ DISCOVERY_V2_EXTRACTION_SCHEMA: dict = {
                 "required": [
                     "name", "description", "evidence_refs", "confidence",
                     "actors", "trigger_conditions", "system_touchpoints",
-                    "value_classification", "automation_potential",
+                    "value_classification", "automation_potential", "children",
                 ],
                 "additionalProperties": False,
             },

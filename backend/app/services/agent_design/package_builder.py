@@ -229,6 +229,15 @@ def _field_refs_from_text(value: str) -> list[tuple[str, str]]:
     return refs
 
 
+def _object_label(api_name: str) -> str:
+    cleaned = re.sub(r"__(c|mdt|e|b)$", "", _text(api_name), flags=re.IGNORECASE)
+    return cleaned.replace("_", " ")
+
+
+def _object_identifier(api_name: str, *, fallback: str = "Record") -> str:
+    return safe_identifier(_object_label(api_name), fallback=fallback)
+
+
 def _missing_field_evidence(
     raw_topics: list[dict],
     field_bindings: list[dict],
@@ -263,7 +272,7 @@ def _domain_stem(agent_name: str, raw_topics: list[dict], primary_object: str) -
             ],
         ]
     ).lower()
-    object_name = safe_identifier(primary_object, fallback="Record").removesuffix("C")
+    object_name = _object_identifier(primary_object, fallback="Record")
     if "triage" in text_blob:
         return f"{object_name}Triage"
     if "handoff" in text_blob:
@@ -431,7 +440,7 @@ def _planned_action_contracts(
     dependency_bindings = _dependency_rows(validated)
     target_objects = _object_names_from_bindings(validated, mapped_refs)
     primary_object = _primary_object(mapped_refs, validated)
-    object_label = primary_object.removesuffix("__c")
+    object_label = _object_label(primary_object)
     stem = _domain_stem(agent_name, raw_topics, primary_object)
     source_process_rows = _source_processes(opportunity)
     all_topic_names = [_text(topic.get("topic_name"), "Agent Topic") for topic in raw_topics]
@@ -527,7 +536,7 @@ def _planned_action_contracts(
         read_objects = _object_names_for_action(read_bindings or validated[:1], target_objects)
         action_contracts.append(
             _action_contract(
-                name=f"Classify{safe_identifier(primary_object, fallback='Record')}",
+                name=f"Classify{_object_identifier(primary_object, fallback='Record')}",
                 common_name=f"Classify {object_label}",
                 purpose=(
                     f"Evaluates {object_label} context and returns a bounded classification, priority, "

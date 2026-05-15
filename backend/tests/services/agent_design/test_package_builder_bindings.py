@@ -479,6 +479,63 @@ def test_read_only_contracts_do_not_inherit_create_permission_from_triggers():
     assert "Case:create" not in evaluate_action["permissions"]
 
 
+def test_custom_object_suffixes_do_not_leak_into_apex_action_names():
+    package = build_design_package_from_context(
+        {
+            "recommendation": {
+                "id": "rec-errorlog",
+                "title": "Error Triage Slack Agent",
+                "automation_type": "agentic",
+                "agent_opportunity": {
+                    "agent_name": "Error Triage Slack Agent",
+                    "agent_type": "headless",
+                    "description": "Classifies ErrorLog records and routes alerts.",
+                    "topics": [
+                        {
+                            "topic_name": "Error Classification",
+                            "description": "Classify ErrorLog severity.",
+                            "reasoning_type": "agentic",
+                            "actions_needed": ["Read ErrorLog__c record", "Classify error"],
+                        }
+                    ],
+                    "metadata_binding_manifest_v1": {
+                        "schema_version": "metadata_binding_manifest_v1",
+                        "binding_model_version": "metadata_binding_manifest_v1",
+                        "bindings": [
+                            {
+                                "ref_type": "object",
+                                "api_name": "ErrorLog__c",
+                                "object_api_name": "ErrorLog__c",
+                                "operation": "read",
+                                "source": "process_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-error"],
+                            }
+                        ],
+                        "advisory_bindings": [],
+                        "unresolved_bindings": [],
+                        "quality_gates": {
+                            "agent_ready": True,
+                            "missing_evidence": [],
+                            "unresolved_external_dependencies": [],
+                        },
+                    },
+                },
+            },
+            "salesforce_metadata": {"objects": [{"api_name": "ErrorLog__c", "label": "Error Log"}]},
+        }
+    )
+
+    action_names = {action["name"] for action in package["action_contracts"]}
+    target_names = {action["target_name"] for action in package["action_contracts"]}
+
+    assert "LoadErrorLogTriageContext" in action_names
+    assert "ClassifyErrorLog" in action_names
+    assert all("__c" not in name for name in action_names)
+    assert all("__c" not in name for name in target_names)
+
+
 def test_action_contracts_expose_field_bindings_quality_and_apex_mode():
     package = build_design_package_from_context(
         {

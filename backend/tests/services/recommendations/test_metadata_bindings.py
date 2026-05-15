@@ -159,6 +159,46 @@ def test_process_touchpoint_name_type_object_shape_creates_validated_object_bind
     assert payload["unresolved_bindings"] == []
 
 
+def test_touchpoint_normalizes_implicit_suffix_and_uses_readable_raw_value():
+    payload = build_metadata_bindings(
+        {"replaces": [{"process_id": "proc-1", "step_ids": []}], "data_requirements": []},
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Skill validation",
+                "system_touchpoints": [
+                    {
+                        "name": "User_Skill__c (implicit)",
+                        "type": "object",
+                        "fields": ["Name"],
+                        "operation": "read",
+                    }
+                ],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata={
+            "objects": [
+                {
+                    "api_name": "User_Skill__c",
+                    "label": "User Skill",
+                    "fields": [{"api_name": "Name", "label": "User Skill Name"}],
+                }
+            ]
+        },
+    )
+
+    assert {
+        (binding["ref_type"], binding["api_name"], binding.get("field_api_name"))
+        for binding in payload["bindings"]
+    } == {
+        ("object", "User_Skill__c", None),
+        ("field", "User_Skill__c.Name", "Name"),
+    }
+    assert payload["bindings"][0]["raw_value"] == "User_Skill__c"
+    assert payload["unresolved_bindings"] == []
+
+
 def test_typed_automation_touchpoints_create_validated_flow_bindings():
     payload = build_metadata_bindings(
         {

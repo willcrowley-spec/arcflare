@@ -35,6 +35,12 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _clean_api_name(value: Any) -> str:
+    raw = _text(value)
+    raw = raw.split("(", 1)[0].strip()
+    return raw
+
+
 def _lower_set(values: Iterable[str]) -> set[str]:
     return {v.lower() for v in values if v}
 
@@ -121,7 +127,7 @@ def _touchpoint_kind(touchpoint: Any) -> str:
 
 def _touchpoint_name(touchpoint: Any) -> str:
     if isinstance(touchpoint, Mapping):
-        return _text(
+        return _clean_api_name(
             touchpoint.get("name")
             or touchpoint.get("api_name")
             or touchpoint.get("automation_name")
@@ -151,16 +157,16 @@ def _touchpoint_object_and_fields(touchpoint: Any) -> tuple[str, list[str], str,
         return raw, [], "read", raw
 
     if isinstance(touchpoint, Mapping):
-        raw = _text(touchpoint.get("raw")) or _text(touchpoint)
+        name = _touchpoint_name(touchpoint)
         touchpoint_type = _text(touchpoint.get("type")).lower()
-        obj = _text(
+        obj = _clean_api_name(
             touchpoint.get("object_api_name")
             or touchpoint.get("object")
             or touchpoint.get("sobject")
             or touchpoint.get("api_name")
         )
         if not obj and touchpoint_type in {"object", "sobject", "metadata_object"}:
-            obj = _text(touchpoint.get("name"))
+            obj = name
         field_values: list[str] = []
         for key in ("field_api_name", "field"):
             value = _text(touchpoint.get(key))
@@ -171,6 +177,7 @@ def _touchpoint_object_and_fields(touchpoint: Any) -> tuple[str, list[str], str,
             if field:
                 field_values.append(field)
         operation = _text(touchpoint.get("operation")) or "read"
+        raw = _text(touchpoint.get("raw")) or name or obj
         return obj, sorted(dict.fromkeys(field_values)), operation, raw
 
     raw = _text(touchpoint)

@@ -439,9 +439,9 @@ function ScopePanel({ run }: { run: AgentGenerationRun }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white px-4 py-3">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-xl font-bold text-navy-900">{value}</div>
+      <div className="mt-1 min-w-0 break-words text-base font-bold leading-snug text-navy-900 xl:text-lg">{value}</div>
     </div>
   )
 }

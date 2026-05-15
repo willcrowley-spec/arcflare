@@ -567,7 +567,9 @@ The output of this extraction will be used to recommend which business processes
 5. For automation_potential, consider: Is the step fully rule-based with structured data? (high) Does it require human judgment on unstructured data? (low) Is there partial automation already via flows/triggers? (medium — cite the existing automation)
 6. If you cannot find evidence for a claim, do NOT include it. Absence is better than fabrication.
 7. Set needs_review=true for anything with confidence < 0.6.
-8. Value classification: VA = directly produces customer-facing value, BVA = business-necessary but internal, NVA = waste/rework/manual workaround."""
+8. Value classification: VA = directly produces customer-facing value, BVA = business-necessary but internal, NVA = waste/rework/manual workaround.
+9. Field evidence is mandatory when evidence exposes fields. For object touchpoints, populate system_touchpoints[].fields with exact Object.Field API evidence. If no field evidence exists, use fields=[] and keep needs_review=true.
+10. Process children are mandatory. If a process is genuinely atomic and has no lower-level decomposition, emit one child step representing the atomic work and cite the same evidence."""
 
 _DISCOVERY_V2_EXTRACTION_PROTOCOL = """Return a JSON object with "processes" array and optional "intra_domain_handoffs" array.
 
@@ -576,6 +578,8 @@ REQUIRED for every process and child step:
 - actors: at least one, with specific name and type (user/integration/system)
 - trigger_conditions: at least one, with description citing evidence
 - system_touchpoints: at least one, with specific object/automation name and operation
+- children: at least one child step for every process; if the process is genuinely atomic, include one child step with the same or more specific name
+- system_touchpoints.fields: exact field API names for object touchpoints when evidence exposes Object.Field data; otherwise []
 - value_classification: VA, BVA, or NVA
 - automation_potential: high, medium, low, or none — with reasoning implicit in the context
 - complexity_score: low, medium, or high
