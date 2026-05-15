@@ -95,6 +95,7 @@ def _build_agent_recommendation(
     salesforce_metadata: dict | None = None,
 ) -> Recommendation:
     opp = dict(opp or {})
+    opp = normalize_opportunity_replacements(opp, process_contexts or []) or opp
     metadata_bindings = build_metadata_bindings(
         opp,
         process_contexts=process_contexts or [],
@@ -246,6 +247,119 @@ async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession)
             for component in components
         ],
     }
+
+
+def _normalize_name(value: object) -> str:
+    return " ".join(
+        "".join(ch.lower() if ch.isalnum() else " " for ch in str(value or "")).split()
+    )
+
+
+def _context_lookup(
+    process_contexts: list[dict] | None,
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, list[dict]]]:
+    process_by_id: dict[str, dict] = {}
+    process_by_name: dict[str, dict] = {}
+    step_by_id: dict[str, dict] = {}
+    steps_by_process_id: dict[str, list[dict]] = {}
+
+    for process in process_contexts or []:
+        if not isinstance(process, dict):
+            continue
+        process_id = str(process.get("id") or "").strip()
+        if not process_id:
+            continue
+        process_by_id[process_id] = process
+        process_name = _normalize_name(process.get("name"))
+        if process_name and process_name not in process_by_name:
+            process_by_name[process_name] = process
+        steps: list[dict] = []
+        for step in process.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            step_id = str(step.get("id") or "").strip()
+            if not step_id:
+                continue
+            step_row = {**step, "_process_id": process_id}
+            step_by_id[step_id] = step_row
+            steps.append(step_row)
+        steps_by_process_id[process_id] = steps
+    return process_by_id, process_by_name, step_by_id, steps_by_process_id
+
+
+def normalize_opportunity_replacements(
+    opportunity: dict,
+    process_contexts: list[dict] | None,
+) -> dict | None:
+    """Canonicalize replacement process/step ids against the evidence graph.
+
+    LLMs sometimes invent readable ids such as ``lead_ingestion_web``. Those
+    must not be persisted as if they were Arcflare process ids. When we can
+    map by exact process/step name, we rewrite to the real ids; otherwise the
+    opportunity is not evidence-backed enough to persist.
+    """
+    opp = dict(opportunity or {})
+    replacements = [r for r in opp.get("replaces") or [] if isinstance(r, dict)]
+    if not replacements:
+        return None
+
+    process_by_id, process_by_name, step_by_id, steps_by_process_id = _context_lookup(
+        process_contexts
+    )
+    if not process_by_id:
+        return opp
+
+    normalized_replacements: list[dict] = []
+    for replacement in replacements:
+        raw_process_id = str(replacement.get("process_id") or "").strip()
+        process = process_by_id.get(raw_process_id)
+        if process is None:
+            process = process_by_name.get(_normalize_name(replacement.get("process_name")))
+        if process is None:
+            continue
+
+        process_id = str(process.get("id"))
+        process_steps = steps_by_process_id.get(process_id) or []
+        step_ids: list[str] = []
+        for raw_step_id in replacement.get("step_ids") or []:
+            step_id = str(raw_step_id or "").strip()
+            step = step_by_id.get(step_id)
+            if step and step.get("_process_id") == process_id and step_id not in step_ids:
+                step_ids.append(step_id)
+
+        step_name_index = {
+            _normalize_name(step.get("name")): str(step.get("id"))
+            for step in process_steps
+            if step.get("id") and _normalize_name(step.get("name"))
+        }
+        for step_name in replacement.get("steps_replaced") or []:
+            mapped_step_id = step_name_index.get(_normalize_name(step_name))
+            if mapped_step_id and mapped_step_id not in step_ids:
+                step_ids.append(mapped_step_id)
+
+        if not step_ids:
+            if process_steps and (
+                not replacement.get("steps_replaced")
+                or str(replacement.get("replacement_type") or "").lower() == "full"
+            ):
+                step_ids = [str(step["id"]) for step in process_steps if step.get("id")]
+            elif not process_steps:
+                step_ids = [process_id]
+
+        normalized_replacements.append(
+            {
+                **replacement,
+                "process_id": process_id,
+                "process_name": process.get("name") or replacement.get("process_name"),
+                "step_ids": step_ids,
+            }
+        )
+
+    if not normalized_replacements:
+        return None
+
+    opp["replaces"] = normalized_replacements
+    return opp
 
 
 def _opportunity_signature(opp: dict) -> tuple:
@@ -490,11 +604,14 @@ async def run_recommendation_pipeline(
             else:
                 domain_id = None
             for opp in r.get("agent_opportunities", []):
-                if not _is_semantically_valid_opportunity(opp):
+                normalized_opp = normalize_opportunity_replacements(
+                    opp, r.get("_processes_raw", [])
+                )
+                if normalized_opp is None or not _is_semantically_valid_opportunity(normalized_opp):
                     continue
                 opportunity_items.append(
                     {
-                        "opportunity": opp,
+                        "opportunity": normalized_opp,
                         "domain_id": domain_id,
                         "rec_type": "agent_opportunity",
                         "process_contexts": r.get("_processes_raw", []),
@@ -503,11 +620,12 @@ async def run_recommendation_pipeline(
 
         if cross_result is not None:
             for opp in cross_result.get("cross_domain_opportunities") or []:
-                if not _is_semantically_valid_opportunity(opp):
+                normalized_opp = normalize_opportunity_replacements(opp, all_process_contexts)
+                if normalized_opp is None or not _is_semantically_valid_opportunity(normalized_opp):
                     continue
                 opportunity_items.append(
                     {
-                        "opportunity": opp,
+                        "opportunity": normalized_opp,
                         "domain_id": None,
                         "rec_type": "agent_opportunity",
                         "process_contexts": all_process_contexts,

@@ -93,3 +93,63 @@ def test_agent_analyzer_parsing():
 
     result = parse_opportunity_response({"agent_opportunities": [valid_opp]})
     assert len(result["agent_opportunities"]) == 1
+
+
+def test_pipeline_rejects_recommendation_with_fabricated_process_ids():
+    from app.services.recommendations.pipeline import normalize_opportunity_replacements
+
+    opportunity = {
+        "agent_name": "Unified Lead Processing Agent",
+        "replaces": [
+            {
+                "process_id": "lead_ingestion_web",
+                "process_name": "Web Lead Ingestion Automation",
+                "steps_replaced": ["Web Form Capture"],
+                "step_ids": ["SF1"],
+            }
+        ],
+    }
+    process_contexts = [
+        {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "Actual Lead Intake",
+            "steps": [
+                {
+                    "id": "22222222-2222-2222-2222-222222222222",
+                    "name": "Capture inbound lead",
+                }
+            ],
+        }
+    ]
+
+    assert normalize_opportunity_replacements(opportunity, process_contexts) is None
+
+
+def test_pipeline_normalizes_leaf_process_as_step_evidence():
+    from app.services.recommendations.pipeline import normalize_opportunity_replacements
+
+    process_id = "11111111-1111-1111-1111-111111111111"
+    opportunity = {
+        "agent_name": "QuickBooks Invoice Backfill",
+        "replaces": [
+            {
+                "process_id": process_id,
+                "process_name": "QuickBooks Invoice Creation and Synchronization",
+                "steps_replaced": [],
+                "step_ids": [],
+            }
+        ],
+    }
+    process_contexts = [
+        {
+            "id": process_id,
+            "name": "QuickBooks Invoice Creation and Synchronization",
+            "steps": [],
+        }
+    ]
+
+    normalized = normalize_opportunity_replacements(opportunity, process_contexts)
+
+    assert normalized is not None
+    assert normalized["replaces"][0]["process_id"] == process_id
+    assert normalized["replaces"][0]["step_ids"] == [process_id]

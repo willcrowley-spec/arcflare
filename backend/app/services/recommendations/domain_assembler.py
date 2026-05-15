@@ -162,6 +162,23 @@ def _process_to_context(proc: BusinessProcess, children: list[BusinessProcess]) 
             "value_classification": child.value_classification,
             "complexity_score": child.complexity_score,
         })
+    if not children:
+        steps_raw.append({
+            "id": str(proc.id),
+            "name": proc.name,
+            "level": proc.level,
+            "actors": list(proc.actors) if proc.actors else [],
+            "decision_logic": list(proc.decision_logic) if proc.decision_logic else [],
+            "trigger_conditions": list(proc.trigger_conditions) if proc.trigger_conditions else [],
+            "system_touchpoints": list(proc.system_touchpoints) if proc.system_touchpoints else [],
+            "failure_modes": list(proc.failure_modes) if proc.failure_modes else [],
+            "estimated_duration": proc.estimated_duration,
+            "estimated_frequency": proc.estimated_frequency,
+            "sequencing": dict(proc.sequencing) if proc.sequencing else {},
+            "value_classification": proc.value_classification,
+            "complexity_score": proc.complexity_score,
+            "is_leaf_process": True,
+        })
 
     steps_truncated = truncate_steps_for_token_budget(steps_raw)
 

@@ -100,6 +100,42 @@ def test_quickbooks_sync_classifies_as_external_integration_not_agent():
     assert "deterministic" in result["generate_agent_disabled_reason"].lower()
 
 
+def test_quickbooks_backfill_agentic_label_does_not_override_integration_fit():
+    quickbooks = _base_opportunity(
+        agent_name="QuickBooks_Invoice_Backfill_Agent",
+        description=(
+            "Synchronizes QuickBooks invoices to Salesforce, performs historical backfill, "
+            "maps line items, handles errors, and maintains consistency between systems."
+        ),
+        topics=[
+            {
+                "topic_name": "Invoice Creation",
+                "description": "Creates invoice records from incoming QuickBooks invoice events.",
+                "reasoning_type": "deterministic",
+                "actions_needed": ["Create invoice records"],
+            },
+            {
+                "topic_name": "Historical Invoice Backfill",
+                "description": (
+                    "Scans QuickBooks for missing historical invoices and backfills them "
+                    "into Salesforce, handling mapping and duplicate detection."
+                ),
+                "reasoning_type": "agentic",
+                "actions_needed": ["Query QuickBooks", "Create missing records"],
+            },
+        ],
+        integration_points=["QuickBooks REST API", "OAuth token service"],
+        rationale="Consolidates invoice sync and backfill logic.",
+    )
+
+    result = classify_opportunity(quickbooks)
+
+    assert result["candidate_type"] == "external_integration_candidate"
+    assert result["portfolio_category"] == "automation_integration"
+    assert result["agent_readiness_status"] == "not_agent"
+    assert result["generate_agent_allowed"] is False
+
+
 def test_agentic_case_triage_can_be_agent_ready_with_grounded_evidence():
     result = classify_opportunity(_base_opportunity())
 

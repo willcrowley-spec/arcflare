@@ -11,15 +11,13 @@ from app.services.recommendations.financial_assumptions import classify_touchpoi
 
 AGENT_RUNTIME_TERMS = (
     "ambiguous",
+    "ambiguit",
     "ambiguity",
     "classif",
-    "context",
     "exception",
     "judgment",
     "judge",
     "next best",
-    "priorit",
-    "reason",
     "recommend",
     "summar",
     "triage",
@@ -77,6 +75,28 @@ EXTERNAL_SYSTEM_TERMS = (
     "middleware",
     "external",
     "integration",
+)
+
+STRUCTURED_INTEGRATION_TERMS = (
+    "api",
+    "backfill",
+    "dedupe",
+    "duplicate",
+    "etl",
+    "idempotent",
+    "invoice",
+    "line item",
+    "map",
+    "mapping",
+    "middleware",
+    "payment",
+    "payload",
+    "reconcile",
+    "reconciliation",
+    "sync",
+    "synchroniz",
+    "token",
+    "webhook",
 )
 
 
@@ -172,8 +192,6 @@ def _contains_any(blob: str, terms: Sequence[str]) -> bool:
 
 def _runtime_reasoning_required(opportunity: Mapping[str, Any]) -> bool:
     reasoning = _reasoning_types(opportunity)
-    if "agentic" in reasoning:
-        return True
     blob = _text(
         opportunity.get("agent_name"),
         opportunity.get("description"),
@@ -185,11 +203,12 @@ def _runtime_reasoning_required(opportunity: Mapping[str, Any]) -> bool:
             if isinstance(item, Mapping)
         ],
     )
-    if "hybrid" in reasoning and _contains_any(blob, AGENT_RUNTIME_TERMS):
+    has_runtime_language = _contains_any(blob, AGENT_RUNTIME_TERMS)
+    if "agentic" in reasoning and has_runtime_language:
         return True
-    return _contains_any(blob, AGENT_RUNTIME_TERMS) and not _contains_any(
-        blob, DETERMINISTIC_TERMS
-    )
+    if "hybrid" in reasoning and has_runtime_language:
+        return True
+    return has_runtime_language and not _contains_any(blob, DETERMINISTIC_TERMS)
 
 
 def classify_opportunity(
@@ -213,6 +232,9 @@ def classify_opportunity(
     deterministic_only = bool(reasoning) and reasoning <= {"deterministic"}
     external_count = _external_touchpoint_count(opp)
     has_external_language = _contains_any(blob, EXTERNAL_SYSTEM_TERMS)
+    structured_integration = (bool(external_count) or has_external_language) and _contains_any(
+        blob, STRUCTURED_INTEGRATION_TERMS
+    )
     notification_only = _contains_any(blob, NOTIFICATION_TERMS) and not _contains_any(
         blob, AGENT_RUNTIME_TERMS
     )
@@ -239,7 +261,15 @@ def classify_opportunity(
     blockers.extend(missing_evidence)
     blockers = sorted(set(blockers))
 
-    if deterministic_only and (external_count or has_external_language):
+    if structured_integration and not requires_reasoning:
+        candidate_type = "external_integration_candidate"
+        automation_path = "external_integration"
+        recommended_next_action = "define_integration_contract"
+        not_agent_reason = (
+            "This is structured deterministic integration or sync work, so it should be designed "
+            "as an integration contract, Flow, Apex, or middleware job rather than an agent."
+        )
+    elif deterministic_only and (external_count or has_external_language):
         candidate_type = "external_integration_candidate"
         automation_path = "external_integration"
         recommended_next_action = "define_integration_contract"

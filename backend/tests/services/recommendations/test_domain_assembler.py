@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 from app.services.recommendations.domain_assembler import (
+    _process_to_context,
     build_actor_roster,
     build_touchpoint_inventory,
     serialize_domain_context,
@@ -141,3 +142,45 @@ class TestSerializeDomainContext:
         assert len(result["processes"]) == 1
         assert "actor_roster" in result
         assert "system_touchpoints_summary" in result
+
+
+class TestProcessToContext:
+    def test_leaf_process_is_exposed_as_its_own_step(self):
+        class Proc:
+            id = uuid4()
+            name = "QuickBooks Invoice Creation"
+            level = "process"
+            description = "Creates invoice records."
+            narrative = None
+            actors = ["Finance Ops"]
+            trigger_conditions = []
+            decision_logic = []
+            system_touchpoints = [{"name": "QuickBooksInvoice__c", "type": "object"}]
+            failure_modes = []
+            value_classification = "BVA"
+            complexity_score = "medium"
+            automation_potential = "high"
+            estimated_duration = "5min"
+            estimated_frequency = "daily"
+            sequencing = {}
+
+        result = _process_to_context(Proc(), [])
+
+        assert result["steps"] == [
+            {
+                "id": str(Proc.id),
+                "name": "QuickBooks Invoice Creation",
+                "level": "process",
+                "actors": ["Finance Ops"],
+                "decision_logic": [],
+                "trigger_conditions": [],
+                "system_touchpoints": [{"name": "QuickBooksInvoice__c", "type": "object"}],
+                "failure_modes": [],
+                "estimated_duration": "5min",
+                "estimated_frequency": "daily",
+                "sequencing": {},
+                "value_classification": "BVA",
+                "complexity_score": "medium",
+                "is_leaf_process": True,
+            }
+        ]
