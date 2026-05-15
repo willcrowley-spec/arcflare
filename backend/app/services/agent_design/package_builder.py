@@ -163,6 +163,50 @@ def _object_names_from_bindings(bindings: list[dict], mapped_refs: list[dict]) -
     return names
 
 
+def _field_rows(bindings: list[dict]) -> list[dict]:
+    rows = []
+    for binding in bindings:
+        object_api_name = _text(binding.get("object_api_name"))
+        field_api_name = _text(binding.get("field_api_name"))
+        if not object_api_name or not field_api_name:
+            continue
+        row = {"object_api_name": object_api_name, "field_api_name": field_api_name}
+        if row not in rows:
+            rows.append(row)
+    return rows
+
+
+def _dependency_rows(bindings: list[dict]) -> list[dict]:
+    rows = []
+    for binding in bindings:
+        ref_type = _text(binding.get("ref_type"))
+        if ref_type in {"object", "field"}:
+            continue
+        api_name = _text(binding.get("api_name"))
+        if not api_name:
+            continue
+        rows.append(
+            {
+                "ref_type": ref_type,
+                "api_name": api_name,
+                "object_api_name": _text(binding.get("object_api_name")) or None,
+                "operation": _text(binding.get("operation"), "execute"),
+                "source": _text(binding.get("source")),
+                "evidence_ids": _as_list(binding.get("evidence_ids")),
+            }
+        )
+    return rows
+
+
+def _object_names_for_action(bindings: list[dict], fallback_objects: list[str]) -> list[str]:
+    names = []
+    for binding in bindings:
+        name = _text(binding.get("object_api_name") or binding.get("api_name"))
+        if name and name not in names:
+            names.append(name)
+    return names or fallback_objects
+
+
 def _primary_object(mapped_refs: list[dict], bindings: list[dict]) -> str:
     for ref in mapped_refs:
         api_name = _text(ref.get("api_name"))
@@ -236,19 +280,25 @@ def _var_from_field(field_api_name: str) -> str:
     return safe_identifier(cleaned, fallback="value")[:1].lower() + safe_identifier(cleaned, fallback="value")[1:]
 
 
-def _contract_permissions(target_objects: list[str], bindings: list[dict], fallback: str = "read") -> list[str]:
+def _contract_permissions(
+    target_objects: list[str],
+    bindings: list[dict],
+    fallback: str = "read",
+    *,
+    force_operations: list[str] | None = None,
+) -> list[str]:
     permissions: list[str] = []
     for binding in bindings:
         object_api_name = _text(binding.get("object_api_name") or binding.get("api_name"))
         if not object_api_name:
             continue
-        for op in _binding_permission(binding):
+        for op in (force_operations or _binding_permission(binding)):
             permission = f"{object_api_name}:{op}"
             if permission not in permissions:
                 permissions.append(permission)
     if not permissions:
         for object_api_name in target_objects[:1]:
-            for op in _permission_operations(fallback):
+            for op in (force_operations or _permission_operations(fallback)):
                 permissions.append(f"{object_api_name}:{op}")
     return permissions
 
@@ -265,11 +315,34 @@ def _source_processes(opportunity: dict) -> list[dict]:
             {
                 "process_id": process_id,
                 "process_name": _text(replacement.get("process_name")),
-                "step_ids": _as_list(replacement.get("step_ids")),
+                "step_ids": [
+                    _text(step_id)
+                    for step_id in _as_list(replacement.get("step_ids"))
+                    if _text(step_id) and _text(step_id) != process_id
+                ],
                 "replacement_type": _text(replacement.get("replacement_type"), "partial"),
             }
         )
     return processes
+
+
+def _quality_warnings(
+    *,
+    capability_type: str,
+    bindings: list[dict],
+    dependencies: list[dict],
+    missing_field_refs: list[str],
+) -> list[str]:
+    warnings: list[str] = []
+    if bindings and not _field_rows(bindings):
+        warnings.append("object_only_evidence")
+    if dependencies:
+        warnings.append("existing_automation_dependency")
+    if missing_field_refs:
+        warnings.append("field_evidence_missing")
+    if capability_type == "writeback" and not _field_rows(bindings):
+        warnings.append("writeback_requires_field_bindings")
+    return sorted(dict.fromkeys(warnings))
 
 
 def _action_contract(
@@ -285,8 +358,31 @@ def _action_contract(
     source_topics: list[str],
     source_processes: list[dict],
     fallback_operation: str = "read",
+    force_permission_operations: list[str] | None = None,
+    existing_automation_dependencies: list[dict] | None = None,
+    missing_field_refs: list[str] | None = None,
 ) -> dict:
     operations = [_binding_operation_row(binding) for binding in bindings]
+    field_bindings = [binding for binding in bindings if _text(binding.get("ref_type")) == "field"]
+    read_field_bindings = [
+        binding
+        for binding in field_bindings
+        if not set(_binding_permission(binding)).intersection({"create", "update", "delete"})
+    ]
+    write_field_bindings = [
+        binding
+        for binding in field_bindings
+        if set(_binding_permission(binding)).intersection({"create", "update", "delete"})
+    ]
+    dependencies = existing_automation_dependencies or []
+    quality_warnings = _quality_warnings(
+        capability_type=capability_type,
+        bindings=bindings,
+        dependencies=dependencies,
+        missing_field_refs=missing_field_refs or [],
+    )
+    has_required_fields = bool(read_field_bindings if capability_type != "writeback" else write_field_bindings)
+    implementation_status = "bounded_candidate" if has_required_fields else "scaffold"
     return {
         "name": name,
         "common_name": common_name,
@@ -296,16 +392,27 @@ def _action_contract(
         "target_type": "apex",
         "target_name": f"{name}Action",
         "description": purpose,
-        "implementation_status": "scaffold",
+        "implementation_status": implementation_status,
+        "apex_generation_mode": "bounded_apex" if implementation_status == "bounded_candidate" else "scaffold_apex",
+        "quality_warnings": quality_warnings,
         "source_group_id": f"action:{name}",
         "salesforce_objects": target_objects,
         "validated_bindings": bindings,
+        "field_bindings": field_bindings,
+        "read_fields": _field_rows(read_field_bindings),
+        "write_fields": _field_rows(write_field_bindings),
+        "existing_automation_dependencies": dependencies,
         "operations": operations,
         "source_topics": source_topics,
         "source_processes": source_processes,
         "inputs": inputs,
         "outputs": outputs,
-        "permissions": _contract_permissions(target_objects, bindings, fallback_operation),
+        "permissions": _contract_permissions(
+            target_objects,
+            bindings,
+            fallback_operation,
+            force_operations=force_permission_operations,
+        ),
         "error_states": ["MISSING_ACCESS", "RECORD_NOT_FOUND", "REVIEW_REQUIRED"],
         "human_in_loop": True,
     }
@@ -321,6 +428,7 @@ def _planned_action_contracts(
 ) -> tuple[list[dict], list[dict], list[str]]:
     validated = _validated_bindings(binding_payload)
     field_bindings = _field_bindings(validated)
+    dependency_bindings = _dependency_rows(validated)
     target_objects = _object_names_from_bindings(validated, mapped_refs)
     primary_object = _primary_object(mapped_refs, validated)
     object_label = primary_object.removesuffix("__c")
@@ -351,9 +459,27 @@ def _planned_action_contracts(
         for topic in raw_topics
         for action in _as_list(topic.get("actions_needed"))
     ).lower()
+    write_intent = any(
+        token in action_text_blob
+        for token in (
+            "assign",
+            "close",
+            "create",
+            "dispatch",
+            "insert",
+            "notify",
+            "populate",
+            "send",
+            "sync",
+            "synchron",
+            "update",
+            "write",
+        )
+    )
 
     action_contracts: list[dict] = []
     if target_objects or raw_topics:
+        read_objects = _object_names_for_action(read_bindings or validated[:1], target_objects)
         action_contracts.append(
             _action_contract(
                 name=f"Load{stem}Context",
@@ -363,7 +489,7 @@ def _planned_action_contracts(
                     "This replaces separate field-read micro-actions with one reviewable context contract."
                 ),
                 capability_type="read_context",
-                target_objects=target_objects,
+                target_objects=read_objects,
                 bindings=read_bindings or validated[:1],
                 inputs=[
                     {
@@ -391,10 +517,14 @@ def _planned_action_contracts(
                 source_topics=all_topic_names,
                 source_processes=source_process_rows,
                 fallback_operation="read",
+                force_permission_operations=["read"],
+                existing_automation_dependencies=dependency_bindings,
+                missing_field_refs=blockers,
             )
         )
 
     if any(token in action_text_blob for token in ("classif", "nlp", "priorit", "compute", "business rules")):
+        read_objects = _object_names_for_action(read_bindings or validated[:1], target_objects)
         action_contracts.append(
             _action_contract(
                 name=f"Classify{safe_identifier(primary_object, fallback='Record')}",
@@ -404,7 +534,7 @@ def _planned_action_contracts(
                     "or decision recommendation for review."
                 ),
                 capability_type="reasoning",
-                target_objects=target_objects,
+                target_objects=read_objects,
                 bindings=read_bindings or validated[:1],
                 inputs=[
                     {
@@ -451,10 +581,14 @@ def _planned_action_contracts(
                 or all_topic_names,
                 source_processes=source_process_rows,
                 fallback_operation="read",
+                force_permission_operations=["read"],
+                existing_automation_dependencies=dependency_bindings,
+                missing_field_refs=blockers,
             )
         )
 
     if write_bindings:
+        write_objects = _object_names_for_action(write_bindings, target_objects)
         field_inputs = [
             {
                 "name": _var_from_field(_text(binding.get("field_api_name"))),
@@ -475,7 +609,7 @@ def _planned_action_contracts(
                     "separate field-update actions."
                 ),
                 capability_type="writeback",
-                target_objects=target_objects,
+                target_objects=write_objects,
                 bindings=write_bindings,
                 inputs=[
                     {
@@ -516,9 +650,11 @@ def _planned_action_contracts(
                 source_topics=all_topic_names,
                 source_processes=source_process_rows,
                 fallback_operation="update",
+                existing_automation_dependencies=dependency_bindings,
+                missing_field_refs=blockers,
             )
         )
-    elif any(
+    elif write_intent and any(
         set(_as_list(ref.get("operations"))).intersection({"create", "update", "delete"})
         for ref in mapped_refs
     ):
@@ -527,13 +663,14 @@ def _planned_action_contracts(
             for binding in object_bindings
             if set(_binding_permission(binding)).intersection({"create", "update", "delete"})
         ]
+        write_objects = _object_names_for_action(write_refs or validated[:1], target_objects)
         action_contracts.append(
             _action_contract(
                 name=f"Apply{stem}Decision",
                 common_name=f"Apply {object_label} decision",
                 purpose=f"Applies a bounded {agent_name} decision after analyst review.",
                 capability_type="writeback",
-                target_objects=target_objects,
+                target_objects=write_objects,
                 bindings=write_refs or validated[:1],
                 inputs=[
                     {
@@ -555,6 +692,8 @@ def _planned_action_contracts(
                 source_topics=all_topic_names,
                 source_processes=source_process_rows,
                 fallback_operation="update",
+                existing_automation_dependencies=dependency_bindings,
+                missing_field_refs=blockers,
             )
         )
 
@@ -712,6 +851,71 @@ def _metadata_grounding_from_bindings(context: dict, payload: dict) -> dict:
     }
 
 
+def _permission_requirements_from_actions(action_contracts: list[dict], known_objects: set[str]) -> list[dict]:
+    rows: dict[str, dict] = {}
+    for action in action_contracts:
+        for permission in _as_list(action.get("permissions")):
+            raw = _text(permission)
+            if ":" not in raw:
+                continue
+            object_api_name, operation = raw.split(":", 1)
+            if object_api_name not in known_objects:
+                continue
+            row = rows.setdefault(
+                object_api_name,
+                {
+                    "object": object_api_name,
+                    "operations": [],
+                    "fields": [],
+                    "reason": "Required by validated metadata bindings for generated Agentforce action contracts.",
+                },
+            )
+            if operation not in row["operations"]:
+                row["operations"].append(operation)
+        for field in [*_as_list(action.get("read_fields")), *_as_list(action.get("write_fields"))]:
+            if not isinstance(field, dict):
+                continue
+            object_api_name = _text(field.get("object_api_name"))
+            field_api_name = _text(field.get("field_api_name"))
+            if object_api_name not in known_objects or not field_api_name:
+                continue
+            operations = ["read"]
+            if field in _as_list(action.get("write_fields")):
+                operations = ["read", "update"]
+            row = rows.setdefault(
+                object_api_name,
+                {
+                    "object": object_api_name,
+                    "operations": ["read"],
+                    "fields": [],
+                    "reason": "Required by validated metadata bindings for generated Agentforce action contracts.",
+                },
+            )
+            existing = next(
+                (item for item in row["fields"] if item.get("field_api_name") == field_api_name),
+                None,
+            )
+            if existing:
+                existing["operations"] = _merge_operations(existing.get("operations"), operations)
+            else:
+                row["fields"].append(
+                    {
+                        "field_api_name": field_api_name,
+                        "operations": operations,
+                    }
+                )
+    order = ["read", "create", "update", "delete"]
+    out = []
+    for object_api_name in sorted(rows):
+        row = rows[object_api_name]
+        row["operations"] = [op for op in order if op in set(row["operations"])]
+        row["fields"] = sorted(row["fields"], key=lambda item: item["field_api_name"])
+        if not row["fields"]:
+            row.pop("fields", None)
+        out.append(row)
+    return out
+
+
 def _legacy_grounding(raw_data_requirements: list[str], context: dict) -> dict:
     legacy = resolve_object_references(raw_data_requirements, _metadata_objects(context))
     warnings = list(_as_list(legacy.get("warnings")))
@@ -769,19 +973,7 @@ def build_design_package_from_context(context: dict) -> dict:
         binding_payload=binding_payload,
     )
 
-    permission_requirements = sorted(
-        [
-        {
-            "object": obj["api_name"],
-            "operations": _as_list(obj.get("operations")) or ["read"],
-            "reason": "Required by validated metadata bindings for generated Agentforce action contracts.",
-        }
-        for obj in mapped_data_requirements
-        if isinstance(obj, dict) and obj.get("api_name") in known_objects
-        ],
-        key=lambda row: row["object"],
-    )
-    permission_requirements = list({p["object"]: p for p in permission_requirements}.values())
+    permission_requirements = _permission_requirements_from_actions(action_contracts, known_objects)
 
     test_scenarios = []
     for replacement in _as_list(opportunity.get("replaces")):

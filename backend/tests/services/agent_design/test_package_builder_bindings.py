@@ -418,3 +418,247 @@ def test_case_triage_micro_actions_are_grouped_into_cohesive_contracts():
     }
     assert set(write_action["permissions"]) == {"Case:read", "Case:update"}
     assert package["blockers"] == []
+
+
+def test_read_only_contracts_do_not_inherit_create_permission_from_triggers():
+    package = build_design_package_from_context(
+        {
+            "recommendation": {
+                "id": "rec-triggered-case",
+                "title": "Case Development Orchestrator",
+                "automation_type": "agentic",
+                "agent_opportunity": {
+                    "agent_name": "Case Development Orchestrator",
+                    "agent_type": "headless",
+                    "description": "Reviews newly created cases and decides whether development work is needed.",
+                    "topics": [
+                        {
+                            "topic_name": "Issue Triage",
+                            "description": "Evaluate new Cases.",
+                            "reasoning_type": "agentic",
+                            "actions_needed": ["Read Case record", "Classify Case"],
+                        }
+                    ],
+                    "metadata_binding_manifest_v1": {
+                        "schema_version": "metadata_binding_manifest_v1",
+                        "binding_model_version": "metadata_binding_manifest_v1",
+                        "bindings": [
+                            {
+                                "ref_type": "object",
+                                "api_name": "Case",
+                                "object_api_name": "Case",
+                                "operation": "create",
+                                "source": "process_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case"],
+                            }
+                        ],
+                        "advisory_bindings": [],
+                        "unresolved_bindings": [],
+                        "quality_gates": {
+                            "agent_ready": True,
+                            "missing_evidence": [],
+                            "unresolved_external_dependencies": [],
+                        },
+                    },
+                },
+            },
+            "salesforce_metadata": {"objects": [{"api_name": "Case", "label": "Case"}]},
+        }
+    )
+
+    context_action = next(a for a in package["action_contracts"] if a["capability_type"] == "read_context")
+    evaluate_action = next(a for a in package["action_contracts"] if a["capability_type"] == "reasoning")
+
+    assert context_action["target_type"] == "apex"
+    assert evaluate_action["target_type"] == "apex"
+    assert context_action["permissions"] == ["Case:read"]
+    assert evaluate_action["permissions"] == ["Case:read"]
+    assert "Case:create" not in context_action["permissions"]
+    assert "Case:create" not in evaluate_action["permissions"]
+
+
+def test_action_contracts_expose_field_bindings_quality_and_apex_mode():
+    package = build_design_package_from_context(
+        {
+            "recommendation": {
+                "id": "rec-field-quality",
+                "title": "Case Triage Agent",
+                "automation_type": "agentic",
+                "agent_opportunity": {
+                    "agent_name": "Case Triage Agent",
+                    "agent_type": "headless",
+                    "description": "Classifies and updates cases.",
+                    "topics": [
+                        {
+                            "topic_name": "Case Triage",
+                            "description": "Classify and update Case fields.",
+                            "reasoning_type": "agentic",
+                            "actions_needed": ["Read Case.Subject", "Update Case.Priority"],
+                        }
+                    ],
+                    "metadata_binding_manifest_v1": {
+                        "schema_version": "metadata_binding_manifest_v1",
+                        "binding_model_version": "metadata_binding_manifest_v1",
+                        "bindings": [
+                            {
+                                "ref_type": "object",
+                                "api_name": "Case",
+                                "object_api_name": "Case",
+                                "operation": "read",
+                                "source": "process_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case"],
+                            },
+                            {
+                                "ref_type": "field",
+                                "api_name": "Case.Subject",
+                                "object_api_name": "Case",
+                                "field_api_name": "Subject",
+                                "operation": "read",
+                                "source": "step_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case", "step:step-case"],
+                            },
+                            {
+                                "ref_type": "field",
+                                "api_name": "Case.Priority",
+                                "object_api_name": "Case",
+                                "field_api_name": "Priority",
+                                "operation": "update",
+                                "source": "step_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case", "step:step-case"],
+                            },
+                        ],
+                        "advisory_bindings": [],
+                        "unresolved_bindings": [],
+                        "quality_gates": {
+                            "agent_ready": True,
+                            "missing_evidence": [],
+                            "unresolved_external_dependencies": [],
+                        },
+                    },
+                },
+            },
+            "salesforce_metadata": {
+                "objects": [
+                    {
+                        "api_name": "Case",
+                        "label": "Case",
+                        "fields": [
+                            {"api_name": "Subject", "label": "Subject", "field_type": "string"},
+                            {"api_name": "Priority", "label": "Priority", "field_type": "picklist"},
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+
+    context_action = next(a for a in package["action_contracts"] if a["capability_type"] == "read_context")
+    write_action = next(a for a in package["action_contracts"] if a["capability_type"] == "writeback")
+
+    assert context_action["implementation_status"] == "bounded_candidate"
+    assert context_action["apex_generation_mode"] == "bounded_apex"
+    assert context_action["read_fields"] == [{"object_api_name": "Case", "field_api_name": "Subject"}]
+    assert context_action["write_fields"] == []
+    assert context_action["quality_warnings"] == []
+    assert write_action["implementation_status"] == "bounded_candidate"
+    assert write_action["write_fields"] == [{"object_api_name": "Case", "field_api_name": "Priority"}]
+    assert write_action["permissions"] == ["Case:read", "Case:update"]
+
+
+def test_existing_flow_evidence_is_dependency_not_generated_target():
+    package = build_design_package_from_context(
+        {
+            "recommendation": {
+                "id": "rec-flow-evidence",
+                "title": "Case Development Orchestrator",
+                "automation_type": "agentic",
+                "agent_opportunity": {
+                    "agent_name": "Case Development Orchestrator",
+                    "agent_type": "headless",
+                    "description": "Coordinates case and development item automation.",
+                    "topics": [
+                        {
+                            "topic_name": "Development Sync",
+                            "description": "Coordinate with existing automation.",
+                            "reasoning_type": "agentic",
+                            "actions_needed": ["Read Case.Status", "Update Development_Items__c.Phase__c"],
+                        }
+                    ],
+                    "metadata_binding_manifest_v1": {
+                        "schema_version": "metadata_binding_manifest_v1",
+                        "binding_model_version": "metadata_binding_manifest_v1",
+                        "bindings": [
+                            {
+                                "ref_type": "field",
+                                "api_name": "Case.Status",
+                                "object_api_name": "Case",
+                                "field_api_name": "Status",
+                                "operation": "read",
+                                "source": "step_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-case", "step:step-case"],
+                            },
+                            {
+                                "ref_type": "field",
+                                "api_name": "Development_Items__c.Phase__c",
+                                "object_api_name": "Development_Items__c",
+                                "field_api_name": "Phase__c",
+                                "operation": "update",
+                                "source": "step_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-dev", "step:step-dev"],
+                            },
+                            {
+                                "ref_type": "flow",
+                                "api_name": "Development_Item_Case_Status_Handler",
+                                "object_api_name": "Development_Items__c",
+                                "operation": "trigger",
+                                "source": "process_touchpoint",
+                                "confidence": 1.0,
+                                "status": "validated",
+                                "evidence_ids": ["process:proc-dev"],
+                            },
+                        ],
+                        "advisory_bindings": [],
+                        "unresolved_bindings": [],
+                        "quality_gates": {
+                            "agent_ready": True,
+                            "missing_evidence": [],
+                            "unresolved_external_dependencies": [],
+                        },
+                    },
+                },
+            },
+            "salesforce_metadata": {
+                "objects": [
+                    {"api_name": "Case", "label": "Case", "fields": ["Status"]},
+                    {"api_name": "Development_Items__c", "label": "Development Item", "fields": ["Phase__c"]},
+                ],
+                "automations": [
+                    {
+                        "api_name": "Development_Item_Case_Status_Handler",
+                        "type": "flow",
+                        "label": "Development Item Case Status Handler",
+                        "related_object": "Development_Items__c",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert package["metadata_grounding"]["validated_dependencies"][0]["ref_type"] == "flow"
+    assert {action["target_type"] for action in package["action_contracts"]} == {"apex"}
+    assert all(
+        action["existing_automation_dependencies"][0]["api_name"] == "Development_Item_Case_Status_Handler"
+        for action in package["action_contracts"]
+    )

@@ -104,3 +104,97 @@ def test_compile_source_bundle_is_deterministic():
     second = compile_source_bundle(_design_package())
 
     assert first == second
+
+
+def test_compile_source_bundle_emits_bounded_apex_for_field_grounded_actions():
+    design = _design_package()
+    action = design["action_contracts"][0]
+    action.update(
+        {
+            "capability_type": "read_context",
+            "implementation_status": "bounded_candidate",
+            "apex_generation_mode": "bounded_apex",
+            "read_fields": [
+                {"object_api_name": "Case", "field_api_name": "Subject"},
+                {"object_api_name": "Case", "field_api_name": "Priority"},
+            ],
+            "write_fields": [],
+            "field_bindings": [
+                {"object_api_name": "Case", "field_api_name": "Subject", "operation": "read"},
+                {"object_api_name": "Case", "field_api_name": "Priority", "operation": "read"},
+            ],
+            "quality_warnings": [],
+        }
+    )
+    action["inputs"] = [{"name": "caseId", "type": "Id", "required": True, "object": "Case"}]
+    action["outputs"] = [
+        {"name": "contextJson", "type": "String", "required": True},
+        {"name": "status", "type": "String", "required": True},
+    ]
+
+    bundle = compile_source_bundle(design)
+    paths = {f["path"]: f for f in bundle["files"]}
+    apex = paths["force-app/main/default/classes/ClassifyCaseAction.cls"]["content"]
+    permset = paths["force-app/main/default/permissionsets/CaseIntakeAgent.permissionset-meta.xml"]["content"]
+    group = next(g for g in bundle["artifact_groups"] if g["id"] == "action:ClassifyCase")
+
+    assert "SELECT Id, Priority, Subject" in apex
+    assert "FROM Case" in apex
+    assert "WITH USER_MODE" in apex
+    assert "objectType.getDescribe().isAccessible()" in apex
+    assert "try {" in apex
+    assert "catch (Exception ex)" in apex
+    assert "JSON.serialize(record)" in apex
+    assert "<field>Case.Priority</field>" in permset
+    assert "<field>Case.Subject</field>" in permset
+    assert group["quality"]["implementation_status"] == "bounded_candidate"
+    assert group["quality"]["apex_generation_mode"] == "bounded_apex"
+    assert bundle["checks"]["implementation_quality"]["bounded_candidate"] == 1
+
+
+def test_compile_source_bundle_emits_writeback_apex_and_meaningful_test_records():
+    design = _design_package()
+    action = design["action_contracts"][0]
+    action.update(
+        {
+            "name": "ApplyCaseDecision",
+            "target_name": "ApplyCaseDecisionAction",
+            "common_name": "Apply Case decision",
+            "capability_type": "writeback",
+            "implementation_status": "bounded_candidate",
+            "apex_generation_mode": "bounded_apex",
+            "read_fields": [],
+            "write_fields": [{"object_api_name": "Case", "field_api_name": "Priority"}],
+            "field_bindings": [{"object_api_name": "Case", "field_api_name": "Priority", "operation": "update"}],
+            "permissions": ["Case:read", "Case:update"],
+            "quality_warnings": [],
+            "inputs": [
+                {"name": "caseId", "type": "Id", "required": True, "object": "Case"},
+                {"name": "priority", "type": "String", "required": False, "object": "Case", "field": "Priority"},
+            ],
+            "outputs": [{"name": "status", "type": "String", "required": True}],
+        }
+    )
+    design["topics"][0]["actions"] = ["ApplyCaseDecision"]
+    design["permission_requirements"] = [
+        {
+            "object": "Case",
+            "operations": ["read", "update"],
+            "fields": [{"field_api_name": "Priority", "operations": ["read", "update"]}],
+            "reason": "Apply case decisions",
+        }
+    ]
+
+    bundle = compile_source_bundle(design)
+    paths = {f["path"]: f for f in bundle["files"]}
+    apex = paths["force-app/main/default/classes/ApplyCaseDecisionAction.cls"]["content"]
+    test = paths["force-app/main/default/classes/ApplyCaseDecisionActionTest.cls"]["content"]
+
+    assert "Case record = new Case(Id = request.caseId);" in apex
+    assert "record.Priority = request.priority;" in apex
+    assert "objectType.getDescribe().isUpdateable()" in apex
+    assert "Security.stripInaccessible(AccessType.UPDATABLE" in apex
+    assert "Database.update(sanitizedRecords, false, AccessLevel.USER_MODE)" in apex
+    assert "insert caseRecord;" in test
+    assert "request.caseId = caseRecord.Id;" in test
+    assert "System.assertEquals('UPDATED', responses[0].status" in test

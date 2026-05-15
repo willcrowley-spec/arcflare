@@ -118,8 +118,36 @@ function sourceKindLabel(kind: string): string {
 function sourceBadgeClass(status: unknown): string {
   const value = String(status || '').toLowerCase()
   if (value === 'scaffold') return 'bg-amber-50 text-amber-900 ring-amber-200'
-  if (value === 'deployable_candidate' || value === 'bounded_implementation') return 'bg-emerald-50 text-emerald-900 ring-emerald-200'
+  if (value === 'deployable_candidate' || value === 'bounded_candidate' || value === 'bounded_implementation') return 'bg-emerald-50 text-emerald-900 ring-emerald-200'
   return 'bg-slate-100 text-slate-700 ring-slate-200'
+}
+
+function formatQualityWarning(warning: string): string {
+  if (warning === 'object_only_evidence') {
+    return 'Object-only evidence: Arcflare knows the Salesforce object, but not the exact fields this Apex action should read or write.'
+  }
+  if (warning === 'existing_automation_dependency') {
+    return 'Existing automation dependency: review related Flow, Apex, or platform automation before deploying this Apex action.'
+  }
+  if (warning === 'field_evidence_missing') {
+    return 'Field evidence missing: the recommendation mentions field-level behavior that was not grounded in upstream metadata evidence.'
+  }
+  if (warning === 'writeback_requires_field_bindings') {
+    return 'Writeback needs exact field bindings before this can move beyond scaffold quality.'
+  }
+  if (warning === 'smoke_test_only') {
+    return 'Smoke-test only: tests prove the class shape, not the business behavior.'
+  }
+  return sourceKindLabel(warning)
+}
+
+function qualitySummary(group: AgentSourceArtifactGroup): { status: string; mode: string; warnings: string[] } {
+  const contract = group.contract ?? {}
+  return {
+    status: text(group.quality?.implementation_status ?? group.implementation_status ?? contract.implementation_status, 'scaffold'),
+    mode: text(group.quality?.apex_generation_mode ?? group.apex_generation_mode ?? contract.apex_generation_mode, 'scaffold_apex'),
+    warnings: group.quality?.warnings ?? stringArray(contract.quality_warnings),
+  }
 }
 
 function humanizeIdentifier(value: string): string {
@@ -503,7 +531,7 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                 <thead className="text-xs font-bold uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="border-b border-slate-200 py-2 pr-4">Action</th>
-                    <th className="border-b border-slate-200 py-2 pr-4">Target</th>
+                    <th className="border-b border-slate-200 py-2 pr-4">Apex Action</th>
                     <th className="border-b border-slate-200 py-2 pr-4">Objects</th>
                     <th className="border-b border-slate-200 py-2">I/O</th>
                   </tr>
@@ -512,7 +540,7 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                   {actions.map((action) => (
                     <tr key={text(action.name)} className="border-b border-slate-100 last:border-0">
                       <td className="py-3 pr-4 font-medium text-navy-900">{text(action.name)}</td>
-                      <td className="py-3 pr-4 text-slate-600">{text(action.target_type)}</td>
+                      <td className="py-3 pr-4 text-slate-600">{text(action.target_name ?? action.target_type)}</td>
                       <td className="py-3 pr-4 text-slate-600">{(Array.isArray(action.salesforce_objects) ? action.salesforce_objects : []).join(', ') || '-'}</td>
                       <td className="py-3 text-slate-600">
                         {(Array.isArray(action.inputs) ? action.inputs.length : 0)} in / {(Array.isArray(action.outputs) ? action.outputs.length : 0)} out
@@ -726,7 +754,7 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-bold uppercase tracking-wide text-navy-900">Source Artifacts</h2>
-          <p className="mt-1 text-sm text-slate-600">Generated Salesforce DX source from the approved design package.</p>
+          <p className="mt-1 text-sm text-slate-600">Generated Agent Script, Apex invocable actions, tests, permission metadata, and exact manifest entries.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -736,7 +764,7 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
             className="inline-flex items-center gap-1.5 rounded-lg bg-navy-800 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {generate.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
-            Generate source
+            Generate Apex source
           </button>
           <button
             type="button"
@@ -774,6 +802,7 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
             <div className="max-h-[680px] overflow-auto border-b border-slate-200 bg-white lg:border-b-0 lg:border-r">
               {filteredGroups.length > 0 ? filteredGroups.map((group) => {
                 const active = selectedGroup?.id === group.id
+                const quality = qualitySummary(group)
                 return (
                   <button
                     key={group.id}
@@ -798,14 +827,19 @@ function SourcePanel({ run }: { run: AgentGenerationRun }) {
                         {group.target_name ?? sourceKindLabel(group.kind)}
                       </span>
                       <span className="mt-2 flex flex-wrap gap-1.5">
+                        {group.target_type === 'apex' ? (
+                          <span className="rounded-full bg-navy-50 px-2 py-0.5 text-[11px] font-semibold text-navy-800 ring-1 ring-navy-200">
+                            Apex action
+                          </span>
+                        ) : null}
                         {group.capability_type ? (
                           <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold capitalize text-slate-600 ring-1 ring-slate-200">
                             {sourceKindLabel(group.capability_type)}
                           </span>
                         ) : null}
-                        {group.implementation_status ? (
-                          <span className={clsx('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1', sourceBadgeClass(group.implementation_status))}>
-                            {sourceKindLabel(group.implementation_status)}
+                        {quality.status ? (
+                          <span className={clsx('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1', sourceBadgeClass(quality.status))}>
+                            {sourceKindLabel(quality.status)}
                           </span>
                         ) : null}
                         {(group.salesforce_objects ?? []).slice(0, 2).map((objectName) => (
@@ -898,17 +932,40 @@ function ContractSummary({ group }: { group: AgentSourceArtifactGroup }) {
   const outputs = asArray(contract.outputs)
   const operations = asArray(contract.operations)
   const permissions = stringArray(contract.permissions)
+  const fieldBindings = asArray(contract.field_bindings)
+  const readFields = asArray(contract.read_fields)
+  const writeFields = asArray(contract.write_fields)
+  const existingAutomationDependencies = asArray(contract.existing_automation_dependencies)
+  const quality = qualitySummary(group)
   return (
     <div className="space-y-5 p-4">
+      <QualityBanner quality={quality} />
       <div>
         <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Purpose</div>
         <p className="mt-1 max-w-4xl text-sm leading-6 text-navy-900">{text(contract.purpose ?? contract.description, 'Review this action contract before using the generated source.')}</p>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
-        <Metric label="Target" value={text(group.target_name ?? contract.target_name)} />
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Output" value="Apex action" />
+        <Metric label="Apex Class" value={text(group.target_name ?? contract.target_name)} />
         <Metric label="Capability" value={sourceKindLabel(text(group.capability_type ?? contract.capability_type, 'action'))} />
-        <Metric label="Status" value={sourceKindLabel(text(group.implementation_status ?? contract.implementation_status, 'scaffold'))} />
+        <Metric label="Generation Mode" value={sourceKindLabel(quality.mode)} />
       </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <FieldList title="Read fields" rows={readFields} empty="No exact read fields were grounded for this action." />
+        <FieldList title="Write fields" rows={writeFields} empty="No exact write fields were grounded for this action." />
+      </div>
+      {fieldBindings.length > 0 ? (
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Validated Field Bindings</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {fieldBindings.map((binding, index) => (
+              <span key={`${text(binding.object_api_name)}-${text(binding.field_api_name)}-${index}`} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-200">
+                {text(binding.object_api_name)}.{text(binding.field_api_name)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-2">
         <ContractTable title="Inputs" rows={inputs} />
         <ContractTable title="Outputs" rows={outputs} />
@@ -954,6 +1011,84 @@ function ContractSummary({ group }: { group: AgentSourceArtifactGroup }) {
           </div>
         </div>
       ) : null}
+      {existingAutomationDependencies.length > 0 ? (
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Existing Automation Evidence</div>
+          <div className="mt-2 space-y-2">
+            {existingAutomationDependencies.map((dependency, index) => (
+              <div key={`${text(dependency.ref_type)}-${text(dependency.api_name)}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                <div className="font-semibold text-amber-950">{text(dependency.api_name, 'Automation dependency')}</div>
+                <div className="mt-0.5 text-xs text-amber-800">
+                  {sourceKindLabel(text(dependency.ref_type, 'automation'))} evidence for {text(dependency.operation, 'review')} on {text(dependency.object_api_name, 'related metadata')}.
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function QualityBanner({ quality }: { quality: { status: string; mode: string; warnings: string[] } }) {
+  const isScaffold = quality.status === 'scaffold'
+  const hasWarnings = quality.warnings.length > 0
+  return (
+    <div
+      className={clsx(
+        'rounded-lg border px-4 py-3',
+        isScaffold || hasWarnings
+          ? 'border-amber-200 bg-amber-50 text-amber-950'
+          : 'border-emerald-200 bg-emerald-50 text-emerald-950',
+      )}
+    >
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide">Implementation Quality</div>
+          <p className="mt-1 text-sm">
+            {isScaffold
+              ? 'Scaffold quality: this is reviewable Apex structure, but Arcflare does not have enough exact field evidence to call it a bounded implementation candidate.'
+              : 'Bounded candidate: this action has field-level metadata evidence and generated Apex that should be reviewed before any deployment.'}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-1.5">
+          <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1', sourceBadgeClass(quality.status))}>
+            {sourceKindLabel(quality.status)}
+          </span>
+          <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-semibold capitalize ring-1 ring-current/20">
+            {sourceKindLabel(quality.mode)}
+          </span>
+        </div>
+      </div>
+      {hasWarnings ? (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {quality.warnings.map((warning) => (
+            <li key={warning} className="flex gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{formatQualityWarning(warning)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function FieldList({ title, rows, empty }: { title: string; rows: Record<string, unknown>[]; empty: string }) {
+  return (
+    <div>
+      <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</div>
+      {rows.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {rows.map((row, index) => (
+            <span key={`${text(row.object_api_name)}-${text(row.field_api_name)}-${index}`} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-navy-900 ring-1 ring-slate-200">
+              {text(row.object_api_name)}.{text(row.field_api_name)}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-600">{empty}</p>
+      )}
     </div>
   )
 }
@@ -993,9 +1128,32 @@ function ContractTable({ title, rows }: { title: string; rows: Record<string, un
 function DependencySummary({ group }: { group: AgentSourceArtifactGroup }) {
   const contract = group.contract ?? {}
   const sourceProcesses = asArray(contract.source_processes)
+  const existingAutomationDependencies = asArray(contract.existing_automation_dependencies)
+  const quality = qualitySummary(group)
   const files = group.files ?? {}
   return (
     <div className="space-y-5 p-4">
+      <div>
+        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Implementation Quality</div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span className={clsx('rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1', sourceBadgeClass(quality.status))}>
+            {sourceKindLabel(quality.status)}
+          </span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold capitalize text-slate-700 ring-1 ring-slate-200">
+            {sourceKindLabel(quality.mode)}
+          </span>
+        </div>
+        {quality.warnings.length > 0 ? (
+          <ul className="mt-2 space-y-1.5 text-sm text-amber-900">
+            {quality.warnings.map((warning) => (
+              <li key={warning} className="flex gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{formatQualityWarning(warning)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
       <div>
         <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Salesforce Dependencies</div>
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1016,6 +1174,21 @@ function DependencySummary({ group }: { group: AgentSourceArtifactGroup }) {
           )) : <span className="text-sm text-slate-600">No source topics attached.</span>}
         </div>
       </div>
+      {existingAutomationDependencies.length > 0 ? (
+        <div>
+          <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Existing Automation Dependencies</div>
+          <div className="mt-2 space-y-2">
+            {existingAutomationDependencies.map((dependency, index) => (
+              <div key={`${text(dependency.ref_type)}-${text(dependency.api_name)}-${index}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200">
+                <div className="font-semibold text-amber-950">{text(dependency.api_name, 'Automation dependency')}</div>
+                <div className="mt-0.5 text-xs text-amber-800">
+                  Existing {sourceKindLabel(text(dependency.ref_type, 'automation'))} evidence. Review for overlap before deploying generated Apex.
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div>
         <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Linked Processes</div>
         {sourceProcesses.length > 0 ? (

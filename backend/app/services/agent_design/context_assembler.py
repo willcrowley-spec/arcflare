@@ -2,12 +2,94 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataObject
 from app.models.process import BusinessProcess
 from app.models.recommendation import Recommendation
+
+
+def _as_list(value: object) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _uuid_values(values: set[str]) -> set[UUID]:
+    out: set[UUID] = set()
+    for value in values:
+        try:
+            out.add(UUID(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _serialize_process_row(process: BusinessProcess) -> dict:
+    return {
+        "id": str(process.id),
+        "name": process.name,
+        "level": process.level,
+        "description": process.description,
+        "actors": _as_list(process.actors),
+        "system_touchpoints": _as_list(process.system_touchpoints),
+        "decision_logic": _as_list(process.decision_logic),
+        "failure_modes": _as_list(process.failure_modes),
+        "value_classification": process.value_classification,
+        "automation_potential": process.automation_potential,
+        "confidence_score": process.confidence_score,
+        "evidence_sources": _as_list(process.evidence_sources),
+    }
+
+
+def _serialize_process_contexts(
+    processes: list[BusinessProcess],
+    *,
+    process_ids: set[str],
+    step_ids: set[str],
+) -> list[dict]:
+    """Serialize process evidence while removing process ids from step evidence."""
+    effective_step_ids = {sid for sid in step_ids if sid not in process_ids}
+    children_by_parent: dict[str, list[BusinessProcess]] = {}
+    for process in processes:
+        parent_id = str(process.parent_id) if process.parent_id else ""
+        if parent_id:
+            children_by_parent.setdefault(parent_id, []).append(process)
+
+    rows = []
+    for process in processes:
+        process_id = str(process.id)
+        if process_id not in process_ids:
+            continue
+        row = _serialize_process_row(process)
+        child_rows = []
+        for child in children_by_parent.get(process_id, []):
+            child_id = str(child.id)
+            if effective_step_ids and child_id not in effective_step_ids:
+                continue
+            child_rows.append(_serialize_process_row(child))
+        row["steps"] = child_rows
+        rows.append(row)
+    return rows
+
+
+def _serialize_metadata_object(obj: MetadataObject) -> dict:
+    return {
+        "api_name": obj.api_name,
+        "label": obj.label,
+        "classification": obj.classification,
+        "record_count": int(obj.record_count or 0),
+        "field_count": int(obj.field_count or 0),
+        "fields": [
+            {
+                "api_name": field.api_name,
+                "label": field.label,
+                "field_type": field.field_type,
+                "is_required": bool(field.is_required),
+            }
+            for field in (obj.fields or [])
+        ],
+    }
 
 
 async def assemble_generation_context(
@@ -18,17 +100,25 @@ async def assemble_generation_context(
 ) -> dict:
     """Collect the bounded, org-scoped context used by Generate Agent."""
     process_ids = {str(pid) for pid in (recommendation.linked_process_ids or []) if pid}
-    step_ids = {str(sid) for sid in (recommendation.linked_step_ids or []) if sid}
+    step_ids = {
+        str(sid)
+        for sid in (recommendation.linked_step_ids or [])
+        if sid and str(sid) not in process_ids
+    }
     if recommendation.domain_id:
         process_ids.add(str(recommendation.domain_id))
 
     processes: list[BusinessProcess] = []
     if process_ids or step_ids:
-        ids = {UUID(pid) for pid in process_ids | step_ids}
+        process_uuid_ids = _uuid_values(process_ids)
+        ids = process_uuid_ids | _uuid_values(step_ids)
         q = await db.execute(
             select(BusinessProcess).where(
                 BusinessProcess.org_id == org_id,
-                BusinessProcess.id.in_(ids),
+                or_(
+                    BusinessProcess.id.in_(ids),
+                    BusinessProcess.parent_id.in_(process_uuid_ids),
+                ),
             )
         )
         processes = list(q.scalars().all())
@@ -36,9 +126,10 @@ async def assemble_generation_context(
     objects_q = await db.execute(
         select(MetadataObject)
         .where(MetadataObject.org_id == org_id)
+        .options(selectinload(MetadataObject.fields))
         .order_by(MetadataObject.api_name)
     )
-    objects = list(objects_q.scalars().all())
+    objects = list(objects_q.scalars().unique().all())
 
     components_q = await db.execute(
         select(MetadataComponent)
@@ -71,34 +162,13 @@ async def assemble_generation_context(
             "assumptions": recommendation.assumptions_json or {},
             "scenarios": recommendation.scenarios_json or {},
         },
-        "processes": [
-            {
-                "id": str(p.id),
-                "name": p.name,
-                "level": p.level,
-                "description": p.description,
-                "actors": p.actors or [],
-                "system_touchpoints": p.system_touchpoints or [],
-                "decision_logic": p.decision_logic or [],
-                "failure_modes": p.failure_modes or [],
-                "value_classification": p.value_classification,
-                "automation_potential": p.automation_potential,
-                "confidence_score": p.confidence_score,
-                "evidence_sources": p.evidence_sources or [],
-            }
-            for p in processes
-        ],
+        "processes": _serialize_process_contexts(
+            processes,
+            process_ids=process_ids,
+            step_ids=step_ids,
+        ),
         "salesforce_metadata": {
-            "objects": [
-                {
-                    "api_name": o.api_name,
-                    "label": o.label,
-                    "classification": o.classification,
-                    "record_count": int(o.record_count or 0),
-                    "field_count": int(o.field_count or 0),
-                }
-                for o in objects
-            ],
+            "objects": [_serialize_metadata_object(o) for o in objects],
             "components": [
                 {
                     "api_name": c.api_name,

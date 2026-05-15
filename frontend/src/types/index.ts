@@ -420,6 +420,12 @@ export interface AgentSourceFile {
   content: string
 }
 
+export interface AgentSourceArtifactQuality {
+  implementation_status?: string
+  apex_generation_mode?: string
+  warnings?: string[]
+}
+
 export interface AgentSourceArtifactGroup {
   id: string
   kind: string
@@ -430,6 +436,8 @@ export interface AgentSourceArtifactGroup {
   target_name?: string
   capability_type?: string
   implementation_status?: string
+  apex_generation_mode?: string
+  quality?: AgentSourceArtifactQuality
   salesforce_objects?: string[]
   source_topics?: string[]
   files?: Record<string, string>

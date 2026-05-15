@@ -83,6 +83,53 @@ def _primary_object(action: dict) -> str | None:
     return None
 
 
+def _field_rows(action: dict, key: str) -> list[dict]:
+    rows = []
+    for item in action.get(key) or []:
+        if not isinstance(item, dict):
+            continue
+        object_api_name = str(item.get("object_api_name") or "").strip()
+        field_api_name = str(item.get("field_api_name") or "").strip()
+        if object_api_name and field_api_name:
+            rows.append({"object_api_name": object_api_name, "field_api_name": field_api_name})
+    return rows
+
+
+def _field_names_for_object(fields: list[dict], object_api_name: str | None) -> list[str]:
+    if not object_api_name:
+        return []
+    names = {
+        str(field.get("field_api_name") or "").strip()
+        for field in fields
+        if str(field.get("object_api_name") or "").strip() == object_api_name
+    }
+    return sorted(name for name in names if name)
+
+
+def _record_id_input(action: dict, primary_object: str | None) -> dict | None:
+    inputs = [i for i in (action.get("inputs") or []) if isinstance(i, dict)]
+    for item in inputs:
+        if str(item.get("type") or "").lower() == "id" and (
+            not primary_object or str(item.get("object") or "") == primary_object
+        ):
+            return item
+    for item in inputs:
+        if str(item.get("type") or "").lower() == "id":
+            return item
+    return None
+
+
+def _has_output(action: dict, name: str) -> bool:
+    return any(
+        isinstance(item, dict) and _var_name(item.get("name")) == name
+        for item in action.get("outputs") or []
+    )
+
+
+def _response_assignment(var_name: str, value: str) -> str:
+    return f"            response.{var_name} = {value};"
+
+
 def _agent_script(bundle_name: str, design_package: dict) -> str:
     agent = design_package.get("agent") or {}
     lines = [
@@ -123,6 +170,12 @@ def _apex_action(action: dict) -> str:
     inputs = [i for i in (action.get("inputs") or []) if isinstance(i, dict)]
     outputs = [o for o in (action.get("outputs") or []) if isinstance(o, dict)]
     primary_object = _primary_object(action)
+    capability_type = str(action.get("capability_type") or "")
+    bounded = action.get("apex_generation_mode") == "bounded_apex"
+    read_fields = _field_rows(action, "read_fields")
+    write_fields = _field_rows(action, "write_fields")
+    record_id_input = _record_id_input(action, primary_object)
+    record_id_var = _var_name(record_id_input.get("name")) if record_id_input else "recordId"
 
     input_fields = []
     for item in inputs:
@@ -144,7 +197,6 @@ def _apex_action(action: dict) -> str:
 
     security_lines = [
         "        // Security baseline: enforce object access, sharing, and FLS before returning data to Agentforce.",
-        "        // Replace this scaffold with concrete SOQL/DML that uses WITH USER_MODE or AccessLevel.USER_MODE.",
     ]
     if primary_object:
         security_lines.extend(
@@ -166,6 +218,128 @@ def _apex_action(action: dict) -> str:
         )
 
     assignment_body = "\n".join(output_assignments) if output_assignments else "            response.result = 'REVIEW_REQUIRED';"
+    bounded_body = None
+    if bounded and capability_type in {"read_context", "reasoning"} and primary_object and read_fields:
+        field_names = _field_names_for_object(read_fields, primary_object)
+        select_fields = ", ".join(["Id", *[name for name in field_names if name != "Id"]])
+        response_lines = []
+        if _has_output(action, "contextJson"):
+            response_lines.append(_response_assignment("contextJson", "JSON.serialize(record)"))
+        if _has_output(action, "classification"):
+            response_lines.append(_response_assignment("classification", "'REVIEW_REQUIRED'"))
+        if _has_output(action, "priority"):
+            response_lines.append(_response_assignment("priority", "'REVIEW_REQUIRED'"))
+        if _has_output(action, "confidence"):
+            response_lines.append(_response_assignment("confidence", "0"))
+        if _has_output(action, "rationale"):
+            response_lines.append(_response_assignment("rationale", "'Review the generated action contract before deployment.'"))
+        if _has_output(action, "status"):
+            response_lines.append(_response_assignment("status", "'LOADED'"))
+        bounded_body = f"""
+        Schema.SObjectType objectType = Schema.getGlobalDescribe().get('{primary_object}');
+        if (objectType == null || !objectType.getDescribe().isAccessible()) {{
+            List<Response> responses = new List<Response>();
+            for (Request request : requests) {{
+                Response response = new Response();
+{_response_assignment("status", "'MISSING_ACCESS'") if _has_output(action, "status") else ""}
+                responses.add(response);
+            }}
+            return responses;
+        }}
+
+        Set<Id> recordIds = new Set<Id>();
+        for (Request request : requests) {{
+            if (request.{record_id_var} != null) {{
+                recordIds.add(request.{record_id_var});
+            }}
+        }}
+
+        Map<Id, {primary_object}> recordsById = new Map<Id, {primary_object}>([
+            SELECT {select_fields}
+            FROM {primary_object}
+            WHERE Id IN :recordIds
+            WITH USER_MODE
+        ]);
+
+        List<Response> responses = new List<Response>();
+        for (Request request : requests) {{
+            Response response = new Response();
+            try {{
+                {primary_object} record = recordsById.get(request.{record_id_var});
+                if (record == null) {{
+{_response_assignment("status", "'RECORD_NOT_FOUND'") if _has_output(action, "status") else ""}
+                }} else {{
+{indent(chr(10).join(response_lines), "                ")}
+                }}
+            }} catch (Exception ex) {{
+{_response_assignment("status", "'ERROR'") if _has_output(action, "status") else ""}
+{_response_assignment("rationale", "ex.getMessage()") if _has_output(action, "rationale") else ""}
+            }}
+            responses.add(response);
+        }}
+        return responses;"""
+    elif bounded and capability_type == "writeback" and primary_object and write_fields:
+        field_names = _field_names_for_object(write_fields, primary_object)
+        update_lines = []
+        for field_name in field_names:
+            input_name = _var_name(field_name.removesuffix("__c"))
+            if any(_var_name(item.get("name")) == input_name for item in inputs):
+                update_lines.append(
+                    f"                if (request.{input_name} != null) {{\n"
+                    f"                    record.{field_name} = request.{input_name};\n"
+                    "                }"
+                )
+        bounded_body = f"""
+        Schema.SObjectType objectType = Schema.getGlobalDescribe().get('{primary_object}');
+        if (objectType == null || !objectType.getDescribe().isUpdateable()) {{
+            List<Response> responses = new List<Response>();
+            for (Request request : requests) {{
+                Response response = new Response();
+{_response_assignment("status", "'MISSING_ACCESS'") if _has_output(action, "status") else ""}
+                responses.add(response);
+            }}
+            return responses;
+        }}
+
+        List<Response> responses = new List<Response>();
+        List<{primary_object}> pendingUpdates = new List<{primary_object}>();
+        for (Request request : requests) {{
+            Response response = new Response();
+            try {{
+                {primary_object} record = new {primary_object}(Id = request.{record_id_var});
+{chr(10).join(update_lines) if update_lines else "                // No writable fields were included in the request contract."}
+                pendingUpdates.add(record);
+{_response_assignment("status", "'UPDATED'") if _has_output(action, "status") else ""}
+            }} catch (Exception ex) {{
+{_response_assignment("status", "'ERROR'") if _has_output(action, "status") else ""}
+{_response_assignment("rationale", "ex.getMessage()") if _has_output(action, "rationale") else ""}
+            }}
+            responses.add(response);
+        }}
+
+        if (!pendingUpdates.isEmpty()) {{
+            SObjectAccessDecision updateDecision = Security.stripInaccessible(AccessType.UPDATABLE, pendingUpdates);
+            List<SObject> sanitizedRecords = updateDecision.getRecords();
+            Database.SaveResult[] saveResults = Database.update(sanitizedRecords, false, AccessLevel.USER_MODE);
+            for (Integer i = 0; i < saveResults.size(); i++) {{
+                if (!saveResults[i].isSuccess() && i < responses.size()) {{
+                    responses[i].status = saveResults[i].getErrors()[0].getMessage();
+                }}
+            }}
+        }}
+        return responses;"""
+
+    method_body = bounded_body or f"""
+{chr(10).join(security_lines)}
+
+        List<Response> responses = new List<Response>();
+        for (Request request : requests) {{
+            Response response = new Response();
+            // TODO: Implement bounded business logic from the approved Arcflare action contract.
+{assignment_body}
+            responses.add(response);
+        }}
+        return responses;"""
     return f"""public with sharing class {class_name} {{
     public class AgentActionException extends Exception {{}}
 
@@ -179,16 +353,7 @@ def _apex_action(action: dict) -> str:
 
     @InvocableMethod(label='{label}' description='{description.replace("'", "\\'")}')
     public static List<Response> invoke(List<Request> requests) {{
-{chr(10).join(security_lines)}
-
-        List<Response> responses = new List<Response>();
-        for (Request request : requests) {{
-            Response response = new Response();
-            // TODO: Implement bounded business logic from the approved Arcflare action contract.
-{assignment_body}
-            responses.add(response);
-        }}
-        return responses;
+{method_body}
     }}
 }}
 """
@@ -196,6 +361,11 @@ def _apex_action(action: dict) -> str:
 
 def _apex_test(action: dict) -> str:
     class_name = _class_name(action)
+    primary_object = _primary_object(action)
+    bounded = action.get("apex_generation_mode") == "bounded_apex"
+    capability_type = str(action.get("capability_type") or "")
+    record_id_input = _record_id_input(action, primary_object)
+    record_id_var = _var_name(record_id_input.get("name")) if record_id_input else "recordId"
     assignments = []
     for item in [i for i in (action.get("inputs") or []) if isinstance(i, dict)]:
         if item.get("required") is False:
@@ -204,6 +374,36 @@ def _apex_test(action: dict) -> str:
             f"        request.{_var_name(item.get('name'))} = {_apex_literal(item.get('type'), '001000000000001AAA')};"
         )
     assignment_body = "\n".join(assignments)
+    if bounded and primary_object:
+        optional_assignments = []
+        for item in [i for i in (action.get("inputs") or []) if isinstance(i, dict)]:
+            if item.get("required") is not False:
+                continue
+            if item.get("field"):
+                optional_assignments.append(
+                    f"        request.{_var_name(item.get('name'))} = {_apex_literal(item.get('type'), 'High')};"
+                )
+        status_assertion = (
+            "        System.assertEquals('UPDATED', responses[0].status, 'The generated writeback should report an update.');"
+            if capability_type == "writeback"
+            else "        System.assertNotEquals(null, responses[0], 'The generated action should return a reviewable response.');"
+        )
+        return f"""@IsTest
+private class {class_name}Test {{
+    @IsTest
+    static void invokesGeneratedActionWithRecordEvidence() {{
+        {primary_object} caseRecord = new {primary_object}();
+        insert caseRecord;
+
+        {class_name}.Request request = new {class_name}.Request();
+        request.{record_id_var} = caseRecord.Id;
+{chr(10).join(optional_assignments)}
+        List<{class_name}.Response> responses = {class_name}.invoke(new List<{class_name}.Request>{{ request }});
+        System.assertEquals(1, responses.size(), 'The generated action should return one response per request.');
+{status_assertion}
+    }}
+}}
+"""
     return f"""@IsTest
 private class {class_name}Test {{
     @IsTest
@@ -229,6 +429,8 @@ def _apex_meta() -> str:
 
 def _permission_set(bundle_name: str, design_package: dict) -> str:
     object_perms = []
+    field_perms = []
+    seen_fields: set[tuple[str, str]] = set()
     for req in design_package.get("permission_requirements") or []:
         if not isinstance(req, dict):
             continue
@@ -247,12 +449,58 @@ def _permission_set(bundle_name: str, design_package: dict) -> str:
         <viewAllRecords>false</viewAllRecords>
     </objectPermissions>"""
         )
+        for field in req.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            field_api_name = str(field.get("field_api_name") or "").strip()
+            if not field_api_name:
+                continue
+            seen_fields.add((obj, field_api_name))
+            field_ops = {str(op).lower() for op in (field.get("operations") or [])}
+            field_perms.append(
+                f"""    <fieldPermissions>
+        <editable>{str("update" in field_ops or "edit" in field_ops).lower()}</editable>
+        <field>{escape(obj)}.{escape(field_api_name)}</field>
+        <readable>{str("read" in field_ops or not field_ops).lower()}</readable>
+    </fieldPermissions>"""
+            )
+    for action in design_package.get("action_contracts") or []:
+        if not isinstance(action, dict):
+            continue
+        for field in _field_rows(action, "read_fields"):
+            obj = field["object_api_name"]
+            field_api_name = field["field_api_name"]
+            if (obj, field_api_name) in seen_fields:
+                continue
+            seen_fields.add((obj, field_api_name))
+            field_perms.append(
+                f"""    <fieldPermissions>
+        <editable>false</editable>
+        <field>{escape(obj)}.{escape(field_api_name)}</field>
+        <readable>true</readable>
+    </fieldPermissions>"""
+            )
+        for field in _field_rows(action, "write_fields"):
+            obj = field["object_api_name"]
+            field_api_name = field["field_api_name"]
+            if (obj, field_api_name) in seen_fields:
+                continue
+            seen_fields.add((obj, field_api_name))
+            field_perms.append(
+                f"""    <fieldPermissions>
+        <editable>true</editable>
+        <field>{escape(obj)}.{escape(field_api_name)}</field>
+        <readable>true</readable>
+    </fieldPermissions>"""
+            )
     body = "\n".join(object_perms)
+    field_body = "\n".join(field_perms)
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
     <description>Draft permissions for the {escape(bundle_name)} Agentforce artifact bundle. Review before deploy.</description>
     <hasActivationRequired>false</hasActivationRequired>
     <label>{escape(bundle_name)} Agent Permissions</label>
+{field_body}
 {body}
 </PermissionSet>
 """
@@ -344,13 +592,32 @@ def _artifact_groups(bundle_name: str, design_package: dict, files_by_path: dict
                 "target_name": class_name,
                 "capability_type": action.get("capability_type") or "action",
                 "implementation_status": action.get("implementation_status") or "scaffold",
+                "apex_generation_mode": action.get("apex_generation_mode") or "scaffold_apex",
                 "salesforce_objects": action.get("salesforce_objects") or [],
                 "source_topics": action.get("source_topics") or [],
+                "quality": {
+                    "implementation_status": action.get("implementation_status") or "scaffold",
+                    "apex_generation_mode": action.get("apex_generation_mode") or "scaffold_apex",
+                    "warnings": action.get("quality_warnings") or [],
+                },
                 "files": {key: value for key, value in file_map.items() if value in files_by_path},
                 "contract": action,
             }
         )
     return groups
+
+
+def _implementation_quality(actions: list[dict]) -> dict:
+    counts = {"deployable_candidate": 0, "bounded_candidate": 0, "scaffold": 0}
+    warnings: list[str] = []
+    for action in actions:
+        status = str(action.get("implementation_status") or "scaffold")
+        counts[status] = counts.get(status, 0) + 1
+        for warning in action.get("quality_warnings") or []:
+            value = str(warning)
+            if value not in warnings:
+                warnings.append(value)
+    return {**counts, "warnings": warnings}
 
 
 def _scratch_def() -> str:
@@ -495,6 +762,7 @@ def compile_source_bundle(design_package: dict) -> dict:
             "validation": validation,
             "generated_file_count": len(files),
             "artifact_group_count": len(artifact_groups),
+            "implementation_quality": _implementation_quality(actions),
             "requires_review": True,
         },
     }
