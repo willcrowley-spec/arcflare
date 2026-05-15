@@ -292,4 +292,4 @@ def test_pipeline_recommendation_builder_applies_arc_score_fields():
     assert rec.base_score == rec.arc_score_json["score"]
     assert rec.llm_score == 0.72
     assert rec.agent_opportunity_json["metadata_bindings_v1"]["bindings"]
-    assert rec.impact_json["metadata_bindings_v1"]["schema_version"] == "metadata_bindings_v1"
+    assert rec.impact_json["metadata_binding_manifest_v1"]["schema_version"] == "metadata_binding_manifest_v1"

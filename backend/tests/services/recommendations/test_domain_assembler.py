@@ -92,6 +92,32 @@ class TestBuildTouchpointInventory:
         inventory = build_touchpoint_inventory(procs)
         assert "SomeSystem" in inventory
 
+    def test_preserves_typed_touchpoint_evidence(self):
+        procs = [
+            _fake_process(
+                "Proc A",
+                touchpoints=[
+                    {"name": "Opportunity", "type": "object", "operation": "write"},
+                    {
+                        "name": "Opportunity_Before_Create_Update",
+                        "type": "automation",
+                        "operation": "trigger",
+                    },
+                ],
+            )
+        ]
+        inventory = build_touchpoint_inventory(procs)
+
+        assert inventory["typed"] == [
+            {"name": "Opportunity", "type": "object", "operation": "write", "source": "Proc A"},
+            {
+                "name": "Opportunity_Before_Create_Update",
+                "type": "automation",
+                "operation": "trigger",
+                "source": "Proc A",
+            },
+        ]
+
 
 class TestTruncateSteps:
     def test_keeps_all_when_under_limit(self):

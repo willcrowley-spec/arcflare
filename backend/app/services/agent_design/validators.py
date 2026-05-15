@@ -68,6 +68,20 @@ def validate_design_package(
             blockers.append(f"suggested_metadata_binding:{raw}")
         else:
             blockers.append(f"unresolved_metadata_binding:{raw}")
+    for defect in _as_list(grounding.get("upstream_defects")):
+        if not isinstance(defect, dict):
+            continue
+        raw = _norm(defect.get("raw")) or _norm(defect.get("api_name")) or "unknown"
+        blockers.append(f"upstream_metadata_evidence_missing:{raw}")
+    for dependency in _as_list(grounding.get("external_dependencies")):
+        if not isinstance(dependency, dict):
+            continue
+        raw = _norm(dependency.get("raw")) or _norm(dependency.get("api_name")) or "unknown"
+        blockers.append(f"external_dependency_contract_missing:{raw}")
+    for suggestion in _as_list(grounding.get("advisory_suggestions")):
+        if isinstance(suggestion, dict):
+            raw = _norm(suggestion.get("raw")) or _norm(suggestion.get("api_name")) or "unknown"
+            warnings.append(f"advisory_metadata_suggestion_ignored:{raw}")
 
     topics = _as_list(design_package.get("topics"))
     if not topics:

@@ -48,14 +48,20 @@ function stringArray(value: unknown): string[] {
 }
 
 function formatBlocker(blocker: string): string {
+  if (blocker.startsWith('upstream_metadata_evidence_missing:')) {
+    return `Upstream metadata evidence missing: ${blocker.replace('upstream_metadata_evidence_missing:', '')}`
+  }
+  if (blocker.startsWith('external_dependency_contract_missing:')) {
+    return `External dependency contract missing: ${blocker.replace('external_dependency_contract_missing:', '')}`
+  }
   if (blocker.startsWith('unresolved_metadata_binding:')) {
-    return `Unresolved metadata binding: ${blocker.replace('unresolved_metadata_binding:', '')}`
+    return `Upstream metadata evidence missing: ${blocker.replace('unresolved_metadata_binding:', '')}`
   }
   if (blocker.startsWith('suggested_metadata_binding:')) {
-    return `Suggested metadata binding needs validation: ${blocker.replace('suggested_metadata_binding:', '')}`
+    return `Advisory metadata hint ignored: ${blocker.replace('suggested_metadata_binding:', '')}`
   }
   if (blocker.startsWith('legacy_binding_requires_review:')) {
-    return `Legacy mapping suggestion needs review: ${blocker.replace('legacy_binding_requires_review:', '')}`
+    return `Legacy recommendation needs rerun: ${blocker.replace('legacy_binding_requires_review:', '')}`
   }
   if (blocker.startsWith('unresolved_data_requirement:')) {
     return `Unmapped data requirement: ${blocker.replace('unresolved_data_requirement:', '')}`
@@ -237,6 +243,10 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
   const permissions = asArray(pkg.permission_requirements)
   const grounding = pkg.metadata_grounding && typeof pkg.metadata_grounding === 'object' ? pkg.metadata_grounding as Record<string, unknown> : {}
   const mappedObjects = asArray(grounding.mapped)
+  const validatedDependencies = asArray(grounding.validated_dependencies)
+  const upstreamDefects = asArray(grounding.upstream_defects)
+  const externalDependencies = asArray(grounding.external_dependencies)
+  const advisorySuggestions = asArray(grounding.advisory_suggestions)
   const unresolvedObjects = asArray(grounding.unresolved)
   const legacySuggestions = asArray(grounding.legacy_suggestions)
   const groundingWarnings = Array.isArray(grounding.warnings) ? grounding.warnings.map(String) : []
@@ -330,16 +340,16 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
         </div>
 
         <div className="space-y-4">
-          <Panel title="Metadata Grounding">
+          <Panel title="Evidence Check">
             <div className="space-y-3">
               {legacyAdapterUsed ? (
                 <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200">
                   <div className="flex items-start gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
                     <div>
-                      <div className="font-semibold text-amber-950">Legacy mapping mode</div>
+                      <div className="font-semibold text-amber-950">Legacy recommendation mode</div>
                       <div className="mt-0.5 text-xs leading-5 text-amber-800">
-                        These are review suggestions from old recommendation text. They cannot generate Apex or Agentforce dependencies until backed by process touchpoints or a user-approved mapping.
+                        This recommendation predates typed evidence. Rerun the assessment or recommendation pipeline so Arcflare can rebuild validated dependencies from Salesforce metadata.
                       </div>
                     </div>
                   </div>
@@ -351,22 +361,74 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
                     <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-emerald-50 px-3 py-2 text-sm ring-1 ring-emerald-100">
                       <div className="font-semibold text-emerald-950">{text(item.api_name)}</div>
                       <div className="mt-0.5 text-xs text-emerald-800">
-                        Validated {text(item.label)} from {text(item.source, 'metadata evidence')}.
+                        Object access validated from {text(item.source, 'process evidence')}.
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-slate-600">No validated Salesforce metadata bindings are available for source generation.</p>
+                <p className="text-sm text-slate-600">No validated Salesforce dependencies are available for source generation.</p>
               )}
+              {validatedDependencies.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Validated automations</div>
+                  {validatedDependencies.map((item) => (
+                    <div key={`${text(item.ref_type)}-${text(item.api_name)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+                      <div className="font-semibold text-navy-900">{text(item.api_name)}</div>
+                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                        {text(item.ref_type, 'Metadata')} dependency validated from {text(item.source, 'process evidence')}.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {legacySuggestions.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Review suggestions</div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Legacy diagnostics</div>
                   {legacySuggestions.map((item) => (
                     <div key={`${text(item.raw)}-${text(item.api_name)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
                       <div className="font-semibold text-navy-900">{text(item.api_name)}</div>
                       <div className="mt-0.5 text-xs leading-5 text-slate-600">
-                        Suggested from "{text(item.raw)}". Confirm this against process evidence before using it in generated source.
+                        Suggested from old recommendation text. It is diagnostic only; generated source requires a fresh typed assessment.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {upstreamDefects.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Upstream evidence incomplete</div>
+                  {upstreamDefects.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
+                      <div className="font-semibold text-amber-950">{text(item.raw)}</div>
+                      <div className="mt-0.5 text-xs text-amber-800">
+                        Arcflare found this in process evidence, but it was not validated in the Salesforce metadata inventory. Rerun metadata sync or assessment before generating source.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {externalDependencies.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">External contracts needed</div>
+                  {externalDependencies.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-orange-50 px-3 py-2 text-sm ring-1 ring-orange-100">
+                      <div className="font-semibold text-orange-950">{text(item.raw)}</div>
+                      <div className="mt-0.5 text-xs text-orange-800">
+                        External dependencies need an Apex/API contract before Arcflare can generate deployable Agentforce actions.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {advisorySuggestions.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Advisory signals</div>
+                  {advisorySuggestions.map((item) => (
+                    <div key={`${text(item.raw)}-${text(item.ref_type)}`} className="rounded-lg bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+                      <div className="font-semibold text-navy-900">{text(item.raw)}</div>
+                      <div className="mt-0.5 text-xs leading-5 text-slate-600">
+                        This came from AI analysis and is not used as a source dependency unless future process evidence validates it.
                       </div>
                     </div>
                   ))}
@@ -374,12 +436,12 @@ function DesignPanel({ run }: { run: AgentGenerationRun }) {
               ) : null}
               {unresolvedObjects.length > 0 ? (
                 <div className="space-y-2">
-                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Mapping tasks</div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Legacy unresolved evidence</div>
                   {unresolvedObjects.map((item) => (
                     <div key={`${text(item.raw)}-${text(item.reason)}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-100">
                       <div className="font-semibold text-amber-950">{text(item.raw)}</div>
                       <div className="mt-0.5 text-xs text-amber-800">
-                        {text(item.ref_type, 'Metadata')} binding needs evidence before this design can be approved.
+                        This old design package should be regenerated after rerunning the recommendation pipeline.
                       </div>
                     </div>
                   ))}

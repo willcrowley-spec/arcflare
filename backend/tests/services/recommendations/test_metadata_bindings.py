@@ -20,7 +20,16 @@ def _metadata():
                 "label": "Account",
                 "fields": [{"api_name": "Name", "label": "Account Name"}],
             },
-        ]
+        ],
+        "automations": [
+            {
+                "api_name": "Opportunity_Before_Create_Update",
+                "type": "flow",
+                "label": "Opportunity Before Create Update",
+                "related_object": "Opportunity",
+                "status": "Active",
+            }
+        ],
     }
 
 
@@ -71,7 +80,7 @@ def test_process_and_step_touchpoints_create_validated_bindings():
     assert payload["telemetry"]["unresolved_binding_count"] == 0
 
 
-def test_llm_suggestions_are_not_promoted_to_validated_dependencies():
+def test_data_requirements_are_display_copy_not_dependencies():
     payload = build_metadata_bindings(
         {
             "replaces": [],
@@ -84,16 +93,12 @@ def test_llm_suggestions_are_not_promoted_to_validated_dependencies():
         salesforce_metadata=_metadata(),
     )
 
-    suggested = [b for b in payload["bindings"] if b["source"] == "llm_suggestion"]
-    unresolved = payload["unresolved_bindings"]
-
-    assert suggested[0]["object_api_name"] == "Opportunity"
-    assert suggested[0]["status"] == "suggested"
-    assert suggested[0]["confidence"] < 0.7
-    assert unresolved[0]["ref_type"] == "queue"
-    assert unresolved[0]["source"] == "llm_suggestion"
-    assert payload["telemetry"]["bindings_from_llm_suggestions"] == 1
-    assert payload["telemetry"]["unresolved_binding_count"] == 1
+    assert payload["bindings"] == []
+    assert payload["advisory_bindings"] == []
+    assert payload["unresolved_bindings"] == []
+    assert payload["quality_gates"]["agent_ready"] is True
+    assert payload["telemetry"]["bindings_from_llm_suggestions"] == 0
+    assert payload["telemetry"]["unresolved_binding_count"] == 0
 
 
 def test_unknown_process_touchpoints_become_unresolved_not_guessed():
@@ -152,3 +157,94 @@ def test_process_touchpoint_name_type_object_shape_creates_validated_object_bind
     assert payload["bindings"][0]["object_api_name"] == "Opportunity"
     assert payload["bindings"][0]["operation"] == "trigger"
     assert payload["unresolved_bindings"] == []
+
+
+def test_typed_automation_touchpoints_create_validated_flow_bindings():
+    payload = build_metadata_bindings(
+        {
+            "replaces": [{"process_id": "proc-1", "step_ids": []}],
+            "data_requirements": ["Opportunity record with all deal fields"],
+            "suggested_metadata_refs": [
+                {
+                    "ref_type": "flow",
+                    "raw_value": "Opportunity_Before_Create_Update",
+                    "object_api_name": "",
+                    "operation": "execute",
+                }
+            ],
+        },
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Closed-Won handoff",
+                "system_touchpoints": [
+                    {"name": "Opportunity", "type": "object", "operation": "write"},
+                    {
+                        "name": "Opportunity_Before_Create_Update",
+                        "type": "automation",
+                        "operation": "trigger",
+                    },
+                ],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata=_metadata(),
+    )
+
+    assert payload["schema_version"] == "metadata_binding_manifest_v1"
+    assert {
+        (binding["ref_type"], binding["api_name"], binding["status"], binding["source"])
+        for binding in payload["bindings"]
+    } == {
+        ("object", "Opportunity", "validated", "process_touchpoint"),
+        ("flow", "Opportunity_Before_Create_Update", "validated", "process_touchpoint"),
+    }
+    assert payload["unresolved_bindings"] == []
+    assert payload["advisory_bindings"] == []
+    assert payload["quality_gates"]["agent_ready"] is True
+
+
+def test_duplicate_llm_suggestions_and_data_requirements_do_not_create_blockers():
+    payload = build_metadata_bindings(
+        {
+            "replaces": [{"process_id": "proc-1", "step_ids": []}],
+            "data_requirements": [
+                "Opportunity record with all deal fields",
+                "Customer onboarding queue configuration",
+            ],
+            "suggested_metadata_refs": [
+                {
+                    "ref_type": "object",
+                    "raw_value": "Opportunity record",
+                    "object_api_name": "Opportunity",
+                    "operation": "read",
+                },
+                {
+                    "ref_type": "flow",
+                    "raw_value": "Opportunity_Before_Create_Update",
+                    "object_api_name": "",
+                    "operation": "execute",
+                },
+            ],
+        },
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Closed-Won handoff",
+                "system_touchpoints": [
+                    {"name": "Opportunity", "type": "object", "operation": "write"},
+                    {
+                        "name": "Opportunity_Before_Create_Update",
+                        "type": "automation",
+                        "operation": "trigger",
+                    },
+                ],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata=_metadata(),
+    )
+
+    assert payload["unresolved_bindings"] == []
+    assert payload["advisory_bindings"] == []
+    assert payload["quality_gates"]["missing_evidence"] == []

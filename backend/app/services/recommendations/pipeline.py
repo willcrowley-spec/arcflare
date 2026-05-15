@@ -10,7 +10,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.metadata import MetadataObject
+from app.models.metadata import MetadataAutomation, MetadataComponent, MetadataObject
 from app.models.recommendation import Recommendation
 from app.models.recommendation_run import RecommendationRun
 from app.services.recommendations.arc_score import apply_arc_score
@@ -41,6 +41,7 @@ def _build_agent_recommendation(
         process_contexts=process_contexts or [],
         salesforce_metadata=salesforce_metadata or {},
     )
+    opp["metadata_binding_manifest_v1"] = metadata_bindings
     opp["metadata_bindings_v1"] = metadata_bindings
     opp["binding_model_version"] = metadata_bindings["binding_model_version"]
 
@@ -94,6 +95,7 @@ def _build_agent_recommendation(
             "integration_points": opp.get("integration_points", []),
             "risks": opp.get("risks", ""),
             "metadata_bindings_v1": metadata_bindings,
+            "metadata_binding_manifest_v1": metadata_bindings,
             "binding_model_version": metadata_bindings["binding_model_version"],
         },
         architecture_health_json={},
@@ -125,6 +127,18 @@ async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession)
         .order_by(MetadataObject.api_name)
     )
     objects = list(result.scalars().unique().all())
+    automation_result = await db.execute(
+        select(MetadataAutomation)
+        .where(MetadataAutomation.org_id == org_id)
+        .order_by(MetadataAutomation.automation_type, MetadataAutomation.api_name)
+    )
+    automations = list(automation_result.scalars().all())
+    component_result = await db.execute(
+        select(MetadataComponent)
+        .where(MetadataComponent.org_id == org_id)
+        .order_by(MetadataComponent.component_category, MetadataComponent.api_name)
+    )
+    components = list(component_result.scalars().all())
     return {
         "objects": [
             {
@@ -140,7 +154,27 @@ async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession)
                 ],
             }
             for obj in objects
-        ]
+        ],
+        "automations": [
+            {
+                "api_name": automation.api_name,
+                "type": automation.automation_type,
+                "label": automation.label,
+                "related_object": automation.related_object,
+                "status": automation.status,
+            }
+            for automation in automations
+        ],
+        "components": [
+            {
+                "api_name": component.api_name,
+                "category": component.component_category,
+                "label": component.label,
+                "related_object": component.related_object,
+                "status": component.status,
+            }
+            for component in components
+        ],
     }
 
 

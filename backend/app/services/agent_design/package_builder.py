@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import re
 
-from app.services.agent_design.legacy_binding_adapter import (
-    resolve_object_references,
-    score_text_against_resolved_object,
-)
+from app.services.agent_design.legacy_binding_adapter import resolve_object_references
 from app.services.agent_design.source_compiler import safe_identifier
 from app.services.agent_design.validators import validate_design_package
-from app.services.recommendations.metadata_bindings import validated_object_bindings
 
 
 def _as_list(value: object) -> list:
@@ -59,39 +55,6 @@ def _action_contract_name(topic_name: str, action_name: str, seen: set[str]) -> 
     return name
 
 
-def _topic_search_text(topic: dict) -> str:
-    actions = " ".join(_text(action) for action in _as_list(topic.get("actions_needed")))
-    return " ".join(
-        [
-            _text(topic.get("topic_name")),
-            _text(topic.get("description")),
-            actions,
-        ]
-    )
-
-
-def _matching_objects_for_text(value: object, mapped_objects: list[dict]) -> list[dict]:
-    if not mapped_objects:
-        return []
-    if len(mapped_objects) == 1:
-        return mapped_objects
-    search_text = _text(value)
-    ranked = sorted(
-        ((score_text_against_resolved_object(search_text, obj), obj) for obj in mapped_objects),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    direct = [obj for score, obj in ranked if score >= 1.0]
-    if direct:
-        return direct
-    best_score, best = ranked[0]
-    return [best] if best_score >= 0.72 else []
-
-
-def _topic_objects(topic: dict, mapped_objects: list[dict]) -> list[dict]:
-    return _matching_objects_for_text(_topic_search_text(topic), mapped_objects)
-
-
 def _dedupe_objects(objects: list[dict]) -> list[dict]:
     deduped: dict[str, dict] = {}
     for obj in objects:
@@ -110,22 +73,59 @@ def _metadata_labels(context: dict) -> dict[str, str]:
 
 
 def _binding_payload(opportunity: dict) -> dict | None:
-    for key in ("metadata_bindings_v1", "metadata_bindings"):
+    for key in ("metadata_binding_manifest_v1", "metadata_bindings_v1", "metadata_bindings"):
         value = opportunity.get(key)
-        if isinstance(value, dict) and value.get("schema_version") == "metadata_bindings_v1":
+        if isinstance(value, dict) and value.get("schema_version") in {
+            "metadata_binding_manifest_v1",
+            "metadata_bindings_v1",
+        }:
             return value
     return None
 
 
+def _permission_operations(operation: object) -> list[str]:
+    raw = _text(operation).lower()
+    ops: set[str] = set()
+    if raw in {"create", "insert"}:
+        ops.update({"read", "create"})
+    elif raw in {"write", "update", "edit", "upsert"}:
+        ops.update({"read", "update"})
+    elif raw == "delete":
+        ops.update({"read", "delete"})
+    else:
+        ops.add("read")
+    order = ["read", "create", "update", "delete"]
+    return [op for op in order if op in ops]
+
+
+def _merge_operations(existing: list[str] | None, incoming: list[str]) -> list[str]:
+    merged = set(existing or []) | set(incoming)
+    order = ["read", "create", "update", "delete"]
+    return [op for op in order if op in merged]
+
+
 def _object_refs_from_bindings(context: dict, payload: dict) -> list[dict]:
     labels = _metadata_labels(context)
-    refs = []
-    for binding in validated_object_bindings(payload):
+    refs_by_object: dict[str, dict] = {}
+    for binding in _as_list(payload.get("bindings")):
+        if not isinstance(binding, dict):
+            continue
+        if _text(binding.get("status")) != "validated":
+            continue
+        if _text(binding.get("ref_type")) not in {"object", "field"}:
+            continue
         api_name = _text(binding.get("object_api_name") or binding.get("api_name"))
         if not api_name:
             continue
-        refs.append(
-            {
+        current = refs_by_object.get(api_name)
+        operations = _permission_operations(binding.get("operation"))
+        if current:
+            current["operations"] = _merge_operations(current.get("operations"), operations)
+            current["evidence_ids"] = sorted(
+                set(_as_list(current.get("evidence_ids"))) | set(_as_list(binding.get("evidence_ids")))
+            )
+            continue
+        refs_by_object[api_name] = {
                 "api_name": api_name,
                 "label": labels.get(api_name, api_name),
                 "raw": _text(binding.get("raw_value"), api_name),
@@ -133,44 +133,63 @@ def _object_refs_from_bindings(context: dict, payload: dict) -> list[dict]:
                 "status": _text(binding.get("status")),
                 "confidence": binding.get("confidence"),
                 "evidence_ids": _as_list(binding.get("evidence_ids")),
+                "operations": operations,
             }
-        )
-    return _dedupe_objects(refs)
+    return list(refs_by_object.values())
 
 
 def _metadata_grounding_from_bindings(context: dict, payload: dict) -> dict:
     labels = _metadata_labels(context)
     mapped = []
-    unresolved = []
+    validated_dependencies = []
+    upstream_defects = []
+    advisory_suggestions = []
+    external_dependencies = []
     warnings = []
     for binding in _as_list(payload.get("bindings")):
         if not isinstance(binding, dict):
             continue
         status = _text(binding.get("status"))
-        object_api_name = _text(binding.get("object_api_name") or binding.get("api_name"))
-        if status == "validated" and object_api_name:
-            if any(row["api_name"] == object_api_name for row in mapped):
-                continue
-            mapped.append(
+        ref_type = _text(binding.get("ref_type"), "object")
+        object_api_name = _text(binding.get("object_api_name"))
+        api_name = _text(binding.get("api_name") or object_api_name)
+        if status == "validated" and ref_type in {"object", "field"} and object_api_name:
+            if not any(row["api_name"] == object_api_name for row in mapped):
+                mapped.append(
+                    {
+                        "raw": _text(binding.get("raw_value"), object_api_name),
+                        "status": "validated",
+                        "api_name": object_api_name,
+                        "label": labels.get(object_api_name, object_api_name),
+                        "confidence": binding.get("confidence", 1.0),
+                        "source": _text(binding.get("source")),
+                        "evidence_ids": _as_list(binding.get("evidence_ids")),
+                    }
+                )
+            continue
+        if status == "validated":
+            validated_dependencies.append(
                 {
-                    "raw": _text(binding.get("raw_value"), object_api_name),
+                    "raw": _text(binding.get("raw_value"), api_name),
                     "status": "validated",
-                    "api_name": object_api_name,
-                    "label": labels.get(object_api_name, object_api_name),
-                    "confidence": binding.get("confidence", 1.0),
+                    "ref_type": ref_type,
+                    "api_name": api_name,
+                    "object_api_name": object_api_name or None,
+                    "operation": _text(binding.get("operation"), "execute"),
                     "source": _text(binding.get("source")),
                     "evidence_ids": _as_list(binding.get("evidence_ids")),
                 }
             )
-        elif status:
-            unresolved.append(
+            continue
+        if status:
+            advisory_suggestions.append(
                 {
-                    "raw": _text(binding.get("raw_value"), object_api_name or "unknown"),
+                    "raw": _text(binding.get("raw_value"), api_name or "unknown"),
                     "status": status,
-                    "ref_type": _text(binding.get("ref_type"), "object"),
-                    "api_name": object_api_name or binding.get("api_name"),
+                    "ref_type": ref_type,
+                    "api_name": api_name or None,
                     "source": _text(binding.get("source")),
-                    "reason": _text(binding.get("reason"), "requires_review"),
+                    "reason": _text(binding.get("reason"), "requires_process_evidence"),
                     "evidence_ids": _as_list(binding.get("evidence_ids")),
                 }
             )
@@ -178,7 +197,7 @@ def _metadata_grounding_from_bindings(context: dict, payload: dict) -> dict:
     for binding in _as_list(payload.get("unresolved_bindings")):
         if not isinstance(binding, dict):
             continue
-        unresolved.append(
+        upstream_defects.append(
             {
                 "raw": _text(binding.get("raw_value"), binding.get("api_name") or "unknown"),
                 "status": _text(binding.get("status"), "unresolved"),
@@ -192,15 +211,56 @@ def _metadata_grounding_from_bindings(context: dict, payload: dict) -> dict:
             }
         )
 
-    if unresolved:
-        warnings.append("Some metadata bindings need analyst review before source generation.")
+    for binding in _as_list(payload.get("advisory_bindings")):
+        if not isinstance(binding, dict):
+            continue
+        advisory_suggestions.append(
+            {
+                "raw": _text(binding.get("raw_value"), binding.get("api_name") or "unknown"),
+                "status": _text(binding.get("status"), "suggested"),
+                "ref_type": _text(binding.get("ref_type"), "unknown"),
+                "api_name": binding.get("api_name"),
+                "object_api_name": binding.get("object_api_name"),
+                "field_api_name": binding.get("field_api_name"),
+                "source": _text(binding.get("source")),
+                "reason": _text(binding.get("reason"), "requires_process_evidence"),
+                "evidence_ids": _as_list(binding.get("evidence_ids")),
+            }
+        )
+
+    for binding in _as_list(payload.get("unresolved_external_dependencies")):
+        if not isinstance(binding, dict):
+            continue
+        external_dependencies.append(
+            {
+                "raw": _text(binding.get("raw_value"), binding.get("api_name") or "unknown"),
+                "status": _text(binding.get("status"), "unresolved"),
+                "ref_type": _text(binding.get("ref_type"), "external_system"),
+                "api_name": binding.get("api_name"),
+                "source": _text(binding.get("source")),
+                "reason": _text(binding.get("reason"), "external_contract_required"),
+                "evidence_ids": _as_list(binding.get("evidence_ids")),
+            }
+        )
+
+    if upstream_defects:
+        warnings.append("Upstream process evidence is incomplete; rerun assessment before source generation.")
+    if external_dependencies:
+        warnings.append("External dependencies need an integration contract before deployable source generation.")
+    if advisory_suggestions:
+        warnings.append("LLM suggestions are advisory only and are not used as source dependencies.")
 
     return {
         "binding_model_version": payload.get("binding_model_version") or payload.get("schema_version"),
         "mapped": mapped,
-        "unresolved": unresolved,
+        "validated_dependencies": validated_dependencies,
+        "upstream_defects": upstream_defects,
+        "advisory_suggestions": advisory_suggestions,
+        "external_dependencies": external_dependencies,
+        "unresolved": [] if payload.get("schema_version") == "metadata_binding_manifest_v1" else upstream_defects,
         "legacy_suggestions": [],
         "legacy_adapter_used": False,
+        "quality_gates": dict(payload.get("quality_gates") or {}),
         "warnings": warnings,
         "telemetry": dict(payload.get("telemetry") or {}),
     }
@@ -217,8 +277,13 @@ def _legacy_grounding(raw_data_requirements: list[str], context: dict) -> dict:
         "binding_model_version": None,
         "mapped": [],
         "unresolved": _as_list(legacy.get("unresolved")),
+        "validated_dependencies": [],
+        "upstream_defects": [],
+        "advisory_suggestions": [],
+        "external_dependencies": [],
         "legacy_suggestions": _as_list(legacy.get("mapped")),
         "legacy_adapter_used": bool(raw_data_requirements),
+        "quality_gates": {"agent_ready": False if raw_data_requirements else True},
         "warnings": warnings,
         "telemetry": {
             "bindings_from_process_touchpoints": 0,
@@ -258,14 +323,18 @@ def build_design_package_from_context(context: dict) -> dict:
             continue
         topic_name = _text(topic.get("topic_name"), "Agent Topic")
         topic_action_names = []
-        default_refs = _topic_objects(topic, mapped_data_requirements)
         for raw_action in _as_list(topic.get("actions_needed")) or ["Review context"]:
             contract_name = _action_contract_name(topic_name, _text(raw_action), seen_action_names)
-            target_refs = _dedupe_objects(
-                _matching_objects_for_text(f"{topic_name} {raw_action}", mapped_data_requirements) or default_refs
-            )
+            target_refs = _dedupe_objects(mapped_data_requirements)
             target_objects = [_text(ref.get("api_name")) for ref in target_refs if _text(ref.get("api_name"))]
             target_label = ", ".join(_text(ref.get("label"), ref.get("api_name")) for ref in target_refs) or "record"
+            permissions = [
+                f"{obj}:{operation}"
+                for ref in target_refs
+                for obj in [_text(ref.get("api_name"))]
+                if obj
+                for operation in _as_list(ref.get("operations")) or ["read"]
+            ]
             topic_action_names.append(contract_name)
             action_contracts.append(
                 {
@@ -300,9 +369,7 @@ def build_design_package_from_context(context: dict) -> dict:
                             "description": "Human-readable reason for the recommendation.",
                         },
                     ],
-                    "permissions": [
-                        permission for obj in target_objects for permission in (f"{obj}:read", f"{obj}:update")
-                    ],
+                    "permissions": permissions,
                     "error_states": ["MISSING_ACCESS", "RECORD_NOT_FOUND", "REVIEW_REQUIRED"],
                     "human_in_loop": True,
                 }
@@ -317,15 +384,18 @@ def build_design_package_from_context(context: dict) -> dict:
             }
         )
 
-    permission_requirements = [
+    permission_requirements = sorted(
+        [
         {
             "object": obj["api_name"],
-            "operations": ["read", "update"],
+            "operations": _as_list(obj.get("operations")) or ["read"],
             "reason": "Required by validated metadata bindings for generated Agentforce action contracts.",
         }
         for obj in mapped_data_requirements
         if isinstance(obj, dict) and obj.get("api_name") in known_objects
-    ]
+        ],
+        key=lambda row: row["object"],
+    )
     permission_requirements = list({p["object"]: p for p in permission_requirements}.values())
 
     test_scenarios = []

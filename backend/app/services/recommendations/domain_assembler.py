@@ -76,8 +76,38 @@ def build_actor_roster(processes: list[dict]) -> dict[str, list[str]]:
 
 def build_touchpoint_inventory(processes: list[dict]) -> dict[str, list[str]]:
     inventory: dict[str, list[str]] = defaultdict(list)
-    for proc in processes:
-        for tp in _extract_touchpoint_strings(proc.get("system_touchpoints")):
+    typed: list[dict] = []
+
+    def add_touchpoint(touchpoint: object, source: str) -> None:
+        if isinstance(touchpoint, dict):
+            name = str(
+                touchpoint.get("name")
+                or touchpoint.get("object_api_name")
+                or touchpoint.get("object")
+                or touchpoint.get("api_name")
+                or touchpoint.get("automation_name")
+                or ""
+            ).strip()
+            kind = str(touchpoint.get("type") or touchpoint.get("ref_type") or "").strip()
+            operation = str(touchpoint.get("operation") or "read").strip()
+            if name:
+                row = {"name": name, "type": kind or "unknown", "operation": operation, "source": source}
+                if row not in typed:
+                    typed.append(row)
+            if kind.lower() in {"object", "sobject", "metadata_object"} and name:
+                fields = touchpoint.get("fields") if isinstance(touchpoint.get("fields"), list) else []
+                for field in fields:
+                    field_name = str(field.get("api_name") if isinstance(field, dict) else field).strip()
+                    if field_name and field_name not in inventory[name]:
+                        inventory[name].append(field_name)
+                if name not in inventory:
+                    inventory[name] = []
+            elif name and kind.lower() not in {"automation", "flow", "apex", "apex_class", "prompt"}:
+                if name not in inventory:
+                    inventory[name] = []
+            return
+
+        for tp in _extract_touchpoint_strings(touchpoint):
             if "." in tp:
                 obj, field = tp.split(".", 1)
                 if field not in inventory[obj]:
@@ -85,16 +115,19 @@ def build_touchpoint_inventory(processes: list[dict]) -> dict[str, list[str]]:
             else:
                 if tp not in inventory:
                     inventory[tp] = []
+
+    for proc in processes:
+        proc_name = str(proc.get("name") or "?")
+        for tp in proc.get("system_touchpoints") or []:
+            add_touchpoint(tp, proc_name)
         for step in proc.get("steps", []):
-            for tp in _extract_touchpoint_strings(step.get("system_touchpoints")):
-                if "." in tp:
-                    obj, field = tp.split(".", 1)
-                    if field not in inventory[obj]:
-                        inventory[obj].append(field)
-                else:
-                    if tp not in inventory:
-                        inventory[tp] = []
-    return dict(inventory)
+            step_name = str(step.get("name") or "?")
+            for tp in step.get("system_touchpoints") or []:
+                add_touchpoint(tp, f"{proc_name} > {step_name}")
+    result = dict(inventory)
+    if typed:
+        result["typed"] = typed
+    return result
 
 
 def truncate_steps_for_token_budget(

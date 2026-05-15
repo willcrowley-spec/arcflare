@@ -90,7 +90,7 @@ def _as_list(value: Any) -> list:
 
 
 def _binding_counts(opportunity: Mapping[str, Any]) -> dict[str, int]:
-    payload = opportunity.get("metadata_bindings_v1")
+    payload = opportunity.get("metadata_binding_manifest_v1") or opportunity.get("metadata_bindings_v1")
     if not isinstance(payload, Mapping):
         return {
             "has_payload": 0,
@@ -100,12 +100,19 @@ def _binding_counts(opportunity: Mapping[str, Any]) -> dict[str, int]:
             "legacy": 0,
         }
     bindings = [b for b in _as_list(payload.get("bindings")) if isinstance(b, Mapping)]
+    advisory = [b for b in _as_list(payload.get("advisory_bindings")) if isinstance(b, Mapping)]
     unresolved = [b for b in _as_list(payload.get("unresolved_bindings")) if isinstance(b, Mapping)]
+    external = [
+        b
+        for b in _as_list(payload.get("unresolved_external_dependencies"))
+        if isinstance(b, Mapping)
+    ]
     return {
         "has_payload": 1,
         "validated": sum(1 for b in bindings if b.get("status") == "validated"),
-        "suggested": sum(1 for b in bindings if b.get("status") == "suggested"),
-        "unresolved": len(unresolved),
+        "suggested": sum(1 for b in advisory if b.get("status") == "suggested")
+        + sum(1 for b in bindings if b.get("status") == "suggested"),
+        "unresolved": len(unresolved) + len(external),
         "legacy": int((payload.get("telemetry") or {}).get("bindings_from_legacy_adapter") or 0),
     }
 
