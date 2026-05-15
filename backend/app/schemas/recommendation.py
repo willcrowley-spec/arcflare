@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class RecommendationResponse(BaseModel):
@@ -39,6 +39,64 @@ class RecommendationResponse(BaseModel):
     recommendation_run_id: UUID | None
     generated_at: datetime
     implemented_at: datetime | None
+
+    def _readiness_payload(self) -> dict:
+        from app.services.recommendations.readiness import classify_opportunity
+
+        arc_decision = (self.arc_score_json or {}).get("decision")
+        return classify_opportunity(
+            self.agent_opportunity_json or {},
+            linked_process_ids=self.linked_process_ids or [],
+            linked_step_ids=self.linked_step_ids or [],
+            arc_decision=arc_decision,
+        )
+
+    @computed_field
+    @property
+    def portfolio_category(self) -> str:
+        return str(self._readiness_payload().get("portfolio_category") or "needs_evidence")
+
+    @computed_field
+    @property
+    def automation_path(self) -> str:
+        return str(self._readiness_payload().get("automation_path") or "needs_evidence")
+
+    @computed_field
+    @property
+    def agent_readiness_status(self) -> str:
+        return str(self._readiness_payload().get("agent_readiness_status") or "needs_evidence")
+
+    @computed_field
+    @property
+    def generate_agent_allowed(self) -> bool:
+        return bool(self._readiness_payload().get("generate_agent_allowed"))
+
+    @computed_field
+    @property
+    def generate_agent_disabled_reason(self) -> str | None:
+        value = self._readiness_payload().get("generate_agent_disabled_reason")
+        return str(value) if value else None
+
+    @computed_field
+    @property
+    def generate_agent_blockers(self) -> list[str]:
+        value = self._readiness_payload().get("generate_agent_blockers")
+        return list(value) if isinstance(value, list) else []
+
+    @computed_field
+    @property
+    def recommended_next_action(self) -> str:
+        return str(self._readiness_payload().get("recommended_next_action") or "collect_evidence")
+
+    @computed_field
+    @property
+    def agent_fit_summary(self) -> str:
+        return str(self._readiness_payload().get("agent_fit_summary") or "")
+
+    @computed_field
+    @property
+    def evidence_summary(self) -> str:
+        return str(self._readiness_payload().get("evidence_summary") or "")
 
 
 class RecommendationSummary(BaseModel):

@@ -12,6 +12,7 @@ from typing import Any, Mapping, Sequence
 
 from app.models.recommendation import Recommendation
 from app.services.recommendations.financial_assumptions import classify_touchpoints
+from app.services.recommendations.readiness import classify_opportunity
 
 FEATURE_VERSION = "arc_features_v1"
 SCORING_METHOD = "rules_v1"
@@ -339,7 +340,7 @@ def _score_suitability(opportunity: Mapping[str, Any]) -> tuple[dict, list[str]]
     score -= min(0.35, 0.07 * len(risk_hits))
     score -= min(0.45, 0.15 * len(unsuitable_hits))
     if deterministic_only:
-        score -= 0.12
+        score = min(score - 0.25, 0.45)
         gaps.append("flow_may_be_better_than_agent")
     if full_replacement_count and risk_hits:
         score -= 0.10
@@ -406,7 +407,7 @@ def _score_evidence(
         + (0.25 if has_steps else 0.0)
         + (0.20 if replace_process_ids else 0.0)
         + (0.15 if has_financials else 0.0)
-        + (0.10 * llm_confidence)
+        + (0.03 * llm_confidence)
     )
     return (
         _dimension(
@@ -418,6 +419,7 @@ def _score_evidence(
                 "replace_step_count": len(replace_step_ids),
                 "has_financial_signals": has_financials,
                 "llm_confidence": llm_confidence,
+                "llm_confidence_weight": 0.03,
             },
             "Evidence quality from resolved processes, steps, replacement mapping, and financial signals.",
         ),
@@ -541,6 +543,12 @@ def compute_arc_score(
     )
     all_blockers = sorted(set(blockers))
     decision = _decision(score, all_gaps, all_blockers, dimensions)
+    agent_suitability = classify_opportunity(
+        opp,
+        linked_process_ids=linked_process_ids,
+        linked_step_ids=linked_step_ids,
+        arc_decision=decision,
+    )
     llm_confidence = _clamp01(_number(opp.get("confidence")))
     rounded = _round_score(score)
 
@@ -550,6 +558,8 @@ def compute_arc_score(
         "score": rounded,
         "score_pct": round(rounded * 100),
         "decision": decision,
+        "decision_band": decision,
+        "agent_suitability": agent_suitability,
         "feature_version": FEATURE_VERSION,
         "scoring_method": SCORING_METHOD,
         "model_version": None,

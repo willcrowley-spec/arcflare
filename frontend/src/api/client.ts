@@ -289,6 +289,7 @@ export const api = {
       page_size?: number
       status?: string
       category?: string
+      portfolio_category?: string
       recommendation_type?: string
       automation_type?: string
       sort?: string

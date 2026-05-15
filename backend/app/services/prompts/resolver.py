@@ -20,6 +20,24 @@ from app.services.prompts.registry import (
 _CACHE_TTL_SEC = 60.0
 _merged_cache: dict[tuple[str, str], tuple[float, list["_MergedBlock"]]] = {}
 
+REQUIRED_FAIL_CLOSED_BLOCKS: dict[str, set[str]] = {
+    "agent_opportunity": {"instructions", "protocol"},
+    "agent_opportunity_cross_domain": {"instructions", "protocol"},
+    "agent_design_package": {"instructions", "protocol"},
+}
+
+
+class MissingPromptBlockError(RuntimeError):
+    """Raised when a required LLM operation has missing or empty prompt blocks."""
+
+    def __init__(self, operation_id: str, missing_blocks: list[str]) -> None:
+        self.operation_id = operation_id
+        self.missing_blocks = missing_blocks
+        super().__init__(
+            f"Prompt operation '{operation_id}' is missing required block(s): "
+            + ", ".join(missing_blocks)
+        )
+
 
 @dataclass(frozen=True)
 class _MergedBlock:
@@ -132,9 +150,11 @@ async def resolve_prompt_blocks(
     key = _cache_key(operation_id, org_id)
     cached = _cache_get(key)
     if cached is not None:
+        _raise_if_required_blocks_missing(operation_id, cached)
         return {b.block_type: b.content for b in cached}
 
     merged = await _load_merged_blocks(db, operation_id, org_id)
+    _raise_if_required_blocks_missing(operation_id, merged)
     _cache_set(key, merged)
     return {b.block_type: b.content for b in merged}
 
@@ -148,7 +168,10 @@ async def resolve_prompt_blocks_with_meta(
     cached = _cache_get(key)
     if cached is None:
         cached = await _load_merged_blocks(db, operation_id, org_id)
+        _raise_if_required_blocks_missing(operation_id, cached)
         _cache_set(key, cached)
+    else:
+        _raise_if_required_blocks_missing(operation_id, cached)
 
     out: list[dict] = []
     for row in cached:
@@ -169,6 +192,23 @@ async def resolve_prompt_blocks_with_meta(
             }
         )
     return out
+
+
+def _raise_if_required_blocks_missing(
+    operation_id: str,
+    merged: list[_MergedBlock],
+) -> None:
+    required = REQUIRED_FAIL_CLOSED_BLOCKS.get(operation_id)
+    if not required:
+        return
+    by_type = {row.block_type: row for row in merged}
+    missing = sorted(
+        block_type
+        for block_type in required
+        if block_type not in by_type or not by_type[block_type].content.strip()
+    )
+    if missing:
+        raise MissingPromptBlockError(operation_id, missing)
 
 
 def validate_required_vars(content: str, operation_id: str, block_type: str) -> list[str]:

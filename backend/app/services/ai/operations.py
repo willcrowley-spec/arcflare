@@ -12,7 +12,7 @@ TierName = Literal["lite", "fast", "strong"]
 
 MODEL_OPERATIONS: dict[str, dict] = {
     "metadata_enrichment": {
-        "model": "gemini/gemini-3.1-flash-lite-preview",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -21,7 +21,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates business-context descriptions for platform objects with few fields/records. Uses the cheapest model for bulk throughput.",
     },
     "community_summarization": {
-        "model": "gemini/gemini-3.1-flash-lite-preview",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -30,7 +30,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates level-appropriate summaries for metadata and document community clusters (GraphRAG retrieval anchors).",
     },
     "contextual_retrieval": {
-        "model": "gemini/gemini-3.1-flash-lite-preview",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "lite",
         "thinking_budget": 0,
         "output_format": "text",
@@ -39,25 +39,27 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Generates 1-2 sentence context prefixes for document chunks before embedding (Anthropic Contextual Retrieval technique).",
     },
     "entity_extraction": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "Entity Extraction",
         "group": "metadata",
         "description": "Extracts business entities (processes, metrics, teams) from document text when rule-based NER falls short.",
     },
     "process_matching": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "Process Matching",
         "group": "analysis",
         "description": "Disambiguates fuzzy entity matches across documents and data sources.",
     },
     "discovery_domain": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -67,7 +69,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 1: identifies top-level business domains from metadata, documents, and org context.",
     },
     "discovery_structure": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -76,7 +78,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 2: decomposes each domain into hierarchical processes, subprocesses, and steps.",
     },
     "discovery_enrichment": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -85,7 +87,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 3: enriches each step with triggers, decision logic, system touchpoints, and value classification.",
     },
     "discovery_flow": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -94,7 +96,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 4: identifies step-to-step flows, parallel groups, and within-domain handoffs.",
     },
     "discovery_enrichment_flow": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -103,7 +105,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 3+4 merged: enriches steps with operational details and identifies flows/handoffs in a single pass.",
     },
     "discovery_validation": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -113,7 +115,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 5: critiques the complete process map against raw evidence and patches issues.",
     },
     "discovery_synthesis": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
         "output_format": "json",
@@ -122,7 +124,7 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Stage 6: identifies cross-domain handoffs, gaps, and orphaned artifacts across the full process landscape.",
     },
     "discovery_v2_domain": {
-        "model": "anthropic/claude-opus-4-6",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
         "reasoning_effort": "high",
@@ -141,18 +143,20 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "v2 Phase 3: extracts full process hierarchy per domain from an evidence bundle with mandatory citation.",
     },
     "discovery_v2_verification": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "v2 Evidence Verification",
         "group": "discovery",
         "description": "v2 Phase 4: independently verifies each evidence citation against source data.",
     },
     "discovery_v2_synthesis": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "medium",
         "output_format": "json",
         "label": "v2 Cross-Domain Synthesis",
         "group": "discovery",
@@ -218,27 +222,30 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "description": "Produces contract-first Agentforce design packages from accepted recommendations, process evidence, and Salesforce metadata.",
     },
     "org_research_extraction": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "Org Research Extraction",
         "group": "research",
         "description": "Extracts categorized business facts from crawled web pages and search results about an organization.",
     },
     "org_research_verification": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "low",
         "output_format": "json",
         "label": "Org Research Verification",
         "group": "research",
         "description": "Verifies extracted claims against source text. Binary classification: CONFIRMED, WEAK, or UNSUPPORTED.",
     },
     "org_research_synthesis": {
-        "model": "gemini/gemini-2.5-flash",
+        "model": "cerebras/gpt-oss-120b",
         "tier": "fast",
         "thinking_budget": 0,
+        "reasoning_effort": "medium",
         "output_format": "json",
         "label": "Org Research Synthesis",
         "group": "research",
@@ -342,6 +349,16 @@ def get_output_format(operation: str | None) -> str:
     return "text"
 
 
+def get_structured_mode(operation: str | None) -> str:
+    """Return structured output mode: 'json_schema' or 'json_object'."""
+    if not operation:
+        return "json_schema"
+    entry = MODEL_OPERATIONS.get(operation)
+    if entry:
+        return str(entry.get("structured_mode", "json_schema"))
+    return "json_schema"
+
+
 def resolve_model(
     operation: str | None = None,
     model_config: dict | None = None,
@@ -363,5 +380,5 @@ def resolve_model(
         if op.get("model"):
             return op["model"]
 
-    defaults = PROVIDER_DEFAULTS.get("anthropic", {})
-    return defaults.get(tier, "anthropic/claude-sonnet-4-6")
+    defaults = PROVIDER_DEFAULTS.get("cerebras", {})
+    return defaults.get(tier, "cerebras/gpt-oss-120b")

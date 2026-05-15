@@ -11,6 +11,7 @@ LiteLLM handles provider dispatch based on the model prefix:
     - gemini/*           -> Google Gemini API
     - openai/*           -> OpenAI API
 """
+import asyncio
 import json
 import logging
 import time
@@ -41,6 +42,44 @@ def _provider_kwargs_for_model(model: str) -> dict:
             "extra_headers": {"X-Cerebras-3rd-Party-Integration": "litellm"},
         }
     return {}
+
+
+def _preflight_rate_limit(model: str, estimated_input_tokens: int) -> None:
+    """Apply provider token preflight for synchronous LLM calls when possible."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        from app.services.ai.rate_limiter import get_limiter
+
+        asyncio.run(get_limiter(model).acquire(max(1, estimated_input_tokens)))
+        return
+    logger.debug("rate_limiter_preflight_skipped_running_loop model=%s", model)
+
+
+CEREBRAS_STRICT_SCHEMA_CHAR_LIMIT = 5000
+
+
+def _validate_provider_capabilities(
+    *,
+    model: str,
+    operation: str | None,
+    schema: dict | None,
+    output_format: str,
+    structured_mode: str = "json_schema",
+) -> None:
+    """Fail clearly when an operation asks a provider for an unsupported mode."""
+    if not model.startswith("cerebras/"):
+        return
+    if output_format != "json" or not schema or structured_mode != "json_schema":
+        return
+    schema_chars = len(json.dumps(schema, separators=(",", ":")))
+    if schema_chars > CEREBRAS_STRICT_SCHEMA_CHAR_LIMIT:
+        raise ValueError(
+            "Cerebras strict structured output schema is too large for "
+            f"operation '{operation or 'llm_call'}' "
+            f"({schema_chars} chars > {CEREBRAS_STRICT_SCHEMA_CHAR_LIMIT}). "
+            "Compact the schema or route this operation through explicit JSON mode."
+        )
 
 
 @dataclass
@@ -156,7 +195,12 @@ def llm_call(
     model = _resolve_model(tier, operation=operation, model_config=model_config)
 
     from app.core.observability import langfuse_generation
-    from app.services.ai.operations import get_output_format, get_reasoning_effort, get_thinking_budget
+    from app.services.ai.operations import (
+        get_output_format,
+        get_reasoning_effort,
+        get_structured_mode,
+        get_thinking_budget,
+    )
     from app.services.ai.response_schemas import get_response_schema
 
     if isinstance(prompt, PromptParts):
@@ -185,7 +229,15 @@ def llm_call(
 
         schema = get_response_schema(operation)
         output_fmt = get_output_format(operation)
-        if schema:
+        structured_mode = get_structured_mode(operation)
+        _validate_provider_capabilities(
+            model=model,
+            operation=operation,
+            schema=schema,
+            output_format=output_fmt,
+            structured_mode=structured_mode,
+        )
+        if schema and structured_mode == "json_schema":
             kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
@@ -203,7 +255,11 @@ def llm_call(
             kwargs["reasoning_effort"] = reasoning_effort
             # json_schema (constrained decoding) works with reasoning_effort;
             # json_object is a silent no-op on Claude 4.6 — remove it
-            if kwargs.get("response_format", {}).get("type") == "json_object":
+            is_claude_json_object = (
+                model.startswith("anthropic/")
+                and kwargs.get("response_format", {}).get("type") == "json_object"
+            )
+            if is_claude_json_object:
                 kwargs.pop("response_format", None)
         elif thinking_budget > 0:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
@@ -212,6 +268,7 @@ def llm_call(
         elif model.startswith("gemini/"):
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 0}
 
+        _preflight_rate_limit(model, max(1, len(flat_prompt) // 4))
         response = litellm.completion(**kwargs)
 
         raw_content = response.choices[0].message.content

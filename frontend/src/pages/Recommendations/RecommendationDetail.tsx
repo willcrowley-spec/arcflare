@@ -400,6 +400,15 @@ const AUTOMATION_COPY: Record<Recommendation['automation_type'], { label: string
   },
 }
 
+const NEXT_ACTION_LABEL: Record<string, string> = {
+  collect_evidence: 'Collect Evidence',
+  define_integration_contract: 'Define Integration Contract',
+  design_flow: 'Design Flow',
+  design_metric_view: 'Design Metric View',
+  document_policy_fix: 'Document Policy Fix',
+  generate_agent: 'Generate Agent',
+}
+
 const EFFORT_PILL: Record<string, string> = {
   low: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
   medium: 'bg-amber-50 text-amber-800 ring-amber-200',
@@ -497,6 +506,15 @@ function OverviewTab({ rec, analysis }: { rec: Recommendation; analysis: Record<
 
   return (
     <div className="space-y-6">
+      {rec.agent_fit_summary ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h4 className="text-xs font-bold uppercase tracking-wide text-navy-900">Portfolio fit</h4>
+          <p className="mt-2 text-sm leading-relaxed text-slate-700">{rec.agent_fit_summary}</p>
+          {rec.evidence_summary ? (
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">{rec.evidence_summary}</p>
+          ) : null}
+        </section>
+      ) : null}
       <LlmAnalysisBlock label="Current state" text={analysis.current_state as string} />
       <LlmAnalysisBlock label="Automation approach" text={analysis.automation_approach as string} />
       <LlmAnalysisBlock label="Executive summary" text={analysis.executive_summary as string} />
@@ -648,14 +666,12 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
   const generateAgent = useGenerateAgentFromRecommendation()
   const [tab, setTab] = useState<DetailTab>('overview')
   const auto = AUTOMATION_COPY[rec.automation_type] ?? AUTOMATION_COPY.hybrid
-  const arcDecision =
-    rec.arc_score_json && typeof rec.arc_score_json.decision === 'string' ? rec.arc_score_json.decision : null
-  const canGenerateAgent = rec.status === 'accepted' || arcDecision === 'ready'
+  const canGenerateAgent = Boolean(rec.generate_agent_allowed)
+  const nextActionLabel = NEXT_ACTION_LABEL[rec.recommended_next_action] ?? 'Collect Evidence'
   const generateAgentLabel =
     generateAgent.isPending ? 'Generating...'
     : canGenerateAgent ? 'Generate Agent'
-    : rec.status === 'active' ? 'Accept to generate'
-    : 'Generate Agent'
+    : nextActionLabel
 
   const analysis: Record<string, unknown> = useMemo(() => {
     return rec.impact_json && typeof rec.impact_json === 'object' ? rec.impact_json : {}
@@ -748,9 +764,10 @@ export function RecommendationDetail({ rec, onStatusChange }: RecommendationDeta
       </div>
 
       {!canGenerateAgent ? (
-        <div className="border-b border-slate-200/80 bg-orange-50/60 px-6 py-2.5 text-xs text-orange-950">
-          <span className="font-semibold">Agent Builder is gated.</span>{' '}
-          Accept this recommendation first, or use an ARC-ready recommendation, then Generate Agent opens the design package workflow.
+        <div className="border-b border-slate-200/80 bg-slate-100 px-6 py-2.5 text-xs text-slate-700">
+          <span className="font-semibold text-navy-900">Agent Builder is not the next step.</span>{' '}
+          {rec.generate_agent_disabled_reason || rec.agent_fit_summary || 'Arcflare needs stronger upstream evidence before an agent design can be generated.'}
+          {rec.evidence_summary ? <span className="ml-1 text-slate-500">Evidence: {rec.evidence_summary}.</span> : null}
         </div>
       ) : null}
 

@@ -18,7 +18,7 @@ DISCOVERY_DOMAIN_SCHEMA: dict = {
                 "properties": {
                     "name": {"type": "string"},
                     "description": {"type": "string"},
-                    "confidence": {"type": "number"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "associated_objects": {"type": "array", "items": {"type": "string"}},
                     "associated_automations": {"type": "array", "items": {"type": "string"}},
                     "associated_documents": {"type": "array", "items": {"type": "string"}},
@@ -838,7 +838,7 @@ AGENT_OPPORTUNITY_SCHEMA: dict = {
                         "type": "string",
                         "enum": ["low", "medium", "high"],
                     },
-                    "confidence": {"type": "number"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "rationale": {"type": "string"},
                     "risks": {"type": "string"},
                     "financial_signals": {
@@ -928,7 +928,10 @@ AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
                             "properties": {
                                 "topic_name": {"type": "string"},
                                 "description": {"type": "string"},
-                                "reasoning_type": {"type": "string"},
+                                "reasoning_type": {
+                                    "type": "string",
+                                    "enum": ["deterministic", "agentic", "hybrid"],
+                                },
                                 "actions_needed": {
                                     "type": "array",
                                     "items": {"type": "string"},
@@ -1013,7 +1016,7 @@ AGENT_OPPORTUNITY_CROSS_DOMAIN_SCHEMA: dict = {
                         "type": "string",
                         "enum": ["low", "medium", "high"],
                     },
-                    "confidence": {"type": "number"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "rationale": {"type": "string"},
                     "risks": {"type": "string"},
                     "financial_signals": {

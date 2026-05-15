@@ -154,6 +154,18 @@ BLOCK_REGISTRY: dict[str, list[dict]] = {
         {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
         {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
     ],
+    "agent_opportunity": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
+    "agent_opportunity_cross_domain": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
+    "agent_design_package": [
+        {"type": "instructions", "label": "Instructions", "editable": True, "required_vars": [], "order": 1},
+        {"type": "protocol", "label": "Protocol", "editable": False, "required_vars": [], "order": 2},
+    ],
     "chat_recommendation": [
         {"type": "identity", "label": "Identity", "editable": True, "required_vars": ["agent_name"], "order": 1},
         {"type": "rules", "label": "Rules", "editable": True, "required_vars": [], "order": 2},

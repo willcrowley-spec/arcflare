@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 from collections import defaultdict
 from uuid import UUID
 
@@ -260,7 +259,7 @@ async def assemble_domain_contexts(
                 all_ids_in_domain.add(c.id)
             proc_contexts.append(_process_to_context(proc, children))
 
-        random.shuffle(proc_contexts)
+        proc_contexts.sort(key=lambda p: (p.get("name") or "", str(p.get("id") or "")))
 
         domain_proc_ids[domain.id] = all_ids_in_domain
 

@@ -25,6 +25,15 @@ export interface Recommendation {
   enrichment_log: Array<Record<string, unknown>>
   /** API payload may include scoring inputs with embedded `signals`. */
   analysis_inputs_json?: unknown[]
+  portfolio_category: 'agent_candidate' | 'automation_integration' | 'needs_evidence' | 'no_build'
+  automation_path: string
+  agent_readiness_status: 'ready' | 'needs_evidence' | 'not_agent' | 'blocked'
+  generate_agent_allowed: boolean
+  generate_agent_disabled_reason: string | null
+  generate_agent_blockers: string[]
+  recommended_next_action: string
+  agent_fit_summary: string
+  evidence_summary: string
 }
 
 export interface RecommendationCardProps {
@@ -70,6 +79,20 @@ function formatCompactUsd(n: number | null | undefined): string {
 function formatArcScore(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(Number(n))) return '—'
   return String(Math.round(Number(n) * 100))
+}
+
+const PORTFOLIO_LABEL: Record<Recommendation['portfolio_category'], string> = {
+  agent_candidate: 'Agent candidate',
+  automation_integration: 'Automation & integration',
+  needs_evidence: 'Needs evidence',
+  no_build: 'No build',
+}
+
+const READINESS_PILL: Record<Recommendation['agent_readiness_status'], string> = {
+  ready: 'bg-emerald-50 text-emerald-900 ring-emerald-200',
+  needs_evidence: 'bg-amber-50 text-amber-900 ring-amber-200',
+  not_agent: 'bg-slate-100 text-slate-700 ring-slate-200',
+  blocked: 'bg-red-50 text-red-900 ring-red-200',
 }
 
 export function RecommendationCard({
@@ -136,12 +159,20 @@ export function RecommendationCard({
       </div>
 
       <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
-        {(rec.category ?? 'General').replace(/_/g, ' ')}
+        {PORTFOLIO_LABEL[rec.portfolio_category] ?? 'Needs evidence'}
       </p>
 
       <h3 className="mt-2 text-lg font-semibold text-navy-900">{rec.title}</h3>
 
       <div className="mt-3 flex flex-wrap gap-2">
+        <span
+          className={clsx(
+            'rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize ring-1 ring-inset',
+            READINESS_PILL[rec.agent_readiness_status] ?? READINESS_PILL.needs_evidence,
+          )}
+        >
+          {rec.agent_readiness_status.replace(/_/g, ' ')}
+        </span>
         <span
           className={clsx(
             'rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset',
@@ -159,6 +190,10 @@ export function RecommendationCard({
           {rec.automation_type}
         </span>
       </div>
+
+      <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-slate-600">
+        {rec.agent_fit_summary || rec.description}
+      </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-700">
         <span className="font-medium tabular-nums">

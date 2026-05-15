@@ -26,6 +26,7 @@ from app.services.recommendations.recompute import (
     load_recommendation_assumption_context,
     recompute_recommendation,
 )
+from app.services.recommendations.readiness import build_recommendation_readiness
 from app.services.recommendations.reset import reset_recommendation_portfolio
 from app.services.agent_design.workflow import create_generation_run
 from app.api.routes.agent_generations import _latest_generation_response
@@ -186,6 +187,7 @@ async def list_recommendations(
     page_size: int = Query(50, ge=1, le=200),
     status_filter: str | None = Query(None, alias="status"),
     category: str | None = None,
+    portfolio_category: str | None = None,
     recommendation_type: str | None = None,
     automation_type: str | None = None,
     sort: str = Query("-composite_score", description="Field name, prefix - for descending"),
@@ -205,18 +207,27 @@ async def list_recommendations(
     if sort_field not in _SORTABLE:
         sort_desc = True
 
-    total = await db.scalar(select(func.count()).select_from(Recommendation).where(*filters))
-    total = int(total or 0)
-    stmt = (
-        select(Recommendation).where(*filters).offset((page - 1) * page_size).limit(page_size)
-    )
+    stmt = select(Recommendation).where(*filters)
     if sort_desc:
         stmt = stmt.order_by(col.desc().nullslast())
     else:
         stmt = stmt.order_by(col.asc().nullslast())
 
-    q = await db.execute(stmt)
-    rows = q.scalars().all()
+    if portfolio_category:
+        q = await db.execute(stmt)
+        rows = list(q.scalars().all())
+        rows = [
+            row
+            for row in rows
+            if build_recommendation_readiness(row).get("portfolio_category") == portfolio_category
+        ]
+        total = len(rows)
+        rows = rows[(page - 1) * page_size : page * page_size]
+    else:
+        total = await db.scalar(select(func.count()).select_from(Recommendation).where(*filters))
+        total = int(total or 0)
+        q = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+        rows = list(q.scalars().all())
     items = [RecommendationResponse.model_validate(r) for r in rows]
     pages = max((total + page_size - 1) // page_size, 1)
     return PaginatedResponse(items=items, total=total, page=page, page_size=page_size, pages=pages)
@@ -329,11 +340,17 @@ async def generate_agent_from_recommendation(
     if rec is None or rec.org_id != org.id:
         raise HTTPException(status_code=404, detail="Recommendation not found")
 
-    arc_decision = (rec.arc_score_json or {}).get("decision")
-    if rec.status != "accepted" and arc_decision != "ready":
+    readiness = build_recommendation_readiness(rec)
+    if not readiness.get("generate_agent_allowed"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Recommendation must be accepted or ARC-ready before generating an agent.",
+            detail={
+                "message": "This recommendation is not ready for Agent Builder.",
+                "reason": readiness.get("generate_agent_disabled_reason"),
+                "blockers": readiness.get("generate_agent_blockers") or [],
+                "portfolio_category": readiness.get("portfolio_category"),
+                "recommended_next_action": readiness.get("recommended_next_action"),
+            },
         )
 
     try:

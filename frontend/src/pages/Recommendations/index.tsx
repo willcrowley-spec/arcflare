@@ -24,6 +24,7 @@ type StatusTab = 'active' | 'accepted' | 'dismissed' | 'implemented'
 type SortKey = 'score' | 'npv' | 'title'
 type AutomationKey = 'deterministic' | 'agentic' | 'hybrid'
 type RecommendationTypeKey = 'discovered' | 'synthesized'
+type PortfolioKey = 'agent_candidate' | 'automation_integration' | 'needs_evidence'
 
 const PAGE_SIZE = 12
 
@@ -51,6 +52,22 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
   const autoRaw = typeof r.automation_type === 'string' ? r.automation_type.toLowerCase() : 'hybrid'
   const automation_type: Recommendation['automation_type'] =
     autoRaw === 'deterministic' || autoRaw === 'agentic' || autoRaw === 'hybrid' ? autoRaw : 'hybrid'
+  const portfolioRaw = typeof r.portfolio_category === 'string' ? r.portfolio_category : 'needs_evidence'
+  const portfolio_category: Recommendation['portfolio_category'] =
+    portfolioRaw === 'agent_candidate' ||
+    portfolioRaw === 'automation_integration' ||
+    portfolioRaw === 'needs_evidence' ||
+    portfolioRaw === 'no_build'
+      ? portfolioRaw
+      : 'needs_evidence'
+  const readinessRaw = typeof r.agent_readiness_status === 'string' ? r.agent_readiness_status : 'needs_evidence'
+  const agent_readiness_status: Recommendation['agent_readiness_status'] =
+    readinessRaw === 'ready' ||
+    readinessRaw === 'needs_evidence' ||
+    readinessRaw === 'not_agent' ||
+    readinessRaw === 'blocked'
+      ? readinessRaw
+      : 'needs_evidence'
 
   const actionsRaw = Array.isArray(r.actions_json) ? r.actions_json : []
   const actions_json = actionsRaw.map((x, i) => {
@@ -115,6 +132,18 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
     linked_process_ids: linked,
     enrichment_log,
     analysis_inputs_json: Array.isArray(r.analysis_inputs_json) ? r.analysis_inputs_json : undefined,
+    portfolio_category,
+    automation_path: typeof r.automation_path === 'string' ? r.automation_path : 'needs_evidence',
+    agent_readiness_status,
+    generate_agent_allowed: Boolean(r.generate_agent_allowed),
+    generate_agent_disabled_reason:
+      typeof r.generate_agent_disabled_reason === 'string' ? r.generate_agent_disabled_reason : null,
+    generate_agent_blockers:
+      Array.isArray(r.generate_agent_blockers) ? r.generate_agent_blockers.map((x) => String(x)).filter(Boolean) : [],
+    recommended_next_action:
+      typeof r.recommended_next_action === 'string' ? r.recommended_next_action : 'collect_evidence',
+    agent_fit_summary: typeof r.agent_fit_summary === 'string' ? r.agent_fit_summary : '',
+    evidence_summary: typeof r.evidence_summary === 'string' ? r.evidence_summary : '',
   }
 }
 
@@ -170,6 +199,12 @@ const AUTOMATION_LABEL: Record<AutomationKey, string> = {
 const RECOMMENDATION_TYPE_LABEL: Record<RecommendationTypeKey, string> = {
   discovered: 'Discovered',
   synthesized: 'Synthesized',
+}
+
+const PORTFOLIO_LABEL: Record<PortfolioKey, string> = {
+  agent_candidate: 'Agent Candidates',
+  automation_integration: 'Automation & Integration',
+  needs_evidence: 'Needs Evidence',
 }
 
 const STAGE_LABELS: Record<string, string> = {
@@ -228,6 +263,11 @@ export default function RecommendationsPage() {
     : tabRaw === 'implemented' ? 'implemented'
     : 'active'
   const statusFilter = statusTab
+  const portfolioRaw = (searchParams.get('portfolio') || 'agent_candidate').toLowerCase()
+  const portfolioTab: PortfolioKey =
+    portfolioRaw === 'automation_integration' ? 'automation_integration'
+    : portfolioRaw === 'needs_evidence' ? 'needs_evidence'
+    : 'agent_candidate'
 
   const [page, setPage] = useState(1)
   const [q, setQ] = useState('')
@@ -249,6 +289,7 @@ export default function RecommendationsPage() {
       page,
       page_size: PAGE_SIZE,
       status: statusFilter,
+      portfolio_category: portfolioTab,
       sort: sortApiParam(sortKey),
       automation_type: apiAutomationType,
       recommendation_type: apiRecommendationType,
@@ -289,6 +330,16 @@ export default function RecommendationsPage() {
     setExpandedId(null)
   }
 
+  const setPortfolioTab = (next: PortfolioKey) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      p.set('portfolio', next)
+      return p
+    })
+    setPage(1)
+    setExpandedId(null)
+  }
+
   useEffect(() => {
     if (!resetArmed) return undefined
     const timeout = window.setTimeout(() => setResetArmed(false), 6000)
@@ -313,6 +364,8 @@ export default function RecommendationsPage() {
       (c) =>
         c.title.toLowerCase().includes(qq) ||
         (c.category ?? '').toLowerCase().includes(qq) ||
+        c.agent_fit_summary.toLowerCase().includes(qq) ||
+        c.recommended_next_action.toLowerCase().includes(qq) ||
         (c.description ?? '').toLowerCase().includes(qq),
     )
   }, [items, q, automationFilters, recommendationTypeFilters])
@@ -413,12 +466,12 @@ export default function RecommendationsPage() {
             Prioritized remediation and automation opportunities ranked by ROI, blast radius, and architectural fit.
           </p>
         </div>
-        <div className="flex items-center gap-2 self-start">
+        <div className="grid w-full grid-cols-1 gap-2 self-start sm:flex sm:w-auto sm:items-center">
           <button
             type="button"
             disabled={pipelineBusy || recalcAllMutation.isPending}
             onClick={() => recalcAllMutation.mutate()}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-w-0 items-center justify-center gap-2 whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-center text-sm font-semibold leading-tight text-navy-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
           >
             {recalcAllMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <BarChart3 className="h-4 w-4" />}
             {recalcAllMutation.isPending ? 'Recalculating…' : 'Refresh Projections'}
@@ -430,7 +483,7 @@ export default function RecommendationsPage() {
             aria-label="Reset generated recommendations and queue a fresh recommendation run"
             onClick={handleResetAndRerun}
             className={clsx(
-              'inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+              'inline-flex min-w-0 items-center justify-center gap-2 whitespace-normal rounded-lg border px-3 py-2.5 text-center text-sm font-semibold leading-tight shadow-sm disabled:cursor-not-allowed disabled:opacity-60 sm:px-4',
               resetArmed
                 ? 'border-red-200 bg-red-50 text-red-800 hover:bg-red-100'
                 : 'border-slate-200 bg-white text-navy-900 hover:bg-slate-50',
@@ -447,7 +500,7 @@ export default function RecommendationsPage() {
             type="button"
             disabled={pipelineBusy}
             onClick={() => generateMutation.mutate()}
-            className="inline-flex items-center gap-2 rounded-lg bg-navy-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-w-0 items-center justify-center gap-2 whitespace-normal rounded-lg bg-navy-800 px-3 py-2.5 text-center text-sm font-semibold leading-tight text-white shadow-sm hover:bg-navy-900 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
           >
             {pipelineBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {pipelineBusy ? 'Generating…' : 'Generate'}
@@ -525,6 +578,26 @@ export default function RecommendationsPage() {
             className="lg:min-w-[280px]"
           />
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Recommendation portfolio">
+        {(['agent_candidate', 'automation_integration', 'needs_evidence'] as const).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={portfolioTab === key}
+            onClick={() => setPortfolioTab(key)}
+            className={clsx(
+              'rounded-lg px-3.5 py-2 text-sm font-semibold ring-1 ring-inset transition-colors',
+              portfolioTab === key
+                ? 'bg-navy-800 text-white ring-navy-800'
+                : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50',
+            )}
+          >
+            {PORTFOLIO_LABEL[key]}
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -613,8 +686,8 @@ export default function RecommendationsPage() {
       {items.length === 0 ? (
         <EmptyState
           icon={<Sparkles className="h-10 w-10" />}
-          title="No recommendations in this view"
-          description="Generate recommendations after connecting a platform."
+          title={`No ${PORTFOLIO_LABEL[portfolioTab].toLowerCase()} in this view`}
+          description="Generate recommendations after connecting a platform, or switch portfolio tabs to inspect other findings."
         />
       ) : filteredItems.length === 0 ? (
         <EmptyState

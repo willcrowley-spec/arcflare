@@ -21,6 +21,7 @@ _DEFAULT_INPUT_TPM = 25_000  # conservative vs Anthropic Tier 1's ~30-38K
 
 _PROVIDER_DEFAULTS: dict[str, int] = {
     "anthropic": 25_000,
+    "cerebras": 1_000_000,
     "gemini": 4_000_000,
     "openai": 200_000,
 }
@@ -106,6 +107,8 @@ class AdaptiveTokenRateLimiter:
             "x_ratelimit_limit_input_tokens",
             "x-ratelimit-limit-tokens",
             "x_ratelimit_limit_tokens",
+            "x-ratelimit-limit-tokens-minute",
+            "x_ratelimit_limit_tokens_minute",
         ):
             raw = headers.get(key)
             if raw is not None:

@@ -22,6 +22,10 @@ from app.services.recommendations.agent_analyzer import analyze_domain
 from app.services.recommendations.cross_domain import synthesize_cross_domain
 from app.services.recommendations.domain_assembler import assemble_domain_contexts
 from app.services.recommendations.metadata_bindings import build_metadata_bindings
+from app.services.recommendations.readiness import (
+    build_recommendation_readiness,
+    classify_opportunity,
+)
 from app.workers.analysis import evaluate_agent_financials_task
 
 logger = logging.getLogger(__name__)
@@ -99,6 +103,7 @@ def _build_agent_recommendation(
     opp["metadata_binding_manifest_v1"] = metadata_bindings
     opp["metadata_bindings_v1"] = metadata_bindings
     opp["binding_model_version"] = metadata_bindings["binding_model_version"]
+    preliminary_readiness = classify_opportunity(opp)
 
     title = (opp.get("agent_name") or "Untitled Agent Opportunity")[:512]
 
@@ -124,7 +129,7 @@ def _build_agent_recommendation(
         title=title,
         description=opp.get("description"),
         priority=None,
-        category=opp.get("agent_type", "hybrid"),
+        category=preliminary_readiness["candidate_type"],
         estimated_roi=None,
         composite_score=float(opp.get("confidence", 0.0)),
         status="active",
@@ -171,6 +176,16 @@ def _build_agent_recommendation(
         recommendation_run_id=run_id,
     )
     apply_arc_score(rec)
+    readiness = build_recommendation_readiness(rec)
+    rec.category = readiness["candidate_type"]
+    rec.impact_json = {
+        **(rec.impact_json or {}),
+        "recommendation_readiness": readiness,
+    }
+    rec.agent_opportunity_json = {
+        **(rec.agent_opportunity_json or {}),
+        "recommendation_readiness": readiness,
+    }
     return rec
 
 
@@ -231,6 +246,65 @@ async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession)
             for component in components
         ],
     }
+
+
+def _opportunity_signature(opp: dict) -> tuple:
+    name = " ".join(str(opp.get("agent_name") or "").lower().split())
+    processes: list[str] = []
+    steps: list[str] = []
+    for rep in opp.get("replaces") or []:
+        if not isinstance(rep, dict):
+            continue
+        if rep.get("process_id"):
+            processes.append(str(rep["process_id"]))
+        steps.extend(str(sid) for sid in rep.get("step_ids") or [] if sid)
+    topics = sorted(
+        " ".join(str(t.get("topic_name") or "").lower().split())
+        for t in (opp.get("topics") or [])
+        if isinstance(t, dict)
+    )
+    return (
+        name,
+        tuple(sorted(set(processes))),
+        tuple(sorted(set(steps))),
+        tuple(topics),
+    )
+
+
+def _dedupe_opportunities(items: list[dict]) -> list[dict]:
+    """Keep the strongest deterministic duplicate before persistence."""
+    by_sig: dict[tuple, dict] = {}
+    for item in items:
+        opp = item.get("opportunity") or {}
+        sig = _opportunity_signature(opp)
+        if not sig[0]:
+            continue
+        existing = by_sig.get(sig)
+        if existing is None:
+            by_sig[sig] = item
+            continue
+        new_conf = float((opp or {}).get("confidence") or 0.0)
+        old_conf = float(((existing.get("opportunity") or {}).get("confidence")) or 0.0)
+        if new_conf > old_conf:
+            by_sig[sig] = item
+    return list(by_sig.values())
+
+
+def _is_semantically_valid_opportunity(opp: dict) -> bool:
+    if not isinstance(opp, dict):
+        return False
+    if not str(opp.get("agent_name") or "").strip():
+        return False
+    if not (opp.get("topics") or []):
+        return False
+    if not (opp.get("replaces") or []):
+        return False
+    confidence = opp.get("confidence", 0)
+    try:
+        confidence_float = float(confidence)
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= confidence_float <= 1.0
 
 
 async def run_recommendation_pipeline(
@@ -407,7 +481,7 @@ async def run_recommendation_pipeline(
         )
         await db.commit()
 
-        created_count = 0
+        opportunity_items: list[dict] = []
         for r in all_domain_results:
             raw_did = r.get("_domain_db_id")
             domain_id: UUID | None
@@ -416,38 +490,50 @@ async def run_recommendation_pipeline(
             else:
                 domain_id = None
             for opp in r.get("agent_opportunities", []):
-                rec = _build_agent_recommendation(
-                    opp,
-                    org_id,
-                    run_id,
-                    domain_id,
-                    rec_type="agent_opportunity",
-                    process_contexts=r.get("_processes_raw", []),
-                    salesforce_metadata=salesforce_metadata,
+                if not _is_semantically_valid_opportunity(opp):
+                    continue
+                opportunity_items.append(
+                    {
+                        "opportunity": opp,
+                        "domain_id": domain_id,
+                        "rec_type": "agent_opportunity",
+                        "process_contexts": r.get("_processes_raw", []),
+                    }
                 )
-                db.add(rec)
-                created_count += 1
-                if created_count % 5 == 0:
-                    await db.commit()
 
         if cross_result is not None:
             for opp in cross_result.get("cross_domain_opportunities") or []:
-                rec = _build_agent_recommendation(
-                    opp,
-                    org_id,
-                    run_id,
-                    None,
-                    rec_type="agent_opportunity",
-                    process_contexts=all_process_contexts,
-                    salesforce_metadata=salesforce_metadata,
+                if not _is_semantically_valid_opportunity(opp):
+                    continue
+                opportunity_items.append(
+                    {
+                        "opportunity": opp,
+                        "domain_id": None,
+                        "rec_type": "agent_opportunity",
+                        "process_contexts": all_process_contexts,
+                    }
                 )
-                db.add(rec)
-                created_count += 1
-                if created_count % 5 == 0:
-                    await db.commit()
+
+        deduped_items = _dedupe_opportunities(opportunity_items)
+        created_count = 0
+        for item in deduped_items:
+            rec = _build_agent_recommendation(
+                item["opportunity"],
+                org_id,
+                run_id,
+                item["domain_id"],
+                rec_type=item["rec_type"],
+                process_contexts=item["process_contexts"],
+                salesforce_metadata=salesforce_metadata,
+            )
+            db.add(rec)
+            created_count += 1
+            if created_count % 5 == 0:
+                await db.commit()
 
         stage_results["summary"] = {
             "recommendations_created": created_count,
+            "recommendations_before_dedupe": len(opportunity_items),
         }
 
         await db.execute(
