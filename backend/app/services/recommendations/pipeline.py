@@ -33,6 +33,17 @@ logger = logging.getLogger(__name__)
 _MAX_ERROR_LEN = 50_000
 
 
+def _portfolio_title(opportunity: dict, readiness: dict) -> str:
+    title = str(
+        opportunity.get("agent_name")
+        or opportunity.get("candidate_name")
+        or "Untitled Portfolio Candidate"
+    ).strip()
+    if readiness.get("recommended_build_path") != "agentforce_agent" and title.lower().endswith(" agent"):
+        title = title[:-6].strip()
+    return title or "Untitled Portfolio Candidate"
+
+
 async def analyze_domain_contexts(
     domain_contexts: list[dict],
     *,
@@ -106,7 +117,7 @@ def _build_agent_recommendation(
     opp["binding_model_version"] = metadata_bindings["binding_model_version"]
     preliminary_readiness = classify_opportunity(opp)
 
-    title = (opp.get("agent_name") or "Untitled Agent Opportunity")[:512]
+    title = _portfolio_title(opp, preliminary_readiness)[:512]
 
     topic_types = {t.get("reasoning_type", "hybrid") for t in opp.get("topics", [])}
     if topic_types == {"deterministic"}:
@@ -215,6 +226,8 @@ async def _load_salesforce_metadata_for_bindings(org_id: UUID, db: AsyncSession)
             {
                 "api_name": obj.api_name,
                 "label": obj.label,
+                "object_type": obj.object_type,
+                "metadata_json": obj.metadata_json,
                 "fields": [
                     {
                         "api_name": field.api_name,

@@ -1007,7 +1007,7 @@ def build_design_package_from_context(context: dict) -> dict:
             "name": agent_name,
             "type": agent_type,
             "summary": _text(opportunity.get("description"), rec.get("description") or ""),
-            "trigger": _text(opportunity.get("trigger"), "Manual or Flow-triggered invocation"),
+            "trigger": _text(opportunity.get("trigger"), "Manual or platform-triggered invocation"),
         },
         "topics": topics,
         "session_variables": [

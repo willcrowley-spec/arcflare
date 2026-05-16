@@ -1,5 +1,6 @@
 from app.services.ai.response_schemas import DISCOVERY_V2_EXTRACTION_SCHEMA
 from app.services.processes.discovery import (
+    _drop_hidden_v2_nodes,
     _normalize_v2_extraction_result,
     _v2_extraction_contract_issues,
 )
@@ -122,3 +123,119 @@ def test_v2_extraction_contract_blocks_processes_without_child_steps():
     normalized = _normalize_v2_extraction_result(parsed)
 
     assert "License management:missing_child_steps" in _v2_extraction_contract_issues(normalized)
+
+
+def test_v2_extraction_contract_does_not_fail_run_for_missing_step_touchpoints():
+    parsed = {
+        "processes": [
+            {
+                "name": "QuickBooks payment processing",
+                "evidence_refs": ["DOC-3"],
+                "actors": [{"name": "QuickBooks integration", "type": "integration", "evidence_refs": ["DOC-3"]}],
+                "trigger_conditions": [{"description": "Payment webhook received", "evidence_refs": ["DOC-3"]}],
+                "system_touchpoints": [
+                    {
+                        "name": "QuickBooksPayment__c",
+                        "type": "object",
+                        "operation": "create",
+                        "fields": [],
+                        "evidence_refs": ["DOC-3"],
+                    }
+                ],
+                "children": [
+                    {
+                        "name": "Parse Payment Amount and Invoice Data",
+                        "level": "step",
+                        "description": "Parses a payment payload before creating payment records.",
+                        "evidence_refs": ["DOC-3"],
+                        "confidence": 0.65,
+                        "needs_review": True,
+                        "actors": [
+                            {"name": "QuickBooks integration", "type": "integration", "evidence_refs": ["DOC-3"]}
+                        ],
+                        "trigger_conditions": [
+                            {"description": "Payment event is processed", "evidence_refs": ["DOC-3"]}
+                        ],
+                        "system_touchpoints": [],
+                        "value_classification": "BVA",
+                        "complexity_score": "medium",
+                        "automation_potential": "medium",
+                    }
+                ],
+            }
+        ]
+    }
+
+    normalized = _normalize_v2_extraction_result(parsed)
+
+    assert _v2_extraction_contract_issues(normalized) == []
+
+
+def test_v2_hidden_nodes_are_removed_before_persistence():
+    parsed = {
+        "processes": [
+            {
+                "name": "QuickBooks payment processing",
+                "evidence_refs": ["DOC-3"],
+                "actors": [{"name": "QuickBooks integration", "type": "integration", "evidence_refs": ["DOC-3"]}],
+                "trigger_conditions": [{"description": "Payment webhook received", "evidence_refs": ["DOC-3"]}],
+                "system_touchpoints": [
+                    {
+                        "name": "QuickBooksPayment__c",
+                        "type": "object",
+                        "operation": "create",
+                        "fields": [],
+                        "evidence_refs": ["DOC-3"],
+                    }
+                ],
+                "children": [
+                    {
+                        "name": "Fetch QuickBooks Realm Id",
+                        "level": "step",
+                        "description": "Fetches hidden QuickBooks realm settings.",
+                        "evidence_refs": ["DOC-1"],
+                        "actors": [
+                            {"name": "QuickBooks integration", "type": "integration", "evidence_refs": ["DOC-1"]}
+                        ],
+                        "trigger_conditions": [{"description": "Account changes", "evidence_refs": ["DOC-1"]}],
+                        "system_touchpoints": [],
+                        "value_classification": "BVA",
+                        "complexity_score": "medium",
+                        "automation_potential": "medium",
+                        "confidence": 0.7,
+                        "needs_review": True,
+                    },
+                    {
+                        "name": "Insert Payment Record",
+                        "level": "step",
+                        "description": "Creates the visible payment record.",
+                        "evidence_refs": ["DOC-3"],
+                        "actors": [
+                            {"name": "QuickBooks integration", "type": "integration", "evidence_refs": ["DOC-3"]}
+                        ],
+                        "trigger_conditions": [{"description": "Payment parsed", "evidence_refs": ["DOC-3"]}],
+                        "system_touchpoints": [
+                            {
+                                "name": "QuickBooksPayment__c",
+                                "type": "object",
+                                "operation": "create",
+                                "fields": [],
+                                "evidence_refs": ["DOC-3"],
+                            }
+                        ],
+                        "value_classification": "BVA",
+                        "complexity_score": "medium",
+                        "automation_potential": "medium",
+                        "confidence": 0.7,
+                        "needs_review": False,
+                    },
+                ],
+            }
+        ]
+    }
+
+    normalized = _normalize_v2_extraction_result(parsed)
+    filtered = _drop_hidden_v2_nodes(normalized, {"QuickBooks Realm", "QuickBooks_Realm"})
+
+    children = filtered["processes"][0]["children"]
+    assert [child["name"] for child in children] == ["Insert Payment Record"]

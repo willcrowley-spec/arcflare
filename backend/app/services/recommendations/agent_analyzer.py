@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_opportunity(opp: dict) -> bool:
-    if not (opp.get("agent_name") or "").strip():
+    if not (opp.get("agent_name") or opp.get("candidate_name") or opp.get("title") or "").strip():
         return False
     if not opp.get("topics"):
         return False
@@ -24,12 +24,33 @@ def validate_opportunity(opp: dict) -> bool:
     return True
 
 
+def _normalize_portfolio_candidate(candidate: dict) -> dict:
+    candidate = dict(candidate)
+    name = candidate.get("agent_name") or candidate.get("candidate_name") or candidate.get("title")
+    candidate["agent_name"] = name
+    candidate["portfolio_category_v1"] = candidate.get("portfolio_category") or candidate.get("category")
+    candidate["recommended_build_path"] = candidate.get("recommended_build_path") or candidate.get("automation_path")
+    if "runtime_reasoning_required" in candidate and "requires_runtime_reasoning" not in candidate:
+        candidate["requires_runtime_reasoning"] = candidate["runtime_reasoning_required"]
+    return candidate
+
+
 def parse_opportunity_response(raw: dict | list) -> dict:
     if isinstance(raw, list):
         raw = {"agent_opportunities": raw, "uncovered_processes": []}
-    opportunities = raw.get("agent_opportunities") or raw.get("opportunities") or []
+    opportunities = (
+        raw.get("portfolio_candidates")
+        or raw.get("portfolio_candidates_v1")
+        or raw.get("agent_opportunities")
+        or raw.get("opportunities")
+        or []
+    )
     uncovered = raw.get("uncovered_processes") or []
-    valid = [o for o in opportunities if isinstance(o, dict) and validate_opportunity(o)]
+    valid = [
+        _normalize_portfolio_candidate(o)
+        for o in opportunities
+        if isinstance(o, dict) and validate_opportunity(o)
+    ]
     return {"agent_opportunities": valid, "uncovered_processes": uncovered}
 
 

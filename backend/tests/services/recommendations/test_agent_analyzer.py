@@ -80,6 +80,47 @@ class TestParseOpportunityResponse:
         result = parse_opportunity_response(raw)
         assert len(result["agent_opportunities"]) == 1
 
+    def test_parses_portfolio_candidates_v1_and_keeps_non_agent_findings(self):
+        raw = {
+            "schema_version": "portfolio_candidates_v1",
+            "portfolio_candidates": [
+                {
+                    "candidate_name": "QuickBooks Sync Hardening",
+                    "portfolio_category": "external_integration",
+                    "recommended_build_path": "external_integration",
+                    "description": "Harden deterministic QuickBooks invoice sync.",
+                    "topics": [
+                        {
+                            "topic_name": "Invoice sync",
+                            "description": "Map webhook payloads into Salesforce records.",
+                            "reasoning_type": "deterministic",
+                            "actions_needed": ["Validate payload"],
+                        }
+                    ],
+                    "replaces": _valid_opportunity()["replaces"],
+                    "trigger": "QuickBooks webhook",
+                    "data_requirements": [],
+                    "suggested_metadata_refs": [],
+                    "integration_points": ["QuickBooks"],
+                    "complexity_estimate": "medium",
+                    "confidence": 0.7,
+                    "rationale": "Valuable integration, not an agent.",
+                    "risks": "Token handling.",
+                    "financial_signals": _valid_opportunity()["financial_signals"],
+                    "runtime_reasoning_required": False,
+                }
+            ],
+        }
+
+        result = parse_opportunity_response(raw)
+
+        assert len(result["agent_opportunities"]) == 1
+        parsed = result["agent_opportunities"][0]
+        assert parsed["agent_name"] == "QuickBooks Sync Hardening"
+        assert parsed["portfolio_category_v1"] == "external_integration"
+        assert parsed["recommended_build_path"] == "external_integration"
+        assert parsed["runtime_reasoning_required"] is False
+
 
 class TestValidateOpportunity:
     def test_valid_passes(self):

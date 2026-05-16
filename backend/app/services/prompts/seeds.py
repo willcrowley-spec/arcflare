@@ -767,7 +767,7 @@ Can you help me document what currently happens at this handoff point?"""
 
 # --- Agent opportunity analysis (domain-level) ---
 
-_AGENT_OPPORTUNITY_INSTRUCTIONS = """You are an Agentforce solution architect analyzing a business domain to identify where Salesforce Agentforce agents can replace or augment existing manual processes.
+_AGENT_OPPORTUNITY_INSTRUCTIONS = """You are an enterprise Salesforce solution architect analyzing a business domain to classify improvement candidates.
 
 You will receive a complete domain context: all processes, their steps, actors, decision logic, system touchpoints, handoffs, and failure modes. Your job is to identify agent opportunities — coherent clusters of work that a single Agentforce agent could own across multiple processes and steps.
 
@@ -779,9 +779,8 @@ An Agentforce agent can:
 - Execute deterministic logic (if/then, field updates, record queries) before LLM reasoning
 - Use LLM reasoning for judgment calls: classification, prioritization, content generation, exception handling, contextual decision-making
 - Call Apex actions (database queries, API callouts, complex business logic)
-- Call Flow actions (record operations, simple automations)
 - Carry mutable state across topics via global variables
-- Operate conversationally (user-facing) OR headlessly (triggered by record events or Flows, fully autonomous)
+- Operate conversationally (user-facing) OR headlessly (triggered by record events or platform automation, fully autonomous)
 - Handle structured data (Salesforce records) and unstructured data (emails, free text, case descriptions)
 - Gate topic availability behind conditions (authentication, data loaded, role checks)
 - Pre-load data deterministically before the LLM reasons
@@ -807,7 +806,7 @@ AGENT DESIGN PRINCIPLES:
 
 _AGENT_OPPORTUNITY_PROTOCOL = """ANTIPATTERNS — DO NOT RECOMMEND THESE:
 - ONE AGENT PER PROCESS STEP — a single step is a topic at most, never a standalone agent
-- PURELY DETERMINISTIC AGENTS — if every topic is just if/then with no LLM reasoning, recommend a Flow, not an agent
+- PURELY DETERMINISTIC AGENTS — if every topic is just if/then with no LLM reasoning, classify it as apex_automation, not an agent
 - NOTIFICATION-ONLY AGENTS — agents that only send emails/tasks without making decisions are automation rules, not agents
 - BOIL-THE-OCEAN AGENTS — don't propose one mega-agent per domain. Find 2-4 focused agents.
 - OVERLOADED AGENTS — if scope exceeds what a single agent can hold, split into multiple focused agents
@@ -815,9 +814,12 @@ _AGENT_OPPORTUNITY_PROTOCOL = """ANTIPATTERNS — DO NOT RECOMMEND THESE:
 Return ONLY valid JSON with this exact shape:
 
 {
-  "agent_opportunities": [
+  "schema_version": "portfolio_candidates_v1",
+  "portfolio_candidates": [
     {
-      "agent_name": "Descriptive name for the proposed agent",
+      "candidate_name": "Descriptive name. Use Agent only when recommended_build_path is agentforce_agent.",
+      "portfolio_category": "agentforce_agent | apex_automation | external_integration | analytics | human_process_or_policy | needs_evidence | no_build",
+      "recommended_build_path": "agentforce_agent | apex_automation | external_integration | analytics | human_process_or_policy | needs_evidence | no_build",
       "agent_type": "headless" | "conversational" | "hybrid",
       "description": "2-3 sentences: what this agent does, who it serves, what business outcome it drives",
       "topics": [
@@ -850,9 +852,12 @@ Return ONLY valid JSON with this exact shape:
         }
       ],
       "integration_points": ["External systems needing Apex middleware"],
+      "runtime_reasoning_required": true,
+      "qualification_reasons": ["Why this does or does not qualify as agentic work"],
+      "disqualifiers": ["Reasons this should not be an Agentforce agent, empty only for strong agent candidates"],
       "complexity_estimate": "low" | "medium" | "high",
       "confidence": 0.0-1.0,
-      "rationale": "Why these processes/steps belong together and why an agent (not a Flow) is right",
+      "rationale": "Why these processes/steps belong together and why the selected build path is right",
       "risks": "Key implementation risks or feasibility concerns",
       "financial_signals": {
         "actors_impacted": ["role names"],
@@ -873,13 +878,39 @@ Return ONLY valid JSON with this exact shape:
 
 Rules:
 - process_id and step_ids must be valid UUIDs from the domain context input
-- Every process in the domain should appear in either an agent opportunity's replaces array OR in uncovered_processes
+- Every process in the domain should appear in either a portfolio candidate's replaces array OR in uncovered_processes
+- Only use recommended_build_path=agentforce_agent when runtime reasoning is genuinely required
+- Deterministic work must be apex_automation, external_integration, analytics, human_process_or_policy, needs_evidence, or no_build
 - confidence should reflect genuine assessment — not all 0.80
 - financial_signals must be internally consistent with the processes replaced
 - estimated_actor_count means human people currently doing the work; do not count records, customers, licenses, Salesforce Users, automations, objects, flows, Apex classes, or components
 - estimated_hours_per_week_saved means total human effort saved per week across all actors, not per-person hours
 - data_requirements is business copy only. Do not rely on it to prove Salesforce object/field access.
 - suggested_metadata_refs are untrusted hints. Only include exact API names when the input process touchpoints already contained them; never invent object or field API names."""
+
+_AGENT_OPPORTUNITY_INSTRUCTIONS += """
+
+PORTFOLIO QUALIFICATION:
+
+Classify every meaningful candidate into exactly one build path:
+- agentforce_agent: requires runtime reasoning around ambiguity, classification, prioritization, summarization, exception handling, unstructured input, or non-specifiable paths.
+- apex_automation: deterministic Salesforce automation or service logic that can be specified exactly.
+- external_integration: structured sync, ETL, webhook, or external API orchestration.
+- analytics: reporting, metric visibility, scorecards, or monitoring.
+- human_process_or_policy: policy, ownership, training, or governance change.
+- needs_evidence: the domain hints at value, but process/step/metadata evidence is too thin.
+- no_build: low-value or already-solved work."""
+
+_AGENT_OPPORTUNITY_PROTOCOL += """
+
+PORTFOLIO OUTPUT UPDATE:
+- Return schema_version=portfolio_candidates_v1.
+- Prefer portfolio_candidates over agent_opportunities.
+- Each candidate must include candidate_name, portfolio_category, recommended_build_path, runtime_reasoning_required, qualification_reasons, and disqualifiers.
+- Use Agent in the candidate name only when recommended_build_path is agentforce_agent.
+- Purely deterministic work must be apex_automation, external_integration, analytics, human_process_or_policy, needs_evidence, or no_build.
+- Integration broker and notification-only work must not be classified as agentforce_agent.
+- The backend accepts legacy agent_opportunities for compatibility, but new output should use portfolio_candidates."""
 
 # --- Agent opportunity cross-domain synthesis ---
 
@@ -937,7 +968,7 @@ _AGENT_DESIGN_PACKAGE_PROTOCOL = """Return ONLY valid JSON matching the Agent De
 - agent: name, type, summary, trigger
 - topics: jobs the agent can own
 - session_variables: state carried through an agent turn
-- action_contracts: explicit Apex/Flow/prompt action contracts with inputs, outputs, permissions, errors
+- action_contracts: explicit Apex invocable action contracts with inputs, outputs, permissions, errors
 - permission_requirements: object/operation requirements
 - test_scenarios: business-readable test cases
 - observability: events and trace keys
@@ -946,6 +977,7 @@ _AGENT_DESIGN_PACKAGE_PROTOCOL = """Return ONLY valid JSON matching the Agent De
 
 Rules:
 - Do not invent Salesforce objects not present in context.
+- Generated source is Apex-only. Existing Flows may be referenced as evidence or conflict context, but do not make Flow a generated target.
 - Do not generate AgentScript or Apex implementation code here.
 - Add a blocker for unknown permissions, missing object evidence, or unresolved integrations."""
 

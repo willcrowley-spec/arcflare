@@ -134,6 +134,22 @@ function normalizeRecommendation(raw: unknown): Recommendation | null {
     analysis_inputs_json: Array.isArray(r.analysis_inputs_json) ? r.analysis_inputs_json : undefined,
     portfolio_category,
     automation_path: typeof r.automation_path === 'string' ? r.automation_path : 'needs_evidence',
+    recommended_build_path: typeof r.recommended_build_path === 'string' ? r.recommended_build_path : 'needs_evidence',
+    qualification_decision: typeof r.qualification_decision === 'string' ? r.qualification_decision : 'needs_evidence',
+    qualification_reasons:
+      Array.isArray(r.qualification_reasons) ? r.qualification_reasons.map((x) => String(x)).filter(Boolean) : [],
+    disqualifiers: Array.isArray(r.disqualifiers) ? r.disqualifiers.map((x) => String(x)).filter(Boolean) : [],
+    evidence_requirements:
+      Array.isArray(r.evidence_requirements) ? r.evidence_requirements.map((x) => String(x)).filter(Boolean) : [],
+    runtime_reasoning_required: Boolean(r.runtime_reasoning_required),
+    agent_suitability_score:
+      typeof r.agent_suitability_score === 'number' ? r.agent_suitability_score : 0,
+    agent_suitability_rubric:
+      r.agent_suitability_rubric && typeof r.agent_suitability_rubric === 'object' && !Array.isArray(r.agent_suitability_rubric) ?
+        (r.agent_suitability_rubric as Record<string, unknown>)
+      : {},
+    action_contract_readiness:
+      typeof r.action_contract_readiness === 'string' ? r.action_contract_readiness : 'blocked',
     agent_readiness_status,
     generate_agent_allowed: Boolean(r.generate_agent_allowed),
     generate_agent_disabled_reason:

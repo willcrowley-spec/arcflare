@@ -93,11 +93,14 @@ def test_quickbooks_sync_classifies_as_external_integration_not_agent():
 
     result = classify_opportunity(quickbooks)
 
-    assert result["candidate_type"] == "external_integration_candidate"
+    assert result["candidate_type"] == "external_integration"
     assert result["portfolio_category"] == "automation_integration"
     assert result["agent_readiness_status"] == "not_agent"
     assert result["generate_agent_allowed"] is False
     assert "deterministic" in result["generate_agent_disabled_reason"].lower()
+    assert result["recommended_build_path"] == "external_integration"
+    assert result["qualification_decision"] == "not_agent"
+    assert result["runtime_reasoning_required"] is False
 
 
 def test_quickbooks_backfill_agentic_label_does_not_override_integration_fit():
@@ -130,7 +133,7 @@ def test_quickbooks_backfill_agentic_label_does_not_override_integration_fit():
 
     result = classify_opportunity(quickbooks)
 
-    assert result["candidate_type"] == "external_integration_candidate"
+    assert result["candidate_type"] == "external_integration"
     assert result["portfolio_category"] == "automation_integration"
     assert result["agent_readiness_status"] == "not_agent"
     assert result["generate_agent_allowed"] is False
@@ -139,11 +142,14 @@ def test_quickbooks_backfill_agentic_label_does_not_override_integration_fit():
 def test_agentic_case_triage_can_be_agent_ready_with_grounded_evidence():
     result = classify_opportunity(_base_opportunity())
 
-    assert result["candidate_type"] == "agent_candidate"
+    assert result["candidate_type"] == "agentforce_agent"
     assert result["portfolio_category"] == "agent_candidate"
     assert result["agent_readiness_status"] == "ready"
     assert result["generate_agent_allowed"] is True
     assert result["recommended_next_action"] == "generate_agent"
+    assert result["recommended_build_path"] == "agentforce_agent"
+    assert result["qualification_decision"] == "ready"
+    assert result["agent_suitability_score"] >= 0.8
 
 
 def test_accepted_non_agent_recommendation_still_cannot_generate_agent():
@@ -193,3 +199,50 @@ def test_accepted_non_agent_recommendation_still_cannot_generate_agent():
     assert envelope["generate_agent_allowed"] is False
     assert envelope["agent_readiness_status"] == "not_agent"
     assert envelope["portfolio_category"] == "automation_integration"
+
+
+def test_deterministic_slack_notification_classifies_as_apex_automation_not_agent():
+    notification = _base_opportunity(
+        agent_name="Case Creation and Slack Notification",
+        description="Creates a case and sends a Slack notification after a deterministic trigger.",
+        topics=[
+            {
+                "topic_name": "Notify Support",
+                "description": "Send a Slack alert and create a task using fixed rules.",
+                "reasoning_type": "deterministic",
+                "actions_needed": ["Create task", "Send Slack alert"],
+            }
+        ],
+        integration_points=["Slack"],
+        rationale="Improves handoff speed.",
+    )
+
+    result = classify_opportunity(notification)
+
+    assert result["candidate_type"] == "apex_automation"
+    assert result["recommended_build_path"] == "apex_automation"
+    assert result["agent_readiness_status"] == "not_agent"
+    assert result["generate_agent_allowed"] is False
+    assert "apex" in result["generate_agent_disabled_reason"].lower()
+
+
+def test_high_arc_score_does_not_make_deterministic_work_agent_ready():
+    deterministic = _base_opportunity(
+        agent_name="Account Field Update Automation",
+        description="Updates Account fields through fixed if/then rules with no ambiguity.",
+        topics=[
+            {
+                "topic_name": "Update Account",
+                "description": "Runs deterministic field updates from structured data.",
+                "reasoning_type": "deterministic",
+                "actions_needed": ["Update Account"],
+            }
+        ],
+        rationale="Useful but fully specifiable.",
+    )
+
+    result = classify_opportunity(deterministic, arc_decision="ready")
+
+    assert result["candidate_type"] == "apex_automation"
+    assert result["qualification_decision"] == "not_agent"
+    assert result["generate_agent_allowed"] is False

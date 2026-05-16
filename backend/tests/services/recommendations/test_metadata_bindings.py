@@ -288,3 +288,81 @@ def test_duplicate_llm_suggestions_and_data_requirements_do_not_create_blockers(
     assert payload["unresolved_bindings"] == []
     assert payload["advisory_bindings"] == []
     assert payload["quality_gates"]["missing_evidence"] == []
+
+
+def test_apex_method_touchpoint_validates_parent_component_with_method_detail():
+    payload = build_metadata_bindings(
+        {"replaces": [{"process_id": "proc-1", "step_ids": []}], "data_requirements": []},
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Lead conversion",
+                "system_touchpoints": [
+                    {
+                        "name": "LeadConversionService.convertLead",
+                        "type": "apex",
+                        "operation": "execute",
+                    }
+                ],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata={
+            "objects": [],
+            "components": [
+                {
+                    "api_name": "LeadConversionService",
+                    "component_category": "ApexClass",
+                    "label": "Lead Conversion Service",
+                }
+            ],
+        },
+    )
+
+    assert payload["unresolved_bindings"] == []
+    binding = payload["bindings"][0]
+    assert binding["ref_type"] == "apex"
+    assert binding["api_name"] == "LeadConversionService"
+    assert binding["metadata_detail"]["method_name"] == "convertLead"
+
+
+def test_relationship_path_field_creates_relationship_binding_not_unknown_direct_field():
+    payload = build_metadata_bindings(
+        {"replaces": [{"process_id": "proc-1", "step_ids": []}], "data_requirements": []},
+        process_contexts=[
+            {
+                "id": "proc-1",
+                "name": "Development handoff",
+                "system_touchpoints": [
+                    {
+                        "object_api_name": "Development_Items__c",
+                        "fields": ["RelatedCase__r.OwnerId"],
+                        "operation": "read",
+                    }
+                ],
+                "steps": [],
+            }
+        ],
+        salesforce_metadata={
+            "objects": [
+                {
+                    "api_name": "Development_Items__c",
+                    "label": "Development Item",
+                    "fields": [
+                        {"api_name": "RelatedCase__c", "label": "Related Case"},
+                    ],
+                },
+                {
+                    "api_name": "Case",
+                    "label": "Case",
+                    "fields": [{"api_name": "OwnerId", "label": "Owner"}],
+                },
+            ]
+        },
+    )
+
+    assert payload["unresolved_bindings"] == []
+    relationship = [b for b in payload["bindings"] if b["ref_type"] == "relationship_field"][0]
+    assert relationship["api_name"] == "Development_Items__c.RelatedCase__r.OwnerId"
+    assert relationship["object_api_name"] == "Development_Items__c"
+    assert relationship["field_api_name"] == "RelatedCase__r.OwnerId"

@@ -70,9 +70,75 @@ DEFAULT_OBJECTS = [
     "PricebookEntry",
     "Campaign",
     "CampaignMember",
+    "EmailMessage",
+    "EmailMessageRelation",
+    "EmailTemplate",
+    "RecordType",
+    "User",
+    "Group",
+    "QueueSobject",
+    "ContentDocument",
+    "ContentVersion",
+    "ContentDocumentLink",
+    "FeedItem",
+    "CaseComment",
+    "OpportunityContactRole",
+    "AccountContactRelation",
 ]
 
 _SAFE_CMDT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*__mdt$")
+
+
+def _object_type_label(api_name: str, is_custom: bool) -> str:
+    if api_name.endswith("__e"):
+        return "Platform Event"
+    if api_name.endswith("__mdt"):
+        return "Custom Metadata Type"
+    if is_custom or api_name.endswith("__c"):
+        return "Custom Object"
+    return "Standard Object"
+
+
+def _object_kind(api_name: str, is_custom: bool) -> str:
+    if api_name.endswith("__e"):
+        return "platform_event"
+    if api_name.endswith("__mdt"):
+        return "custom_metadata"
+    if is_custom or api_name.endswith("__c"):
+        return "custom_object"
+    return "standard_object"
+
+
+def select_object_describe_names(
+    all_objects: list[dict],
+    *,
+    referenced_objects: list[str] | None = None,
+) -> list[str]:
+    """Choose a bounded but agent-ready object describe inventory."""
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str | None) -> None:
+        value = (name or "").strip()
+        if not value or value in seen:
+            return
+        seen.add(value)
+        selected.append(value)
+
+    for name in DEFAULT_OBJECTS:
+        add(name)
+
+    for obj in all_objects:
+        name = str(obj.get("name") or "").strip()
+        if not name or not obj.get("queryable"):
+            continue
+        if name.endswith(("__c", "__e", "__mdt")):
+            add(name)
+
+    for name in referenced_objects or []:
+        add(str(name))
+
+    return selected
 
 
 def _get_latest_api_version(instance_url: str, access_token: str) -> str:
@@ -219,7 +285,7 @@ def _composite_batch_post(sf: Salesforce, subrequests: list[dict]) -> list[dict]
 def _parse_describe_result(describe: dict, obj_name: str) -> PlatformObjectMeta | None:
     """Convert a raw describe response dict into a PlatformObjectMeta."""
     api_name = describe.get("name", obj_name)
-    is_custom = api_name.endswith("__c")
+    is_custom = bool(describe.get("custom")) or api_name.endswith(("__c", "__e", "__mdt"))
     is_managed, namespace = _detect_namespace(api_name)
     fields = _extract_fields(describe)
     relationships = _extract_relationships(describe)
@@ -251,12 +317,7 @@ def pull_object_describes(sf: Salesforce, objects: list[str] | None = None) -> l
     """Pull describes for all (or specified) objects via Composite Batch API."""
     if objects is None:
         all_objects = pull_object_list(sf)
-        custom = [
-            o["name"]
-            for o in all_objects
-            if o.get("name", "").endswith("__c") and o.get("queryable")
-        ]
-        objects = DEFAULT_OBJECTS + custom
+        objects = select_object_describe_names(all_objects)
 
     ver = sf.sf_version
     batches: list[list[str]] = [
@@ -992,6 +1053,7 @@ async def sync_metadata(
             "namespace_prefix": obj.namespace_prefix,
             "recent_record_count": obj.recent_record_count,
             "record_types": obj.record_types,
+            "object_kind": _object_kind(obj.api_name, obj.is_custom),
         }
         patch = object_patches.get(obj.api_name) if object_patches else None
         if patch:
@@ -1001,7 +1063,7 @@ async def sync_metadata(
             org_id=org_id,
             api_name=obj.api_name,
             label=obj.label,
-            object_type="Custom Object" if obj.is_custom else "Standard Object",
+            object_type=_object_type_label(obj.api_name, obj.is_custom),
             field_count=obj.field_count,
             record_count=obj.record_count,
             is_custom=obj.is_custom,

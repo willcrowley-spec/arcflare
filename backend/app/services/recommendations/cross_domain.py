@@ -22,6 +22,10 @@ def _summarize_opportunities(all_domain_results: list[dict]) -> list[dict]:
             summaries.append({
                 "domain": domain_name,
                 "agent_name": opp.get("agent_name"),
+                "portfolio_category": opp.get("portfolio_category_v1") or opp.get("portfolio_category"),
+                "recommended_build_path": opp.get("recommended_build_path"),
+                "runtime_reasoning_required": opp.get("runtime_reasoning_required")
+                or opp.get("requires_runtime_reasoning"),
                 "agent_type": opp.get("agent_type"),
                 "description": opp.get("description"),
                 "topics": [t.get("topic_name") for t in opp.get("topics", [])],
@@ -93,7 +97,7 @@ async def synthesize_cross_domain(
 
     prompt = (
         f"{instructions}\n\n"
-        f"## Agent Opportunities by Domain\n\n"
+        f"## Portfolio Candidates by Domain\n\n"
         f"{json.dumps(summaries, indent=2, default=str)}\n\n"
         f"## Cross-Domain Handoffs\n\n"
         f"{json.dumps(cross_domain_handoffs, indent=2, default=str)}\n\n"

@@ -21,6 +21,13 @@ from app.models.metadata import (
     MetadataField,
     MetadataObject,
 )
+from app.services.processes.visibility import (
+    filter_visible_object_names,
+    hidden_metadata_terms,
+    metadata_object_visible_clause,
+    redact_hidden_metadata_text,
+    visible_object_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +129,8 @@ async def assemble_evidence_bundle(
     search for document chunks.
     """
     bundle = EvidenceBundle(domain=domain)
-    key_objects = domain.get("key_objects", [])
+    key_objects = await filter_visible_object_names(org_id, db, domain.get("key_objects", []))
+    hidden_terms = await hidden_metadata_terms(org_id, db)
     key_terms = domain.get("key_terms", [])
     domain_name = domain.get("name", "")
 
@@ -157,21 +165,30 @@ async def assemble_evidence_bundle(
 
     auto_idx = obj_idx
     if auto_names or key_objects:
-        auto_idx = await _load_automations(org_id, db, auto_names, key_objects, bundle, start_idx=obj_idx)
+        auto_idx = await _load_automations(
+            org_id, db, auto_names, key_objects, bundle,
+            start_idx=obj_idx, hidden_terms=hidden_terms,
+        )
 
     comp_idx = auto_idx
     if comp_names:
-        comp_idx = await _load_components(org_id, db, comp_names, bundle, start_idx=auto_idx)
+        comp_idx = await _load_components(
+            org_id, db, comp_names, bundle,
+            start_idx=auto_idx, hidden_terms=hidden_terms,
+        )
 
     queries = [f"{domain_name} business process"]
     if key_terms:
         queries.append(" ".join(key_terms[:5]))
-    await _load_document_chunks(org_id, db, queries, bundle, start_idx=comp_idx)
+    await _load_document_chunks(
+        org_id, db, queries, bundle, start_idx=comp_idx,
+        hidden_terms=hidden_terms,
+    )
 
     bundle.community_summary = await _load_community_summary(
         org_id, db, expanded_objects,
         auto_names=auto_names, comp_names=comp_names,
-        domain_name=domain_name,
+        domain_name=domain_name, hidden_terms=hidden_terms,
     )
 
     return bundle
@@ -201,8 +218,19 @@ async def _expand_via_graph(
             ).limit(MAX_EDGES)
         )
         edges = q.scalars().all()
+        object_names = set()
+        for e in edges:
+            if e.source_type == "object":
+                object_names.add(e.source_api_name)
+            if e.target_type == "object":
+                object_names.add(e.target_api_name)
+        visible_objects = await visible_object_names(org_id, db, object_names)
         next_seeds: set[str] = set()
         for e in edges:
+            if e.source_type == "object" and e.source_api_name not in visible_objects:
+                continue
+            if e.target_type == "object" and e.target_api_name not in visible_objects:
+                continue
             edge_dict = {
                 "source": e.source_api_name,
                 "source_type": e.source_type,
@@ -231,6 +259,7 @@ async def _load_objects(
         select(MetadataObject).where(
             MetadataObject.org_id == org_id,
             MetadataObject.api_name.in_(object_names),
+            metadata_object_visible_clause(),
         )
     )
     objects = q.scalars().all()
@@ -336,6 +365,7 @@ async def _load_automations(
     key_objects: list[str],
     bundle: EvidenceBundle,
     start_idx: int = 0,
+    hidden_terms: set[str] | None = None,
 ) -> int:
     """Load automations into the bundle. Returns next index."""
     conditions = [MetadataAutomation.org_id == org_id]
@@ -352,10 +382,15 @@ async def _load_automations(
         return start_idx
 
     q = await db.execute(select(MetadataAutomation).where(*conditions).limit(MAX_BUNDLE_ITEMS))
+    automations = list(q.scalars().all())
+    related_objects = {a.related_object for a in automations if a.related_object}
+    visible_related_objects = await visible_object_names(org_id, db, related_objects)
     idx = start_idx
-    for a in q.scalars().all():
+    for a in automations:
         if idx >= MAX_BUNDLE_ITEMS:
             break
+        if a.related_object and a.related_object not in visible_related_objects:
+            continue
         meta = a.metadata_json or {}
         content_lines = [f"  Type: {a.automation_type}", f"  Status: {a.status or 'Unknown'}"]
         if a.related_object:
@@ -431,13 +466,17 @@ async def _load_automations(
             if soql:
                 content_lines.append(f"  SOQL Objects: {', '.join(str(o) for o in soql[:8])}")
 
+        content = redact_hidden_metadata_text("\n".join(content_lines), hidden_terms or set())
+        if not content:
+            continue
+
         bundle.items.append(EvidenceItem(
             tag=f"AUTO-{idx - start_idx}",
             type="automation",
             id=str(a.id),
             api_name=a.api_name,
             label=a.label or a.api_name,
-            content="\n".join(content_lines),
+            content=content,
         ))
         idx += 1
 
@@ -450,6 +489,7 @@ async def _load_components(
     comp_names: set[str],
     bundle: EvidenceBundle,
     start_idx: int = 0,
+    hidden_terms: set[str] | None = None,
 ) -> int:
     """Load components into the bundle. Returns next index."""
     if not comp_names:
@@ -461,8 +501,16 @@ async def _load_components(
             MetadataComponent.api_name.in_(comp_names),
         ).limit(15)
     )
+    components = list(q.scalars().all())
+    related_objects = {
+        str(obj)
+        for c in components
+        for obj in ((c.metadata_json or {}).get("related_objects") or [])
+        if obj
+    }
+    visible_related_objects = await visible_object_names(org_id, db, related_objects)
     idx = start_idx
-    for c in q.scalars().all():
+    for c in components:
         if idx >= MAX_BUNDLE_ITEMS:
             break
         meta = c.metadata_json or {}
@@ -471,11 +519,18 @@ async def _load_components(
         if desc:
             content_lines.append(f"  Description: {desc[:200]}")
         related = meta.get("related_objects", [])
-        if related:
-            content_lines.append(f"  Related Objects: {', '.join(str(o) for o in related[:8])}")
+        visible_related = [str(o) for o in related[:8] if str(o) in visible_related_objects]
+        if related and not visible_related:
+            continue
+        if visible_related:
+            content_lines.append(f"  Related Objects: {', '.join(visible_related)}")
         api_version = meta.get("api_version")
         if api_version:
             content_lines.append(f"  API Version: {api_version}")
+
+        content = redact_hidden_metadata_text("\n".join(content_lines), hidden_terms or set())
+        if not content:
+            continue
 
         bundle.items.append(EvidenceItem(
             tag=f"COMP-{idx - start_idx}",
@@ -484,7 +539,7 @@ async def _load_components(
             api_name=c.api_name,
             label=c.label or c.api_name,
             category=c.component_category or "",
-            content="\n".join(content_lines),
+            content=content,
         ))
         idx += 1
 
@@ -497,6 +552,7 @@ async def _load_document_chunks(
     queries: list[str],
     bundle: EvidenceBundle,
     start_idx: int = 0,
+    hidden_terms: set[str] | None = None,
 ) -> int:
     """Vector-search for document chunks and add to bundle."""
     from app.services.processes.context import batch_semantic_search
@@ -525,7 +581,12 @@ async def _load_document_chunks(
             if doc_id not in doc_name_cache:
                 doc_name_cache[doc_id] = await _get_document_name(db, doc_id)
 
-            content = (chunk.get("content") or "")[:600]
+            content = redact_hidden_metadata_text(
+                (chunk.get("content") or "")[:600],
+                hidden_terms or set(),
+            )
+            if not content:
+                continue
             bundle.items.append(EvidenceItem(
                 tag=f"DOC-{doc_idx}",
                 type="document_chunk",
@@ -558,6 +619,7 @@ async def _load_community_summary(
     auto_names: set[str] | None = None,
     comp_names: set[str] | None = None,
     domain_name: str = "",
+    hidden_terms: set[str] | None = None,
 ) -> str | None:
     """Find the metadata community summaries most relevant to this domain.
 
@@ -586,7 +648,15 @@ async def _load_community_summary(
                 )
                 results = q.scalars().all()
                 if results:
-                    summaries = [c.summary for c in results if c.summary]
+                    summaries = [
+                        redacted
+                        for c in results
+                        if c.summary
+                        for redacted in [
+                            redact_hidden_metadata_text(c.summary, hidden_terms or set())
+                        ]
+                        if redacted
+                    ]
                     if summaries:
                         return "\n\n".join(summaries[:3])
         except Exception:
@@ -632,9 +702,12 @@ async def _load_community_summary(
         overlap = len(members & typed_names)
         if overlap > best_overlap:
             best_overlap = overlap
-            best_summaries = [comm.summary or ""]
+            redacted = redact_hidden_metadata_text(comm.summary or "", hidden_terms or set())
+            best_summaries = [redacted] if redacted else []
         elif overlap == best_overlap and overlap > 0 and comm.summary:
-            best_summaries.append(comm.summary)
+            redacted = redact_hidden_metadata_text(comm.summary, hidden_terms or set())
+            if redacted:
+                best_summaries.append(redacted)
 
     return "\n\n".join(best_summaries[:3]) if best_summaries else None
 

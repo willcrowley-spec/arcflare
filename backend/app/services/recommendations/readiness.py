@@ -191,6 +191,12 @@ def _contains_any(blob: str, terms: Sequence[str]) -> bool:
 
 
 def _runtime_reasoning_required(opportunity: Mapping[str, Any]) -> bool:
+    explicit = opportunity.get("runtime_reasoning_required")
+    if isinstance(explicit, bool):
+        return explicit
+    explicit = opportunity.get("requires_runtime_reasoning")
+    if isinstance(explicit, bool):
+        return explicit
     reasoning = _reasoning_types(opportunity)
     blob = _text(
         opportunity.get("agent_name"),
@@ -261,52 +267,78 @@ def classify_opportunity(
     blockers.extend(missing_evidence)
     blockers = sorted(set(blockers))
 
-    if structured_integration and not requires_reasoning:
-        candidate_type = "external_integration_candidate"
+    explicit_path = _text(opp.get("recommended_build_path") or opp.get("automation_path"))
+    explicit_category = _text(opp.get("portfolio_category_v1") or opp.get("portfolio_category"))
+
+    if explicit_path in {
+        "agentforce_agent",
+        "apex_automation",
+        "external_integration",
+        "analytics",
+        "human_process_or_policy",
+        "needs_evidence",
+        "no_build",
+    }:
+        candidate_type = explicit_path
+        automation_path = explicit_path
+        recommended_next_action = {
+            "agentforce_agent": "generate_agent",
+            "apex_automation": "design_apex_automation",
+            "external_integration": "define_integration_contract",
+            "analytics": "design_metric_view",
+            "human_process_or_policy": "document_policy_fix",
+            "needs_evidence": "collect_evidence",
+            "no_build": "no_build",
+        }[explicit_path]
+        not_agent_reason = _text(opp.get("not_agent_reason"))
+        if not not_agent_reason and explicit_path != "agentforce_agent":
+            not_agent_reason = "Apex, integration, analytics, or process change is a better fit than Agentforce."
+    elif structured_integration and not requires_reasoning:
+        candidate_type = "external_integration"
         automation_path = "external_integration"
         recommended_next_action = "define_integration_contract"
         not_agent_reason = (
             "This is structured deterministic integration or sync work, so it should be designed "
-            "as an integration contract, Flow, Apex, or middleware job rather than an agent."
+            "as an integration contract, Apex service, or middleware job rather than an agent."
         )
-    elif deterministic_only and (external_count or has_external_language):
-        candidate_type = "external_integration_candidate"
+    elif deterministic_only and structured_integration:
+        candidate_type = "external_integration"
         automation_path = "external_integration"
         recommended_next_action = "define_integration_contract"
         not_agent_reason = (
             "This is a deterministic integration/sync workflow, so it should be "
             "designed as an integration contract or middleware job rather than an agent."
         )
+    elif deterministic_only or notification_only:
+        candidate_type = "apex_automation"
+        automation_path = "apex_automation"
+        recommended_next_action = "design_apex_automation"
+        not_agent_reason = (
+            "This is deterministic automation; an Apex automation or service is a better fit than Agentforce."
+        )
     elif external_count and not requires_reasoning:
-        candidate_type = "external_integration_candidate"
+        candidate_type = "external_integration"
         automation_path = "external_integration"
         recommended_next_action = "define_integration_contract"
         not_agent_reason = (
             "The main work is moving structured data between systems, not runtime reasoning."
         )
-    elif deterministic_only or notification_only:
-        candidate_type = "flow_candidate"
-        automation_path = "salesforce_flow"
-        recommended_next_action = "design_flow"
-        not_agent_reason = (
-            "This is deterministic automation; Flow or Apex is a better fit than Agentforce."
-        )
     elif analytics and not requires_reasoning:
-        candidate_type = "analytics_candidate"
+        candidate_type = "analytics"
         automation_path = "analytics"
         recommended_next_action = "design_metric_view"
         not_agent_reason = (
             "The value is analytical visibility, not an agent taking actions at runtime."
         )
     elif policy and not requires_reasoning:
-        candidate_type = "human_process_or_policy_fix"
+        candidate_type = "human_process_or_policy"
         automation_path = "human_process"
         recommended_next_action = "document_policy_fix"
         not_agent_reason = (
             "The primary gap is process or policy clarity, not software automation."
         )
     elif requires_reasoning:
-        candidate_type = "agent_candidate"
+        candidate_type = "agentforce_agent"
         automation_path = "agentforce_agent"
         recommended_next_action = "generate_agent"
         not_agent_reason = ""
@@ -318,7 +350,7 @@ def classify_opportunity(
             "Arcflare does not have enough evidence that this needs runtime reasoning."
         )
 
-    if candidate_type == "agent_candidate":
+    if candidate_type == "agentforce_agent":
         if blockers:
             agent_readiness_status = "needs_evidence"
             generate_agent_allowed = False
@@ -343,12 +375,12 @@ def classify_opportunity(
         generate_agent_allowed = False
         disabled_reason = not_agent_reason
 
-    if candidate_type == "agent_candidate":
+    if candidate_type == "agentforce_agent":
         portfolio_category = "agent_candidate"
+    elif explicit_category == "no_build" or candidate_type == "no_build":
+        portfolio_category = "no_build"
     elif agent_readiness_status == "needs_evidence":
         portfolio_category = "needs_evidence"
-    elif candidate_type == "no_build":
-        portfolio_category = "no_build"
     else:
         portfolio_category = "automation_integration"
 
@@ -360,7 +392,7 @@ def classify_opportunity(
     if unresolved_count:
         evidence_bits.append(f"{unresolved_count} unresolved dependency signal(s)")
 
-    if candidate_type == "agent_candidate":
+    if candidate_type == "agentforce_agent":
         agent_fit_summary = (
             "Good Agentforce fit: the work includes bounded runtime reasoning and "
             "validated process/metadata evidence."
@@ -370,11 +402,60 @@ def classify_opportunity(
     else:
         agent_fit_summary = disabled_reason or "Not an Agentforce candidate."
 
+    rubric = {
+        "runtime_reasoning": requires_reasoning,
+        "bounded_scope": bool(opp.get("topics")) and len(_as_list(opp.get("topics"))) <= 6,
+        "validated_process_evidence": bool(process_ids and step_ids),
+        "validated_metadata_evidence": bool(validated) and not unresolved_count,
+        "agent_better_than_apex_or_integration": candidate_type == "agentforce_agent",
+        "safe_to_generate": bool(generate_agent_allowed),
+    }
+    agent_suitability_score = round(
+        (
+            (0.30 if rubric["runtime_reasoning"] else 0.0)
+            + (0.15 if rubric["bounded_scope"] else 0.0)
+            + (0.20 if rubric["validated_process_evidence"] else 0.0)
+            + (0.20 if rubric["validated_metadata_evidence"] else 0.0)
+            + (0.15 if rubric["agent_better_than_apex_or_integration"] else 0.0)
+        ),
+        3,
+    )
+    if candidate_type != "agentforce_agent":
+        agent_suitability_score = min(agent_suitability_score, 0.49)
+
+    qualification_decision = (
+        "ready"
+        if generate_agent_allowed
+        else "needs_evidence"
+        if agent_readiness_status == "needs_evidence"
+        else "blocked"
+        if agent_readiness_status == "blocked"
+        else "not_agent"
+    )
+    qualification_reasons: list[str] = []
+    if requires_reasoning:
+        qualification_reasons.append("Runtime reasoning is required.")
+    if blockers:
+        qualification_reasons.append("Upstream process or metadata evidence is incomplete.")
+    if candidate_type != "agentforce_agent":
+        qualification_reasons.append(
+            disabled_reason or "Apex, integration, analytics, or process change is a better fit."
+        )
+
     return {
         "candidate_type": candidate_type,
         "portfolio_category": portfolio_category,
         "automation_path": automation_path,
+        "recommended_build_path": automation_path,
         "requires_runtime_reasoning": requires_reasoning,
+        "runtime_reasoning_required": requires_reasoning,
+        "agent_suitability_score": agent_suitability_score,
+        "agent_suitability_rubric": rubric,
+        "qualification_decision": qualification_decision,
+        "qualification_reasons": qualification_reasons,
+        "disqualifiers": [] if candidate_type == "agentforce_agent" else [disabled_reason or "not_agent"],
+        "evidence_requirements": blockers,
+        "action_contract_readiness": "ready" if generate_agent_allowed else "blocked",
         "agent_readiness_status": agent_readiness_status,
         "generate_agent_allowed": generate_agent_allowed,
         "generate_agent_disabled_reason": disabled_reason,

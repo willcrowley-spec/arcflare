@@ -28,6 +28,12 @@ from app.services.processes.context import (
     get_relevant_metadata_summaries,
     semantic_document_search,
 )
+from app.services.processes.visibility import (
+    hidden_metadata_terms,
+    metadata_object_visible_clause,
+    redact_hidden_metadata_text,
+    text_mentions_hidden_metadata,
+)
 from app.services.processes.prompts import (
     build_pass1_prompt,
     build_pass3_prompt,
@@ -285,6 +291,12 @@ def _normalize_v2_process_node(raw: object, *, is_child: bool = False) -> dict |
         tp for tp in (_normalize_v2_touchpoint(tp) for tp in _as_list(node.get("system_touchpoints")))
         if tp is not None
     ]
+    if not node["system_touchpoints"]:
+        node["needs_review"] = True
+        try:
+            node["confidence"] = min(float(node.get("confidence", 0.5)), 0.59)
+        except (TypeError, ValueError):
+            node["confidence"] = 0.5
     node["decision_logic"] = _as_list(node.get("decision_logic"))
     node["success_criteria"] = _as_list(node.get("success_criteria"))
     node["failure_modes"] = _as_list(node.get("failure_modes"))
@@ -308,6 +320,44 @@ def _normalize_v2_extraction_result(parsed: dict) -> dict:
     return result
 
 
+def _node_mentions_hidden_metadata(node: dict, hidden_terms: set[str]) -> bool:
+    if not hidden_terms:
+        return False
+    fields = [
+        node.get("name"),
+        node.get("description"),
+        node.get("narrative"),
+        node.get("system_touchpoints"),
+        node.get("trigger_conditions"),
+        node.get("decision_logic"),
+    ]
+    return any(text_mentions_hidden_metadata(str(field or ""), hidden_terms) for field in fields)
+
+
+def _drop_hidden_v2_nodes(parsed: dict, hidden_terms: set[str]) -> dict:
+    """Remove extracted process nodes that mention excluded metadata."""
+    if not hidden_terms:
+        return parsed
+    result = dict(parsed or {})
+    filtered_processes: list[dict] = []
+    for proc in _as_list(result.get("processes")):
+        if not isinstance(proc, dict) or _node_mentions_hidden_metadata(proc, hidden_terms):
+            continue
+        kept_children = [
+            child
+            for child in _as_list(proc.get("children"))
+            if isinstance(child, dict)
+            and not _node_mentions_hidden_metadata(child, hidden_terms)
+        ]
+        if not kept_children:
+            continue
+        filtered = dict(proc)
+        filtered["children"] = kept_children
+        filtered_processes.append(filtered)
+    result["processes"] = filtered_processes
+    return result
+
+
 def _v2_extraction_contract_issues(parsed: dict) -> list[str]:
     """Return blocking shape issues that must not be persisted as good data."""
     issues: list[str] = []
@@ -320,7 +370,7 @@ def _v2_extraction_contract_issues(parsed: dict) -> list[str]:
             issues.append(f"process[{proc_idx}]:not_object")
             continue
         label = _text(proc.get("name")) or f"process[{proc_idx}]"
-        for key in ("evidence_refs", "actors", "trigger_conditions", "system_touchpoints"):
+        for key in ("evidence_refs", "actors", "trigger_conditions"):
             if not _as_list(proc.get(key)):
                 issues.append(f"{label}:missing_{key}")
         children = _as_list(proc.get("children"))
@@ -334,7 +384,7 @@ def _v2_extraction_contract_issues(parsed: dict) -> list[str]:
             child_label = _text(child.get("name")) or f"{label}.child[{child_idx}]"
             if child.get("level") != "step":
                 issues.append(f"{child_label}:child_must_be_step")
-            for key in ("evidence_refs", "actors", "trigger_conditions", "system_touchpoints"):
+            for key in ("evidence_refs", "actors", "trigger_conditions"):
                 if not _as_list(child.get(key)):
                     issues.append(f"{child_label}:missing_{key}")
     return issues[:20]
@@ -1758,6 +1808,7 @@ async def run_v2_phase1(
             select(MetadataObject).where(
                 MetadataObject.org_id == org_id,
                 MetadataObject.record_count > 0,
+                metadata_object_visible_clause(),
             ).order_by(MetadataObject.record_count.desc())
         )
         object_inventory = [
@@ -1766,9 +1817,16 @@ async def run_v2_phase1(
         ]
 
         org_desc = org_ctx.get("description") or org_ctx.get("name", "")
+        hidden_terms = await hidden_metadata_terms(org_id, db)
         meta_summaries = await get_relevant_metadata_summaries(
             org_id, db, org_desc, limit=10, prefer_level=0,
         )
+        meta_summaries = [
+            {**summary, "summary": redacted}
+            for summary in meta_summaries
+            for redacted in [redact_hidden_metadata_text(summary.get("summary", ""), hidden_terms)]
+            if redacted
+        ]
 
         from app.models.document import Document
         doc_summaries: list[dict] = []
@@ -1782,8 +1840,10 @@ async def run_v2_phase1(
                     ).limit(10)
                 )
                 doc_summaries = [
-                    {"label": d.filename, "summary": d.summary}
+                    {"label": d.filename, "summary": redacted}
                     for d in dq.scalars().all()
+                    for redacted in [redact_hidden_metadata_text(d.summary or "", hidden_terms)]
+                    if redacted
                 ]
         except Exception:
             logger.warning("v2_phase1_doc_summary_failed", exc_info=True)
@@ -1890,6 +1950,7 @@ async def run_v2_phase3(
     limit = max(1, int(concurrency or 1))
     semaphore = asyncio.Semaphore(limit)
     prompt_lock = asyncio.Lock()
+    hidden_terms_for_run = await hidden_metadata_terms(org_id, db)
 
     async def _extract_domain(domain: dict, bundle) -> dict:
         async with semaphore:
@@ -1906,6 +1967,14 @@ async def run_v2_phase3(
                 model_config=model_config,
             )
             parsed = _normalize_v2_extraction_result(parsed)
+            parsed = _drop_hidden_v2_nodes(parsed, hidden_terms_for_run)
+            if not _as_list(parsed.get("processes")):
+                logger.info(
+                    "v2_phase3_domain_empty_after_hidden_filter domain=%s",
+                    domain.get("name", "?"),
+                )
+                parsed["domain"] = domain
+                return parsed
             issues = _v2_extraction_contract_issues(parsed)
             if issues:
                 repair_prompt = PromptParts(
@@ -1930,6 +1999,14 @@ async def run_v2_phase3(
                     model_config=model_config,
                 )
                 parsed = _normalize_v2_extraction_result(parsed)
+                parsed = _drop_hidden_v2_nodes(parsed, hidden_terms_for_run)
+                if not _as_list(parsed.get("processes")):
+                    logger.info(
+                        "v2_phase3_repair_empty_after_hidden_filter domain=%s",
+                        domain.get("name", "?"),
+                    )
+                    parsed["domain"] = domain
+                    return parsed
                 issues = _v2_extraction_contract_issues(parsed)
                 if issues:
                     raise ValueError(
@@ -2400,6 +2477,7 @@ async def run_v2_quality_scoring(
         select(MetadataObject).where(
             MetadataObject.org_id == org_id,
             MetadataObject.record_count > 0,
+            metadata_object_visible_clause(),
         )
     )
     all_objects = objects_q.scalars().all()

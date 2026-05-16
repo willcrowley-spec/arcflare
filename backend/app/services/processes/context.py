@@ -16,6 +16,7 @@ from app.models.metadata import (
     MetadataObject,
 )
 from app.models.organization import Organization
+from app.services.processes.visibility import metadata_object_visible_clause
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ async def gather_metadata_summary(org_id: UUID, db: AsyncSession) -> dict:
         select(MetadataObject).where(
             MetadataObject.org_id == org_id,
             MetadataObject.record_count > 0,
+            metadata_object_visible_clause(),
         ).order_by(MetadataObject.record_count.desc())
     )
     objects = objects_q.scalars().all()
@@ -114,6 +116,7 @@ async def gather_metadata_for_domain(
             select(MetadataObject).where(
                 MetadataObject.org_id == org_id,
                 MetadataObject.api_name.in_(object_names),
+                metadata_object_visible_clause(),
             )
         )
         objects = objects_q.scalars().all()
@@ -386,6 +389,7 @@ async def gather_metadata_relationships(
         select(MetadataObject.id).where(
             MetadataObject.org_id == org_id,
             MetadataObject.api_name.in_(object_names),
+            metadata_object_visible_clause(),
         )
     )
     obj_ids = [row[0] for row in obj_ids_q.all()]

@@ -60,6 +60,16 @@ def _component_ref_type(value: str | None) -> str:
     return "flow"
 
 
+def _split_component_method(value: str) -> tuple[str, str | None]:
+    raw = _text(value)
+    if "." not in raw:
+        return raw, None
+    component, method = raw.split(".", 1)
+    if not component or not method:
+        return raw, None
+    return component, method
+
+
 def _metadata_indexes(
     salesforce_metadata: Mapping[str, Any] | None,
 ) -> tuple[dict[str, dict], dict[str, set[str]], dict[str, dict], dict[str, dict]]:
@@ -182,6 +192,17 @@ def _touchpoint_object_and_fields(touchpoint: Any) -> tuple[str, list[str], str,
 
     raw = _text(touchpoint)
     return raw, [], "read", raw
+
+
+def _relationship_lookup_field(field_api_name: str) -> str | None:
+    if "." not in field_api_name:
+        return None
+    relationship, _rest = field_api_name.split(".", 1)
+    if relationship.endswith("__r"):
+        return f"{relationship[:-3]}__c"
+    if relationship and relationship[0].isupper():
+        return f"{relationship}Id"
+    return None
 
 
 def _replacement_ids(opportunity: Mapping[str, Any]) -> tuple[set[str], set[str]]:
@@ -317,6 +338,7 @@ def _binding(
     evidence: Mapping[str, Any] | None = None,
     raw_value: str | None = None,
     reason: str | None = None,
+    metadata_detail: Mapping[str, Any] | None = None,
 ) -> dict:
     evidence = evidence or {}
     row = {
@@ -335,6 +357,8 @@ def _binding(
         row["raw_value"] = raw_value
     if reason:
         row["reason"] = reason
+    if metadata_detail:
+        row["metadata_detail"] = dict(metadata_detail)
     return row
 
 
@@ -425,6 +449,12 @@ def build_metadata_bindings(
                 _text(touchpoint.get("operation")) if isinstance(touchpoint, Mapping) else "execute"
             ) or "execute"
             component = automation_index.get(raw_value.lower()) or component_index.get(raw_value.lower())
+            component_name, method_name = _split_component_method(raw_value)
+            if component is None and method_name:
+                component = (
+                    automation_index.get(component_name.lower())
+                    or component_index.get(component_name.lower())
+                )
             if component is None:
                 unresolved.append(
                     _binding(
@@ -452,6 +482,7 @@ def build_metadata_bindings(
                     status=VALIDATED_STATUS,
                     evidence=evidence,
                     raw_value=raw_value,
+                    metadata_detail={"method_name": method_name} if method_name else None,
                 )
             )
             telemetry[f"bindings_from_{source}s"] += 1
@@ -493,6 +524,52 @@ def build_metadata_bindings(
         known_fields = field_index.get(obj["api_name"].lower(), set())
         known_fields_lower = _lower_set(known_fields)
         for field in fields:
+            relationship_lookup = _relationship_lookup_field(field)
+            if relationship_lookup:
+                if relationship_lookup.lower() in known_fields_lower:
+                    bindings.append(
+                        _binding(
+                            ref_type="relationship_field",
+                            api_name=f"{obj['api_name']}.{field}",
+                            object_api_name=obj["api_name"],
+                            field_api_name=field,
+                            operation=operation,
+                            source=source,
+                            confidence=0.9,
+                            status=VALIDATED_STATUS,
+                            evidence=evidence,
+                            raw_value=raw_value,
+                            metadata_detail={
+                                "relationship_lookup_field": next(
+                                    (
+                                        known
+                                        for known in known_fields
+                                        if known.lower() == relationship_lookup.lower()
+                                    ),
+                                    relationship_lookup,
+                                )
+                            },
+                        )
+                    )
+                    telemetry[f"bindings_from_{source}s"] += 1
+                    continue
+                unresolved.append(
+                    _binding(
+                        ref_type="relationship_field",
+                        api_name=f"{obj['api_name']}.{field}",
+                        object_api_name=obj["api_name"],
+                        field_api_name=field,
+                        operation=operation,
+                        source=source,
+                        confidence=1.0,
+                        status=UNRESOLVED_STATUS,
+                        evidence=evidence,
+                        raw_value=raw_value,
+                        reason="unknown_relationship_field",
+                        metadata_detail={"relationship_lookup_field": relationship_lookup},
+                    )
+                )
+                continue
             if not known_fields:
                 unresolved.append(
                     _binding(

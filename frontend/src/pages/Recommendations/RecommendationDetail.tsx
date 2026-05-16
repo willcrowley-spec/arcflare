@@ -403,10 +403,12 @@ const AUTOMATION_COPY: Record<Recommendation['automation_type'], { label: string
 const NEXT_ACTION_LABEL: Record<string, string> = {
   collect_evidence: 'Collect Evidence',
   define_integration_contract: 'Define Integration Contract',
-  design_flow: 'Design Flow',
+  design_apex_automation: 'Design Apex Automation',
+  design_flow: 'Design Apex Automation',
   design_metric_view: 'Design Metric View',
   document_policy_fix: 'Document Policy Fix',
   generate_agent: 'Generate Agent',
+  no_build: 'No Build',
 }
 
 const EFFORT_PILL: Record<string, string> = {

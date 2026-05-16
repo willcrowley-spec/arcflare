@@ -63,8 +63,58 @@ class RecommendationResponse(BaseModel):
 
     @computed_field
     @property
+    def recommended_build_path(self) -> str:
+        return str(self._readiness_payload().get("recommended_build_path") or "needs_evidence")
+
+    @computed_field
+    @property
     def agent_readiness_status(self) -> str:
         return str(self._readiness_payload().get("agent_readiness_status") or "needs_evidence")
+
+    @computed_field
+    @property
+    def qualification_decision(self) -> str:
+        return str(self._readiness_payload().get("qualification_decision") or "needs_evidence")
+
+    @computed_field
+    @property
+    def qualification_reasons(self) -> list[str]:
+        value = self._readiness_payload().get("qualification_reasons")
+        return list(value) if isinstance(value, list) else []
+
+    @computed_field
+    @property
+    def disqualifiers(self) -> list[str]:
+        value = self._readiness_payload().get("disqualifiers")
+        return list(value) if isinstance(value, list) else []
+
+    @computed_field
+    @property
+    def evidence_requirements(self) -> list[str]:
+        value = self._readiness_payload().get("evidence_requirements")
+        return list(value) if isinstance(value, list) else []
+
+    @computed_field
+    @property
+    def runtime_reasoning_required(self) -> bool:
+        return bool(self._readiness_payload().get("runtime_reasoning_required"))
+
+    @computed_field
+    @property
+    def agent_suitability_score(self) -> float:
+        value = self._readiness_payload().get("agent_suitability_score")
+        return float(value) if isinstance(value, int | float) else 0.0
+
+    @computed_field
+    @property
+    def agent_suitability_rubric(self) -> dict:
+        value = self._readiness_payload().get("agent_suitability_rubric")
+        return dict(value) if isinstance(value, dict) else {}
+
+    @computed_field
+    @property
+    def action_contract_readiness(self) -> str:
+        return str(self._readiness_payload().get("action_contract_readiness") or "blocked")
 
     @computed_field
     @property

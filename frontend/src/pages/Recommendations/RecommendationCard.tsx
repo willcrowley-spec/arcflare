@@ -27,6 +27,15 @@ export interface Recommendation {
   analysis_inputs_json?: unknown[]
   portfolio_category: 'agent_candidate' | 'automation_integration' | 'needs_evidence' | 'no_build'
   automation_path: string
+  recommended_build_path: string
+  qualification_decision: string
+  qualification_reasons: string[]
+  disqualifiers: string[]
+  evidence_requirements: string[]
+  runtime_reasoning_required: boolean
+  agent_suitability_score: number
+  agent_suitability_rubric: Record<string, unknown>
+  action_contract_readiness: string
   agent_readiness_status: 'ready' | 'needs_evidence' | 'not_agent' | 'blocked'
   generate_agent_allowed: boolean
   generate_agent_disabled_reason: string | null
