@@ -137,7 +137,6 @@ MODEL_OPERATIONS: dict[str, dict] = {
         "model": "cerebras/gpt-oss-120b",
         "tier": "strong",
         "thinking_budget": 0,
-        "reasoning_effort": "high",
         "output_format": "json",
         "label": "v2 Per-Domain Extraction",
         "group": "discovery",

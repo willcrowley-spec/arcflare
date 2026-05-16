@@ -45,9 +45,9 @@ def test_upstream_generation_operations_are_cerebras_first():
         assert resolve_model(operation=operation, tier="strong") == expected
 
 
-def test_discovery_v2_extraction_uses_high_reasoning_cerebras_strict_schema():
+def test_discovery_v2_extraction_uses_cerebras_strict_schema_without_reasoning_tokens():
     assert resolve_model(operation="discovery_v2_extraction", tier="fast") == "cerebras/gpt-oss-120b"
-    assert get_reasoning_effort("discovery_v2_extraction") == "high"
+    assert get_reasoning_effort("discovery_v2_extraction") is None
     assert get_structured_mode("discovery_v2_extraction") == "json_schema"
 
 
