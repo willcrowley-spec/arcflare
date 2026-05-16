@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +25,37 @@ def _text(value: Any) -> str:
 def _normalize_for_match(value: str) -> str:
     normalized = "".join(ch.lower() if ch.isalnum() else " " for ch in value)
     return " ".join(part for part in normalized.split() if part)
+
+
+def _contains_normalized_phrase(text: str, phrase: str) -> bool:
+    normalized_text = _normalize_for_match(text)
+    normalized_phrase = _normalize_for_match(phrase)
+    if not normalized_text or not normalized_phrase:
+        return False
+    return re.search(rf"(^| ){re.escape(normalized_phrase)}( |$)", normalized_text) is not None
+
+
+def _is_single_token_plain_term(term: str) -> bool:
+    return len(_normalize_for_match(term).split()) == 1 and "__" not in term and "_" not in term
+
+
+def _looks_like_metadata_reference(text: str) -> bool:
+    lower = text.lower()
+    markers = (
+        "api_name",
+        "field:",
+        "fields:",
+        "metadata object",
+        "object:",
+        "object_api_name",
+        "objects touched",
+        "related object",
+        "salesforce object",
+        "soql objects",
+        "system_touchpoint",
+        "touchpoint",
+    )
+    return "__" in text or any(marker in lower for marker in markers)
 
 
 def _api_variants(value: str) -> set[str]:
@@ -63,13 +95,14 @@ def text_mentions_hidden_metadata(text: str, hidden_terms: set[str]) -> bool:
     """Return whether text contains an excluded object's API or label variant."""
     if not text or not hidden_terms:
         return False
-    normalized_text = _normalize_for_match(text)
     raw_lower = text.lower()
+    metadata_reference = _looks_like_metadata_reference(text)
     for term in hidden_terms:
-        normalized_term = _normalize_for_match(term)
-        if normalized_term and normalized_term in normalized_text:
+        if _is_single_token_plain_term(term) and not metadata_reference:
+            continue
+        if _contains_normalized_phrase(text, term):
             return True
-        if term.lower() in raw_lower:
+        if not _is_single_token_plain_term(term) and term.lower() in raw_lower:
             return True
     return False
 

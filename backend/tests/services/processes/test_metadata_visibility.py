@@ -2,6 +2,7 @@ from app.services.processes.visibility import (
     hidden_metadata_terms_from_objects,
     is_visible_metadata_object,
     redact_hidden_metadata_text,
+    text_mentions_hidden_metadata,
 )
 
 
@@ -57,3 +58,24 @@ def test_redact_hidden_metadata_text_removes_hidden_lines_and_keeps_allowed_evid
     assert "Parse_Payment_Amount_and_Invoice_Data" not in redacted
     assert "QuickBooksInvoice__c" in redacted
     assert "Insert_Payment_Record" in redacted
+
+
+def test_redact_hidden_metadata_text_does_not_remove_generic_business_prose():
+    text = "\n".join(
+        [
+            "Users review submitted support requests for completeness.",
+            "Object: User",
+            "SOQL Objects: User",
+        ]
+    )
+
+    redacted = redact_hidden_metadata_text(text, {"User"})
+
+    assert "Users review submitted support requests for completeness." in redacted
+    assert "Object: User" not in redacted
+    assert "SOQL Objects: User" not in redacted
+
+
+def test_single_token_hidden_terms_only_match_metadata_reference_context():
+    assert text_mentions_hidden_metadata("Users review case context.", {"User"}) is False
+    assert text_mentions_hidden_metadata("Object: User", {"User"}) is True

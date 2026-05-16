@@ -239,3 +239,62 @@ def test_v2_hidden_nodes_are_removed_before_persistence():
 
     children = filtered["processes"][0]["children"]
     assert [child["name"] for child in children] == ["Insert Payment Record"]
+
+
+def test_v2_hidden_single_token_labels_do_not_drop_visible_business_nodes():
+    parsed = {
+        "processes": [
+            {
+                "name": "Support user review",
+                "level": "process",
+                "description": "Users review support cases before escalation.",
+                "evidence_refs": ["DOC-1"],
+                "confidence": 0.8,
+                "needs_review": False,
+                "actors": [{"name": "Support Agent", "type": "user", "evidence_refs": ["DOC-1"]}],
+                "trigger_conditions": [{"description": "Case submitted", "evidence_refs": ["DOC-1"]}],
+                "system_touchpoints": [
+                    {
+                        "name": "Case",
+                        "type": "object",
+                        "operation": "read",
+                        "fields": ["Case.Status"],
+                        "evidence_refs": ["OBJ-1"],
+                    }
+                ],
+                "value_classification": "BVA",
+                "complexity_score": "medium",
+                "automation_potential": "medium",
+                "children": [
+                    {
+                        "name": "Review submitted case",
+                        "level": "step",
+                        "description": "The user checks customer-provided case details.",
+                        "evidence_refs": ["DOC-1"],
+                        "confidence": 0.8,
+                        "needs_review": False,
+                        "actors": [{"name": "Support Agent", "type": "user", "evidence_refs": ["DOC-1"]}],
+                        "trigger_conditions": [{"description": "Case submitted", "evidence_refs": ["DOC-1"]}],
+                        "system_touchpoints": [
+                            {
+                                "name": "Case",
+                                "type": "object",
+                                "operation": "read",
+                                "fields": ["Case.Status"],
+                                "evidence_refs": ["OBJ-1"],
+                            }
+                        ],
+                        "value_classification": "BVA",
+                        "complexity_score": "medium",
+                        "automation_potential": "medium",
+                    }
+                ],
+            }
+        ]
+    }
+
+    normalized = _normalize_v2_extraction_result(parsed)
+    filtered = _drop_hidden_v2_nodes(normalized, {"User"})
+
+    assert [proc["name"] for proc in filtered["processes"]] == ["Support user review"]
+    assert filtered["processes"][0]["children"][0]["name"] == "Review submitted case"

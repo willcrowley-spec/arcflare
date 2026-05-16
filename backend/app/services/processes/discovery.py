@@ -331,7 +331,24 @@ def _node_mentions_hidden_metadata(node: dict, hidden_terms: set[str]) -> bool:
         node.get("trigger_conditions"),
         node.get("decision_logic"),
     ]
-    return any(text_mentions_hidden_metadata(str(field or ""), hidden_terms) for field in fields)
+    if any(text_mentions_hidden_metadata(str(field or ""), hidden_terms) for field in fields):
+        return True
+    for touchpoint in _as_list(node.get("system_touchpoints")):
+        if not isinstance(touchpoint, dict):
+            continue
+        touchpoint_refs = [
+            touchpoint.get("object_api_name"),
+            touchpoint.get("name"),
+            touchpoint.get("api_name"),
+            touchpoint.get("fields"),
+        ]
+        if any(
+            text_mentions_hidden_metadata(f"Object: {ref}", hidden_terms)
+            for ref in touchpoint_refs
+            if ref
+        ):
+            return True
+    return False
 
 
 def _drop_hidden_v2_nodes(parsed: dict, hidden_terms: set[str]) -> dict:
