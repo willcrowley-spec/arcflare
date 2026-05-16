@@ -39,6 +39,10 @@ def _is_single_token_plain_term(term: str) -> bool:
     return len(_normalize_for_match(term).split()) == 1 and "__" not in term and "_" not in term
 
 
+def _is_multi_token_term(term: str) -> bool:
+    return len(_normalize_for_match(term).split()) > 1
+
+
 def _looks_like_metadata_reference(text: str) -> bool:
     lower = text.lower()
     markers = (
@@ -73,7 +77,7 @@ def _api_variants(value: str) -> set[str]:
             break
     if "__" in stem:
         stem = stem.split("__", 1)[1]
-    if stem:
+    if stem and ("_" in stem or _is_multi_token_term(stem)):
         variants.add(stem)
         variants.add(stem.replace("_", " "))
     return variants
@@ -85,7 +89,7 @@ def hidden_metadata_terms_from_objects(objects: list[Any]) -> set[str]:
     for obj in objects:
         terms.update(_api_variants(getattr(obj, "api_name", "")))
         label = _text(getattr(obj, "label", ""))
-        if label:
+        if label and _is_multi_token_term(label):
             terms.add(label)
             terms.add(label.replace(" ", "_"))
     return {term for term in terms if term}

@@ -42,6 +42,21 @@ def test_hidden_metadata_terms_include_namespaced_and_label_variants():
     assert "QuickBooks_Realm" in terms
 
 
+def test_hidden_metadata_terms_do_not_include_broad_one_word_stripped_variants():
+    terms = hidden_metadata_terms_from_objects(
+        [
+            _MetadataObject(
+                "CHANNEL_ORDERS__Customer__c",
+                "Customer",
+            )
+        ]
+    )
+
+    assert "CHANNEL_ORDERS__Customer__c" in terms
+    assert "Customer__c" in terms
+    assert "Customer" not in terms
+
+
 def test_redact_hidden_metadata_text_removes_hidden_lines_and_keeps_allowed_evidence():
     text = "\n".join(
         [

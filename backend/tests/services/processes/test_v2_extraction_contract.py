@@ -298,3 +298,61 @@ def test_v2_hidden_single_token_labels_do_not_drop_visible_business_nodes():
 
     assert [proc["name"] for proc in filtered["processes"]] == ["Support user review"]
     assert filtered["processes"][0]["children"][0]["name"] == "Review submitted case"
+
+
+def test_v2_hidden_namespaced_customer_object_does_not_drop_quickbooks_customer_process():
+    parsed = {
+        "processes": [
+            {
+                "name": "Account to QuickBooks Customer Sync",
+                "level": "process",
+                "description": "Creates or updates the QuickBooks customer representation for a visible Account.",
+                "evidence_refs": ["OBJ-1"],
+                "confidence": 0.8,
+                "needs_review": False,
+                "actors": [{"name": "Integration", "type": "integration", "evidence_refs": ["OBJ-1"]}],
+                "trigger_conditions": [{"description": "Account changes", "evidence_refs": ["OBJ-1"]}],
+                "system_touchpoints": [
+                    {
+                        "name": "Account",
+                        "type": "object",
+                        "operation": "read",
+                        "fields": ["Account.Name"],
+                        "evidence_refs": ["OBJ-1"],
+                    }
+                ],
+                "value_classification": "BVA",
+                "complexity_score": "medium",
+                "automation_potential": "medium",
+                "children": [
+                    {
+                        "name": "Create QuickBooks Customer",
+                        "level": "step",
+                        "description": "Creates the QuickBooks customer through the integration.",
+                        "evidence_refs": ["OBJ-1"],
+                        "confidence": 0.8,
+                        "needs_review": False,
+                        "actors": [{"name": "Integration", "type": "integration", "evidence_refs": ["OBJ-1"]}],
+                        "trigger_conditions": [{"description": "Account changes", "evidence_refs": ["OBJ-1"]}],
+                        "system_touchpoints": [
+                            {
+                                "name": "Account",
+                                "type": "object",
+                                "operation": "read",
+                                "fields": ["Account.Name"],
+                                "evidence_refs": ["OBJ-1"],
+                            }
+                        ],
+                        "value_classification": "BVA",
+                        "complexity_score": "medium",
+                        "automation_potential": "medium",
+                    }
+                ],
+            }
+        ]
+    }
+
+    normalized = _normalize_v2_extraction_result(parsed)
+    filtered = _drop_hidden_v2_nodes(normalized, {"CHANNEL_ORDERS__Customer__c", "Customer__c"})
+
+    assert [proc["name"] for proc in filtered["processes"]] == ["Account to QuickBooks Customer Sync"]
