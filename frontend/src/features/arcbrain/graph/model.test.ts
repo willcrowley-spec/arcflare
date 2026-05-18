@@ -88,4 +88,90 @@ describe('buildArcbrainScene', () => {
 
     expect(minimumDistance).toBeGreaterThanOrEqual(28)
   })
+
+  it('uses meaningful z depth for operating layers instead of a flat ring', () => {
+    const graph: ArcbrainGraphModel = {
+      nodes: [
+        node('process', { node_type: 'business_process', layer: 'process' }),
+        node('metadata', { node_type: 'metadata_object', layer: 'metadata' }),
+        node('evidence', { node_type: 'evidence_claim', layer: 'evidence' }),
+        node('replacement', { node_type: 'recommendation', layer: 'replacement' }),
+      ],
+      edges: [
+        edge('edge-process-metadata', 'process', 'metadata'),
+        edge('edge-metadata-evidence', 'metadata', 'evidence'),
+        edge('edge-evidence-replacement', 'evidence', 'replacement'),
+      ],
+      communities: [{ id: 'service', label: 'Service', member_node_ids: ['process', 'metadata', 'evidence', 'replacement'] }],
+      summary: {},
+    }
+
+    const scene = buildArcbrainScene(graph, 'overview')
+    const byId = new Map(scene.nodes.map((item) => [item.id, item]))
+    const zValues = scene.nodes.map((item) => item.z)
+    const zSpread = Math.max(...zValues) - Math.min(...zValues)
+
+    expect(zSpread).toBeGreaterThanOrEqual(260)
+    expect(byId.get('metadata')!.z).toBeGreaterThan(byId.get('process')!.z)
+    expect(byId.get('evidence')!.z).toBeGreaterThan(byId.get('metadata')!.z)
+    expect(byId.get('replacement')!.z).toBeGreaterThan(byId.get('evidence')!.z)
+  })
+
+  it('relaxes dense layouts in three dimensions, not only screen x/y', () => {
+    const nodes = Array.from({ length: 36 }, (_, index) =>
+      node(`dense-${index}`, {
+        layer: index % 3 === 0 ? 'process' : index % 3 === 1 ? 'evidence' : 'replacement',
+        node_type: index % 3 === 0 ? 'business_process' : index % 3 === 1 ? 'evidence_claim' : 'recommendation',
+      }),
+    )
+    const graph: ArcbrainGraphModel = {
+      nodes,
+      edges: nodes.slice(1).map((item, index) => edge(`dense-edge-${index}`, nodes[index].id, item.id)),
+      communities: [{ id: 'service', label: 'Service', member_node_ids: nodes.map((item) => item.id) }],
+      summary: {},
+    }
+
+    const scene = buildArcbrainScene(graph, 'overview')
+    const minimumDistance = scene.nodes.reduce((min, source, sourceIndex) => {
+      return scene.nodes.slice(sourceIndex + 1).reduce((innerMin, target) => {
+        const distance = Math.hypot(source.x - target.x, source.y - target.y, source.z - target.z)
+        return Math.min(innerMin, distance)
+      }, min)
+    }, Number.POSITIVE_INFINITY)
+
+    expect(minimumDistance).toBeGreaterThanOrEqual(34)
+  })
+
+  it('caps very large scenes without dropping selected or conversation nodes', () => {
+    const nodes = Array.from({ length: 1505 }, (_, index) =>
+      node(`large-${index}`, {
+        community_id: `community-${index % 8}`,
+        confidence: index % 5 === 0 ? 0.9 : 0.1,
+        replaceability_score: index % 7 === 0 ? 0.9 : 0.1,
+        economic_value: index % 11 === 0 ? 100000 : 0,
+      }),
+    )
+    const selected = nodes[1503]
+    const consulted = nodes[1504]
+    const graph: ArcbrainGraphModel = {
+      nodes,
+      edges: [],
+      communities: Array.from({ length: 8 }, (_, index) => ({ id: `community-${index}`, label: `Community ${index}` })),
+      summary: {},
+    }
+    const searchResult: ArcbrainSearchResult = {
+      answer: 'Arcbrain consulted the protected node.',
+      confidence: 0.8,
+      nodes: [consulted],
+      edges: [],
+      paths: [[consulted.id]],
+    }
+
+    const scene = buildArcbrainScene(graph, 'overview', selected.id, searchResult)
+    const renderedIds = new Set(scene.nodes.map((item) => item.id))
+
+    expect(scene.nodes.length).toBeLessThanOrEqual(1400)
+    expect(renderedIds.has(selected.id)).toBe(true)
+    expect(renderedIds.has(consulted.id)).toBe(true)
+  })
 })

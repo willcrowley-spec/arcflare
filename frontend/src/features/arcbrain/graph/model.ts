@@ -63,6 +63,7 @@ const NODE_TYPE_LAYER: Record<string, string> = {
   agent_design_package: 'replacement',
   blocker: 'replacement',
 }
+const MAX_VISIBLE_SCENE_NODES = 1400
 
 export function normalizeArcbrainSnapshot(raw: ArcbrainSnapshotResponse | null | undefined): ArcbrainGraphModel {
   const nodes = Array.isArray(raw?.nodes) ? raw.nodes.filter((n) => n?.id && n?.label) : []
@@ -201,7 +202,7 @@ export function buildArcbrainScene(
     heatScores.set(item.node.id, clamp01(item.replaceability_score ?? item.node.replaceability_score ?? 0))
   })
 
-  const nodes = positionNodes(graph, lens, heatScores)
+  const nodes = limitSceneNodes(positionNodes(graph, lens, heatScores), graph.edges, highlightedNodeIds)
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const edges = graph.edges.reduce<ArcbrainSceneEdge[]>((acc, edge) => {
@@ -259,6 +260,7 @@ function positionNodes(
     return aIndex - bIndex || a.localeCompare(b)
   })
   const communityCount = Math.max(communityKeys.length, 1)
+  const depthByNodeId = dependencyDepthByNodeId(graph)
 
   const nodes = communityKeys.flatMap((communityKey, communityOrder) => {
     const bucket = [...(nodesByCommunity.get(communityKey) ?? [])].sort((a, b) => {
@@ -266,11 +268,7 @@ function positionNodes(
       const bHeat = heatScores.get(b.id) ?? getNodeHeat(b, lens)
       return bHeat - aHeat || String(a.label).localeCompare(String(b.label)) || a.id.localeCompare(b.id)
     })
-    const orbit = (Math.PI * 2 * communityOrder) / communityCount
-    const clusterRadius = communityCount === 1 ? 0 : 230 + Math.min(120, communityCount * 10)
-    const centerX = Math.cos(orbit) * clusterRadius
-    const centerY = Math.sin(orbit) * clusterRadius * 0.74
-    const centerZ = ((seededUnit(`${communityKey}:z`) - 0.5) * 90)
+    const anchor = communityAnchor(communityKey, communityOrder, communityCount)
 
     return bucket.map((node, index) => {
       const heat = heatScores.get(node.id) ?? getNodeHeat(node, lens)
@@ -278,14 +276,15 @@ function positionNodes(
       const radius = 4.5 + importance * 7
       const localAngle = index * 2.399963 + seededUnit(node.id) * 0.35
       const localRadius = index === 0 ? 0 : Math.sqrt(index) * 42
-      const x = centerX + Math.cos(localAngle) * localRadius
-      const y = centerY + Math.sin(localAngle) * localRadius * 0.86
-      const z = centerZ + ((seededUnit(`${node.id}:z`) - 0.5) * 150) + (nodeLayer(node) === 'replacement' ? 44 : 0)
+      const localZ = layerDepth(node) + (depthByNodeId.get(node.id) ?? 0) * 24 + (seededUnit(`${node.id}:z`) - 0.5) * 14
+      const x = anchor.x + Math.cos(localAngle) * localRadius
+      const y = anchor.y + Math.sin(localAngle) * localRadius * 0.86
+      const z = anchor.z + localZ
       return { ...node, x, y, z, radius, heat }
     })
   })
 
-  return relaxCollisions(nodes)
+  return centerNodes(relaxCollisions(nodes))
 }
 
 function relaxCollisions(nodes: PositionedArcbrainNode[]): PositionedArcbrainNode[] {
@@ -297,20 +296,148 @@ function relaxCollisions(nodes: PositionedArcbrainNode[]): PositionedArcbrainNod
         const b = relaxed[j]
         const dx = b.x - a.x
         const dy = b.y - a.y
-        const distance = Math.max(0.001, Math.hypot(dx, dy))
-        const minimum = a.radius + b.radius + 22
+        const dz = b.z - a.z
+        const distance = Math.max(0.001, Math.hypot(dx, dy, dz))
+        const minimum = a.radius + b.radius + 24
         if (distance >= minimum) continue
         const push = (minimum - distance) / 2
         const nx = dx / distance
         const ny = dy / distance
+        const nz = dz / distance
         a.x -= nx * push
         a.y -= ny * push
+        a.z -= nz * push
         b.x += nx * push
         b.y += ny * push
+        b.z += nz * push
       }
     }
   }
   return relaxed
+}
+
+function centerNodes(nodes: PositionedArcbrainNode[]): PositionedArcbrainNode[] {
+  if (nodes.length === 0) return nodes
+  const bounds = nodes.reduce(
+    (acc, node) => ({
+      minX: Math.min(acc.minX, node.x),
+      maxX: Math.max(acc.maxX, node.x),
+      minY: Math.min(acc.minY, node.y),
+      maxY: Math.max(acc.maxY, node.y),
+      minZ: Math.min(acc.minZ, node.z),
+      maxZ: Math.max(acc.maxZ, node.z),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minZ: Number.POSITIVE_INFINITY,
+      maxZ: Number.NEGATIVE_INFINITY,
+    },
+  )
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerY = (bounds.minY + bounds.maxY) / 2
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2
+  return nodes.map((node) => ({
+    ...node,
+    x: node.x - centerX,
+    y: node.y - centerY,
+    z: node.z - centerZ,
+  }))
+}
+
+function limitSceneNodes(
+  nodes: PositionedArcbrainNode[],
+  edges: ArcbrainEdge[],
+  protectedNodeIds: Set<string>,
+): PositionedArcbrainNode[] {
+  if (nodes.length <= MAX_VISIBLE_SCENE_NODES) return nodes
+
+  const degreeByNodeId = new Map<string, number>()
+  nodes.forEach((node) => degreeByNodeId.set(node.id, 0))
+  edges.forEach((edge) => {
+    if (degreeByNodeId.has(edge.source_node_id)) {
+      degreeByNodeId.set(edge.source_node_id, (degreeByNodeId.get(edge.source_node_id) ?? 0) + 1)
+    }
+    if (degreeByNodeId.has(edge.target_node_id)) {
+      degreeByNodeId.set(edge.target_node_id, (degreeByNodeId.get(edge.target_node_id) ?? 0) + 1)
+    }
+  })
+
+  const selected = new Set(nodes.filter((node) => protectedNodeIds.has(node.id)).map((node) => node.id))
+  nodes
+    .map((node) => ({
+      node,
+      score:
+        node.heat * 4 +
+        (node.radius / 12) +
+        Math.min(2, (degreeByNodeId.get(node.id) ?? 0) / 8) +
+        (node.economic_value ? 0.65 : 0) +
+        (node.risk_level === 'high' || node.risk_level === 'critical' ? 0.4 : 0),
+    }))
+    .sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id))
+    .forEach(({ node }) => {
+      if (selected.size < MAX_VISIBLE_SCENE_NODES) selected.add(node.id)
+    })
+
+  return nodes.filter((node) => selected.has(node.id))
+}
+
+function communityAnchor(communityKey: string, index: number, count: number): { x: number; y: number; z: number } {
+  if (count <= 1) return { x: 0, y: 0, z: 0 }
+  const radius = 280 + Math.min(220, count * 18)
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+  const yUnit = 1 - (2 * (index + 0.5)) / count
+  const ringRadius = Math.sqrt(Math.max(0, 1 - yUnit * yUnit))
+  const angle = index * goldenAngle + seededUnit(communityKey) * 0.35
+  return {
+    x: Math.cos(angle) * ringRadius * radius,
+    y: yUnit * radius * 0.72,
+    z: Math.sin(angle) * ringRadius * radius,
+  }
+}
+
+function layerDepth(node: ArcbrainNode): number {
+  const layer = nodeLayer(node)
+  if (layer === 'process' || layer === 'operations') return -170
+  if (layer === 'people') return -90
+  if (layer === 'metadata' || layer === 'platform') return -20
+  if (layer === 'controls') return 52
+  if (layer === 'evidence') return 125
+  if (layer === 'replacement') return 255
+  return 0
+}
+
+function dependencyDepthByNodeId(graph: ArcbrainGraphModel): Map<string, number> {
+  const nodeIds = new Set(graph.nodes.map((node) => node.id))
+  const inbound = new Map<string, number>()
+  const outbound = new Map<string, string[]>()
+  nodeIds.forEach((id) => {
+    inbound.set(id, 0)
+    outbound.set(id, [])
+  })
+  graph.edges.forEach((edge) => {
+    if (!nodeIds.has(edge.source_node_id) || !nodeIds.has(edge.target_node_id)) return
+    inbound.set(edge.target_node_id, (inbound.get(edge.target_node_id) ?? 0) + 1)
+    outbound.get(edge.source_node_id)?.push(edge.target_node_id)
+  })
+  const queue = [...nodeIds].filter((id) => (inbound.get(id) ?? 0) === 0).sort()
+  const depth = new Map(queue.map((id) => [id, 0]))
+  while (queue.length > 0) {
+    const id = queue.shift()!
+    const baseDepth = depth.get(id) ?? 0
+    for (const nextId of outbound.get(id) ?? []) {
+      const nextDepth = Math.max(depth.get(nextId) ?? 0, baseDepth + 1)
+      depth.set(nextId, nextDepth)
+      inbound.set(nextId, Math.max(0, (inbound.get(nextId) ?? 0) - 1))
+      if (inbound.get(nextId) === 0) queue.push(nextId)
+    }
+  }
+  nodeIds.forEach((id) => {
+    if (!depth.has(id)) depth.set(id, 0)
+  })
+  return depth
 }
 
 function conversationIds(searchResult?: ArcbrainSearchResult | null): Set<string> {

@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import type { ArcbrainEvidenceRef, ArcbrainLens, ArcbrainNode } from '@/types'
-import { ArcbrainConstellation } from '@/features/arcbrain/components/ArcbrainConstellation'
+import { ArcbrainGraphSurface } from '@/features/arcbrain/components/ArcbrainGraphSurface'
 import {
   formatCurrency,
   formatDateTime,
@@ -181,7 +181,7 @@ export default function ArcbrainPage() {
         />
 
         <div className="min-w-0">
-          <ArcbrainConstellation
+          <ArcbrainGraphSurface
             graph={graph}
             lens={lens}
             selectedNodeId={selectedNodeId}
