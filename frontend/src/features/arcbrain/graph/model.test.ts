@@ -69,7 +69,7 @@ describe('buildArcbrainScene', () => {
     expect(scene.mutedNodeIds.has('account')).toBe(true)
   })
 
-  it('keeps dense same-community nodes separated enough for default rendering', () => {
+  it('keeps dense same-community nodes separated enough in 3D space', () => {
     const nodes = Array.from({ length: 24 }, (_, index) => node(`service-${index}`))
     const graph: ArcbrainGraphModel = {
       nodes,
@@ -81,12 +81,12 @@ describe('buildArcbrainScene', () => {
     const scene = buildArcbrainScene(graph, 'overview')
     const minimumDistance = scene.nodes.reduce((min, source, sourceIndex) => {
       return scene.nodes.slice(sourceIndex + 1).reduce((innerMin, target) => {
-        const distance = Math.hypot(source.x - target.x, source.y - target.y)
+        const distance = Math.hypot(source.x - target.x, source.y - target.y, source.z - target.z)
         return Math.min(innerMin, distance)
       }, min)
     }, Number.POSITIVE_INFINITY)
 
-    expect(minimumDistance).toBeGreaterThanOrEqual(28)
+    expect(minimumDistance).toBeGreaterThanOrEqual(34)
   })
 
   it('uses meaningful z depth for operating layers instead of a flat ring', () => {
@@ -140,6 +140,34 @@ describe('buildArcbrainScene', () => {
     }, Number.POSITIVE_INFINITY)
 
     expect(minimumDistance).toBeGreaterThanOrEqual(34)
+  })
+
+  it('uses a volumetric cloud even when one community has one node layer', () => {
+    const nodes = Array.from({ length: 96 }, (_, index) =>
+      node(`same-layer-${index}`, {
+        layer: 'evidence',
+        node_type: 'evidence_claim',
+        community_id: 'evidence',
+        confidence: 0.55 + (index % 4) * 0.08,
+      }),
+    )
+    const graph: ArcbrainGraphModel = {
+      nodes,
+      edges: [],
+      communities: [{ id: 'evidence', label: 'Evidence', member_node_ids: nodes.map((item) => item.id) }],
+      summary: {},
+    }
+
+    const scene = buildArcbrainScene(graph, 'overview')
+    const xValues = scene.nodes.map((item) => item.x)
+    const yValues = scene.nodes.map((item) => item.y)
+    const zValues = scene.nodes.map((item) => item.z)
+    const xSpread = Math.max(...xValues) - Math.min(...xValues)
+    const ySpread = Math.max(...yValues) - Math.min(...yValues)
+    const zSpread = Math.max(...zValues) - Math.min(...zValues)
+
+    expect(zSpread).toBeGreaterThanOrEqual(260)
+    expect(zSpread).toBeGreaterThanOrEqual(Math.min(xSpread, ySpread) * 0.45)
   })
 
   it('caps very large scenes without dropping selected or conversation nodes', () => {

@@ -42,7 +42,7 @@ const LAYER_COLOR: Record<string, string> = {
   other: '#d1d5db',
 }
 const GRAPH_VIEWPORT_HEIGHT = 'clamp(560px, 72vh, 840px)'
-const DEFAULT_CAMERA_POSITION: [number, number, number] = [0, 150, 1500]
+const DEFAULT_CAMERA_POSITION: [number, number, number] = [860, 520, 1850]
 const CAMERA_FAR_PLANE = 60000
 const MIN_CAMERA_DISTANCE = 90
 const MAX_CAMERA_DISTANCE = 24000

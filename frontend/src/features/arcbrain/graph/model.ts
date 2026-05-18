@@ -202,10 +202,11 @@ export function buildArcbrainScene(
     heatScores.set(item.node.id, clamp01(item.replaceability_score ?? item.node.replaceability_score ?? 0))
   })
 
-  const nodes = limitSceneNodes(positionNodes(graph, lens, heatScores), graph.edges, highlightedNodeIds)
+  const sceneGraph = limitGraphForScene(graph, heatScores, highlightedNodeIds, lens)
+  const nodes = positionNodes(sceneGraph, lens, heatScores)
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
-  const edges = graph.edges.reduce<ArcbrainSceneEdge[]>((acc, edge) => {
+  const edges = sceneGraph.edges.reduce<ArcbrainSceneEdge[]>((acc, edge) => {
     const source = nodeById.get(edge.source_node_id)
     const target = nodeById.get(edge.target_node_id)
     if (source && target) acc.push({ ...edge, source, target })
@@ -269,17 +270,17 @@ function positionNodes(
       return bHeat - aHeat || String(a.label).localeCompare(String(b.label)) || a.id.localeCompare(b.id)
     })
     const anchor = communityAnchor(communityKey, communityOrder, communityCount)
+    const sameLayerBucket = new Set(bucket.map((node) => nodeLayer(node))).size <= 1
 
     return bucket.map((node, index) => {
       const heat = heatScores.get(node.id) ?? getNodeHeat(node, lens)
       const importance = clamp01((node.confidence ?? 0.45) * 0.45 + heat * 0.4 + (node.economic_value ? 0.15 : 0))
       const radius = 4.5 + importance * 7
-      const localAngle = index * 2.399963 + seededUnit(node.id) * 0.35
-      const localRadius = index === 0 ? 0 : Math.sqrt(index) * 42
-      const localZ = layerDepth(node) + (depthByNodeId.get(node.id) ?? 0) * 24 + (seededUnit(`${node.id}:z`) - 0.5) * 14
-      const x = anchor.x + Math.cos(localAngle) * localRadius
-      const y = anchor.y + Math.sin(localAngle) * localRadius * 0.86
-      const z = anchor.z + localZ
+      const local = volumetricOffset(node, index, bucket.length, communityKey)
+      const depthZ = layerDepth(node) + (depthByNodeId.get(node.id) ?? 0) * 24
+      const x = anchor.x + local.x
+      const y = anchor.y + local.y
+      const z = anchor.z + depthZ + local.z * (sameLayerBucket ? 1 : 0.24)
       return { ...node, x, y, z, radius, heat }
     })
   })
@@ -347,13 +348,31 @@ function centerNodes(nodes: PositionedArcbrainNode[]): PositionedArcbrainNode[] 
   }))
 }
 
-function limitSceneNodes(
-  nodes: PositionedArcbrainNode[],
-  edges: ArcbrainEdge[],
+function limitGraphForScene(
+  graph: ArcbrainGraphModel,
+  heatScores: Map<string, number>,
   protectedNodeIds: Set<string>,
-): PositionedArcbrainNode[] {
-  if (nodes.length <= MAX_VISIBLE_SCENE_NODES) return nodes
+  lens: ArcbrainLens,
+): ArcbrainGraphModel {
+  if (graph.nodes.length <= MAX_VISIBLE_SCENE_NODES) return graph
 
+  const selected = selectSceneNodeIds(graph.nodes, graph.edges, heatScores, protectedNodeIds, lens)
+  const nodes = graph.nodes.filter((node) => selected.has(node.id))
+  const edges = graph.edges.filter((edge) => selected.has(edge.source_node_id) && selected.has(edge.target_node_id))
+  const communities = graph.communities.map((community) => ({
+    ...community,
+    member_node_ids: community.member_node_ids?.filter((id) => selected.has(id)),
+  }))
+  return { ...graph, nodes, edges, communities }
+}
+
+function selectSceneNodeIds(
+  nodes: ArcbrainNode[],
+  edges: ArcbrainEdge[],
+  heatScores: Map<string, number>,
+  protectedNodeIds: Set<string>,
+  lens: ArcbrainLens,
+): Set<string> {
   const degreeByNodeId = new Map<string, number>()
   nodes.forEach((node) => degreeByNodeId.set(node.id, 0))
   edges.forEach((edge) => {
@@ -370,8 +389,8 @@ function limitSceneNodes(
     .map((node) => ({
       node,
       score:
-        node.heat * 4 +
-        (node.radius / 12) +
+        (heatScores.get(node.id) ?? getNodeHeat(node, lens)) * 4 +
+        (node.confidence ?? 0.45) +
         Math.min(2, (degreeByNodeId.get(node.id) ?? 0) / 8) +
         (node.economic_value ? 0.65 : 0) +
         (node.risk_level === 'high' || node.risk_level === 'critical' ? 0.4 : 0),
@@ -381,7 +400,36 @@ function limitSceneNodes(
       if (selected.size < MAX_VISIBLE_SCENE_NODES) selected.add(node.id)
     })
 
-  return nodes.filter((node) => selected.has(node.id))
+  return selected
+}
+
+function volumetricOffset(
+  node: ArcbrainNode,
+  index: number,
+  count: number,
+  communityKey: string,
+): { x: number; y: number; z: number } {
+  if (count <= 1) return { x: 0, y: 0, z: 0 }
+
+  const seed = seededUnit(`${communityKey}:${node.id}:volume`)
+  const sample = index + 0.5 + seed * 0.72
+  const normalized = sample / count
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+  const zUnit = 1 - 2 * normalized
+  const radiusAtZ = Math.sqrt(Math.max(0, 1 - zUnit * zUnit))
+  const angle = sample * goldenAngle + seed * Math.PI * 2
+  const directionX = Math.cos(angle) * radiusAtZ
+  const directionY = Math.sin(angle) * radiusAtZ
+  const directionZ = zUnit
+  const shell = Math.cbrt(Math.min(1, (index + 1 + seed) / count))
+  const spread = 150 + Math.min(460, Math.cbrt(count) * 54)
+  const jitter = (axis: string) => (seededUnit(`${node.id}:${axis}`) - 0.5) * 18
+
+  return {
+    x: directionX * spread * shell + jitter('x'),
+    y: directionY * spread * shell * 0.9 + jitter('y'),
+    z: directionZ * spread * shell + jitter('z'),
+  }
 }
 
 function communityAnchor(communityKey: string, index: number, count: number): { x: number; y: number; z: number } {
