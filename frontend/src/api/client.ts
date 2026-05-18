@@ -4,6 +4,12 @@ import type {
   AgentGenerationRun,
   AgentSourceBundle,
   AnalysisConfig,
+  ArcbrainBlastRadius,
+  ArcbrainNode,
+  ArcbrainReplacementHeat,
+  ArcbrainSearchRequest,
+  ArcbrainSearchResult,
+  ArcbrainSnapshotResponse,
   BusinessEntity,
   ChatAction,
   ChatThread,
@@ -402,6 +408,17 @@ export const api = {
     usage: (id: string) => request<unknown>(`/agents/${id}/usage`),
     fleetAnalytics: () => request<FleetAnalytics>('/agents/fleet-analytics'),
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+  },
+  arcbrain: {
+    snapshot: () => request<ArcbrainSnapshotResponse>('/arcbrain/snapshot'),
+    search: (body: ArcbrainSearchRequest) =>
+      request<ArcbrainSearchResult>(
+        withQuery('/arcbrain/search', { q: body.query, limit: body.limit ?? 24 }),
+      ),
+    node: (id: string) => request<ArcbrainNode>(`/arcbrain/node/${encodeURIComponent(id)}`),
+    blastRadius: (id: string) =>
+      request<ArcbrainBlastRadius>(`/arcbrain/blast-radius/${encodeURIComponent(id)}`),
+    replacementHeat: () => request<ArcbrainReplacementHeat>('/arcbrain/replacement-heat'),
   },
   agentGenerations: {
     get: (id: string) => request<AgentGenerationRun>(`/agent-generations/${id}`),

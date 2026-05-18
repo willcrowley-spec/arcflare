@@ -759,6 +759,241 @@ export interface ProvenanceLink {
   created_at: string
 }
 
+export type ArcbrainNodeType =
+  | 'metadata_object'
+  | 'metadata_field'
+  | 'automation'
+  | 'apex_class'
+  | 'permission'
+  | 'package'
+  | 'document'
+  | 'document_chunk'
+  | 'evidence_claim'
+  | 'business_domain'
+  | 'business_process'
+  | 'process_step'
+  | 'actor'
+  | 'team'
+  | 'handoff'
+  | 'control'
+  | 'system'
+  | 'integration'
+  | 'recommendation'
+  | 'replacement_decision'
+  | 'agent_action'
+  | 'agent_design_package'
+  | 'risk'
+  | 'metric'
+  | 'assumption'
+  | 'blocker'
+  | (string & {})
+
+export type ArcbrainEdgeType =
+  | 'depends_on'
+  | 'reads'
+  | 'writes'
+  | 'triggers'
+  | 'calls'
+  | 'validates'
+  | 'uses_system'
+  | 'performed_by'
+  | 'owned_by'
+  | 'hands_off_to'
+  | 'governed_by'
+  | 'supported_by_evidence'
+  | 'contradicted_by_evidence'
+  | 'replaces'
+  | 'blocks'
+  | 'requires_permission'
+  | 'drives_metric'
+  | 'saves_cost'
+  | 'increases_risk'
+  | 'part_of'
+  | 'similar_to'
+  | 'same_as'
+  | (string & {})
+
+export type ArcbrainLens = 'overview' | 'replacement_heat' | 'blast_radius' | 'trust'
+
+export type ArcbrainRiskLevel = 'low' | 'medium' | 'high' | 'critical' | string
+
+export type ArcbrainTrustStatus =
+  | 'observed_fact'
+  | 'inferred_claim'
+  | 'assumption'
+  | 'contradiction'
+  | 'stale_evidence'
+  | 'missing_evidence'
+  | 'validated_by_eval'
+  | string
+
+export interface ArcbrainEvidenceRef {
+  id?: string
+  source_type?: string
+  source_ref?: string
+  label?: string
+  excerpt?: string
+  url?: string
+  confidence?: number | null
+  created_at?: string | null
+}
+
+export interface ArcbrainNode {
+  id: string
+  org_id?: string
+  snapshot_id?: string
+  node_type: ArcbrainNodeType
+  source_type?: string | null
+  source_ref?: string | null
+  label: string
+  summary?: string | null
+  layer?: string | null
+  community_id?: string | null
+  confidence?: number | null
+  freshness?: number | string | null
+  risk_level?: ArcbrainRiskLevel | null
+  replaceability_score?: number | null
+  economic_value?: number | null
+  evidence_refs?: Array<ArcbrainEvidenceRef | string>
+  metrics_json?: Record<string, unknown> | null
+  metadata_json?: Record<string, unknown> | null
+  trust_status?: ArcbrainTrustStatus | null
+}
+
+export interface ArcbrainEdge {
+  id: string
+  org_id?: string
+  snapshot_id?: string
+  source_node_id: string
+  target_node_id: string
+  edge_type: ArcbrainEdgeType
+  direction?: 'directed' | 'undirected' | string | null
+  weight?: number | null
+  confidence?: number | null
+  evidence_refs?: Array<ArcbrainEvidenceRef | string>
+  metrics_json?: Record<string, unknown> | null
+  metadata_json?: Record<string, unknown> | null
+  trust_status?: ArcbrainTrustStatus | null
+}
+
+export interface ArcbrainCommunity {
+  id: string
+  label: string
+  summary?: string | null
+  layer?: string | null
+  node_count?: number | null
+  confidence?: number | null
+  evidence_coverage?: number | null
+  replaceability_score?: number | null
+  economic_value?: number | null
+  risk_level?: ArcbrainRiskLevel | null
+  metadata_json?: Record<string, unknown> | null
+}
+
+export interface ArcbrainSummary {
+  node_count?: number
+  edge_count?: number
+  community_count?: number
+  avg_confidence?: number | null
+  average_confidence?: number | null
+  evidence_coverage?: number | null
+  replacement_value?: number | null
+  replacement_value_total?: number | null
+  counts_by_layer?: Record<string, number>
+  counts_by_type?: Record<string, number>
+  high_risk_count?: number | null
+  stale_count?: number | null
+  missing_evidence_count?: number | null
+  manual_work_density?: number | null
+  staleness_status?: string | null
+  projection_status?: string | null
+  generated_at?: string | null
+  summary_text?: string | null
+}
+
+export interface ArcbrainSnapshot {
+  id: string
+  org_id?: string
+  created_at?: string | null
+  source_artifact_ids?: string[]
+  metadata_sync_id?: string | null
+  discovery_run_id?: string | null
+  recommendation_run_id?: string | null
+  replacement_plan_id?: string | null
+  graph_version?: string | null
+  node_count?: number
+  edge_count?: number
+  staleness_status?: string | null
+  projection_status?: string | null
+  summary_json?: ArcbrainSummary | Record<string, unknown> | null
+}
+
+export interface ArcbrainSnapshotResponse {
+  snapshot_id?: string
+  graph_version?: string
+  snapshot?: ArcbrainSnapshot | null
+  nodes: ArcbrainNode[]
+  edges: ArcbrainEdge[]
+  communities: ArcbrainCommunity[]
+  summary?: ArcbrainSummary | null
+}
+
+export interface ArcbrainSearchRequest {
+  query: string
+  lens?: ArcbrainLens
+  focus_node_id?: string | null
+  limit?: number
+}
+
+export interface ArcbrainSearchResult {
+  answer?: string | null
+  answer_type?: string | null
+  confidence?: number | null
+  nodes: ArcbrainNode[]
+  edges: ArcbrainEdge[]
+  paths?: string[][]
+  supporting_claims?: Array<ArcbrainEvidenceRef | string>
+  assumptions?: string[]
+  missing_evidence?: string[]
+  recommended_view?: ArcbrainLens | string | null
+  suggested_next_questions?: string[]
+}
+
+export interface ArcbrainBlastRadius {
+  focus_node: ArcbrainNode | null
+  upstream_nodes: ArcbrainNode[]
+  downstream_nodes: ArcbrainNode[]
+  related_nodes?: ArcbrainNode[]
+  affected_processes?: ArcbrainNode[]
+  affected_teams?: ArcbrainNode[]
+  affected_edges?: ArcbrainEdge[]
+  edges?: ArcbrainEdge[]
+  financial_impact?: number | null
+  risk_impact?: ArcbrainRiskLevel | string | null
+  confidence?: number | null
+  summary?: Record<string, unknown> | null
+  assumptions?: string[]
+  missing_evidence?: string[]
+  alternatives?: ArcbrainNode[]
+}
+
+export interface ArcbrainReplacementHeatItem {
+  node: ArcbrainNode
+  replaceability_score?: number | null
+  economic_value?: number | null
+  confidence?: number | null
+  risk_level?: ArcbrainRiskLevel | null
+  blockers?: string[]
+  recommended_pattern?: 'deterministic' | 'agentic' | 'hybrid' | 'augment_only' | 'do_not_replace' | string | null
+}
+
+export interface ArcbrainReplacementHeat {
+  items?: ArcbrainReplacementHeatItem[]
+  nodes?: ArcbrainNode[]
+  edges?: ArcbrainEdge[]
+  summary?: ArcbrainSummary | null
+}
+
 /** Structured sync event from the backend event log */
 export interface SyncEvent {
   id?: string

@@ -28,6 +28,7 @@ const nav = [
   { to: '/documents', label: 'Documents' },
   { to: '/recommendations', label: 'Recommendations' },
   { to: '/agents', label: 'Agents' },
+  { to: '/arcbrain', label: 'Arcbrain' },
 ]
 
 const headerOrganizationSwitcherAppearance = {

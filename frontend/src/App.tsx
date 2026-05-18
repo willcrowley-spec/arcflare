@@ -9,6 +9,7 @@ import RecommendationsPage from '@/pages/Recommendations'
 import AgentsPage from '@/pages/Agents'
 import AgentBuilderPage from '@/pages/AgentBuilder'
 import PlatformDetailPage from '@/pages/Platforms'
+import ArcbrainPage from '@/pages/Arcbrain'
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/recommendations" element={<RecommendationsPage />} />
         <Route path="/agent-builder/:runId" element={<AgentBuilderPage />} />
         <Route path="/agents" element={<AgentsPage />} />
+        <Route path="/arcbrain" element={<ArcbrainPage />} />
       </Route>
     </Routes>
   )
