@@ -42,6 +42,10 @@ const LAYER_COLOR: Record<string, string> = {
   other: '#d1d5db',
 }
 const GRAPH_VIEWPORT_HEIGHT = 'clamp(560px, 72vh, 840px)'
+const DEFAULT_CAMERA_POSITION: [number, number, number] = [0, 150, 1500]
+const CAMERA_FAR_PLANE = 60000
+const MIN_CAMERA_DISTANCE = 90
+const MAX_CAMERA_DISTANCE = 24000
 
 function useReducedMotion() {
   const [reduced, setReduced] = useState(false)
@@ -138,7 +142,7 @@ export function ThreeArcbrainConstellation({
         style={{ height: GRAPH_VIEWPORT_HEIGHT }}
       >
         <Canvas
-          camera={{ position: [0, 150, 1500], fov: 50, near: 1, far: 12000 }}
+          camera={{ position: DEFAULT_CAMERA_POSITION, fov: 50, near: 1, far: CAMERA_FAR_PLANE }}
           dpr={[1, 2]}
           gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
           className="w-full outline-none"
@@ -447,7 +451,7 @@ function CameraRig({
   const targetRef = useRef<{ cameraPosition: THREE.Vector3; lookAt: THREE.Vector3 } | null>(null)
 
   useEffect(() => {
-    camera.position.set(0, 150, 1500)
+    camera.position.set(...DEFAULT_CAMERA_POSITION)
     controlsRef.current?.target.set(0, 0, 0)
     controlsRef.current?.update()
     targetRef.current = null
@@ -475,8 +479,8 @@ function CameraRig({
       rotateSpeed={0.58}
       zoomSpeed={1.1}
       panSpeed={0.72}
-      minDistance={120}
-      maxDistance={4200}
+      minDistance={MIN_CAMERA_DISTANCE}
+      maxDistance={MAX_CAMERA_DISTANCE}
       autoRotate={orbiting}
       autoRotateSpeed={0.35}
       makeDefault
