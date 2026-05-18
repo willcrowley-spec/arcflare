@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 from statistics import mean
+from time import monotonic
 from uuid import UUID
 
 from sqlalchemy import select
@@ -46,10 +47,29 @@ class ArcbrainSourceData:
 
 class ArcbrainProjectionService:
     graph_version = "arcbrain-v0"
+    cache_ttl_seconds = 45.0
 
-    async def snapshot(self, org_id: UUID, db: AsyncSession) -> ArcbrainSnapshotResponse:
+    def __init__(self) -> None:
+        self._snapshot_cache: dict[UUID, tuple[float, ArcbrainSnapshotResponse]] = {}
+
+    async def snapshot(
+        self, org_id: UUID, db: AsyncSession, *, refresh: bool = False
+    ) -> ArcbrainSnapshotResponse:
+        cached = self._snapshot_cache.get(org_id)
+        now = monotonic()
+        if cached and not refresh and now - cached[0] < self.cache_ttl_seconds:
+            return cached[1]
+
         data = await self.load_source_data(org_id, db)
-        return self.project(org_id, data)
+        snapshot = self.project(org_id, data)
+        self._snapshot_cache[org_id] = (now, snapshot)
+        return snapshot
+
+    def invalidate(self, org_id: UUID | None = None) -> None:
+        if org_id is None:
+            self._snapshot_cache.clear()
+            return
+        self._snapshot_cache.pop(org_id, None)
 
     async def load_source_data(self, org_id: UUID, db: AsyncSession) -> ArcbrainSourceData:
         metadata_objects = (
@@ -618,11 +638,27 @@ class ArcbrainProjectionService:
         )
 
     def search(
-        self, snapshot: ArcbrainSnapshotResponse, query: str, limit: int = 25
+        self,
+        snapshot: ArcbrainSnapshotResponse,
+        query: str,
+        limit: int = 25,
+        *,
+        lens: str | None = None,
+        focus_node_id: str | None = None,
     ) -> ArcbrainSearchResponse:
         normalized = query.strip().lower()
+        recommended_view = _recommended_view(normalized, lens)
         if not normalized:
-            return ArcbrainSearchResponse(query=query, nodes=[], edges=[], total_matches=0, summary={})
+            return ArcbrainSearchResponse(
+                query=query,
+                answer="Ask Arcbrain about a process, system, risk, evidence gap, or replacement opportunity.",
+                answer_type="empty_query",
+                recommended_view=recommended_view,
+                nodes=[],
+                edges=[],
+                total_matches=0,
+                summary={"focus_node_id": focus_node_id},
+            )
 
         matches = [
             node
@@ -639,18 +675,67 @@ class ArcbrainProjectionService:
             ).lower()
         ]
         matches = sorted(matches, key=lambda node: (-node.confidence, node.label.lower(), node.id))[:limit]
+        node_by_id = {node.id: node for node in snapshot.nodes}
+        focus_node = node_by_id.get(focus_node_id or "")
+        if focus_node and focus_node.id not in {node.id for node in matches}:
+            matches = [focus_node, *matches[: max(0, limit - 1)]]
+
         matched_ids = {node.id for node in matches}
+        paths = _support_paths(snapshot.edges, focus_node.id if focus_node else None, matched_ids)
+        path_edge_ids = _path_edge_ids(snapshot.edges, paths)
         incident_edges = [
             edge
             for edge in snapshot.edges
-            if edge.source_node_id in matched_ids or edge.target_node_id in matched_ids
+            if edge.source_node_id in matched_ids
+            or edge.target_node_id in matched_ids
+            or edge.id in path_edge_ids
         ]
+        supporting_claims = _supporting_claims(matches, incident_edges)
+
+        if not matches:
+            return ArcbrainSearchResponse(
+                query=query,
+                answer=(
+                    f"Arcbrain could not find graph evidence for '{query}'. "
+                    "Run discovery, sync metadata, or add source documents before trusting an answer."
+                ),
+                answer_type="no_match",
+                confidence=0,
+                recommended_view=recommended_view,
+                nodes=[],
+                edges=[],
+                total_matches=0,
+                missing_evidence=[
+                    f"No Arcbrain nodes matched '{query}'.",
+                    "No supporting path could be constructed from current graph evidence.",
+                ],
+                suggested_next_questions=[
+                    "What sources have been ingested for this org?",
+                    "Which high-value processes are missing evidence?",
+                ],
+                summary={"focus_node_id": focus_node_id, "edge_count": 0},
+            )
+
         return ArcbrainSearchResponse(
             query=query,
+            answer=_search_answer(query, matches, focus_node, incident_edges),
+            answer_type="graph_search",
+            confidence=_average_confidence(matches),
+            recommended_view=recommended_view,
             nodes=matches,
             edges=incident_edges,
+            paths=paths,
+            supporting_claims=supporting_claims,
+            assumptions=_search_assumptions(focus_node),
+            missing_evidence=_missing_evidence(matches),
+            suggested_next_questions=_suggested_questions(recommended_view),
             total_matches=len(matches),
-            summary={"edge_count": len(incident_edges)},
+            summary={
+                "edge_count": len(incident_edges),
+                "focus_node_id": focus_node_id,
+                "path_count": len(paths),
+                "supporting_claim_count": len(supporting_claims),
+            },
         )
 
     def get_node(self, snapshot: ArcbrainSnapshotResponse, node_id: str) -> ArcbrainNode | None:
@@ -770,6 +855,137 @@ class ArcbrainProjectionService:
                 else 0.0,
             },
         )
+
+
+def _recommended_view(query: str, lens: str | None) -> str:
+    allowed = {"overview", "replacement_heat", "blast_radius", "trust"}
+    if lens in allowed:
+        return lens
+    if any(term in query for term in ["replace", "savings", "cost", "roi", "automation"]):
+        return "replacement_heat"
+    if any(term in query for term in ["risk", "break", "depend", "impact", "blast"]):
+        return "blast_radius"
+    if any(term in query for term in ["evidence", "trust", "prove", "confidence", "missing"]):
+        return "trust"
+    return "overview"
+
+
+def _support_paths(
+    edges: list[ArcbrainEdge], focus_node_id: str | None, matched_ids: set[str]
+) -> list[list[str]]:
+    if not focus_node_id:
+        return [[node_id] for node_id in sorted(matched_ids)[:8]]
+
+    paths: list[list[str]] = []
+    for target_id in sorted(matched_ids):
+        if target_id == focus_node_id:
+            paths.append([focus_node_id])
+            continue
+        paths.append(_shortest_path(edges, focus_node_id, target_id) or [focus_node_id, target_id])
+        if len(paths) >= 8:
+            break
+    return paths
+
+
+def _shortest_path(
+    edges: list[ArcbrainEdge], source_id: str, target_id: str, max_depth: int = 4
+) -> list[str] | None:
+    neighbors: dict[str, set[str]] = {}
+    for edge in edges:
+        neighbors.setdefault(edge.source_node_id, set()).add(edge.target_node_id)
+        neighbors.setdefault(edge.target_node_id, set()).add(edge.source_node_id)
+
+    queue: list[list[str]] = [[source_id]]
+    seen = {source_id}
+    while queue:
+        path = queue.pop(0)
+        if len(path) - 1 >= max_depth:
+            continue
+        for next_id in sorted(neighbors.get(path[-1], set())):
+            if next_id in seen:
+                continue
+            next_path = [*path, next_id]
+            if next_id == target_id:
+                return next_path
+            seen.add(next_id)
+            queue.append(next_path)
+    return None
+
+
+def _path_edge_ids(edges: list[ArcbrainEdge], paths: list[list[str]]) -> set[str]:
+    edge_by_pair: dict[tuple[str, str], str] = {}
+    for edge in edges:
+        edge_by_pair[(edge.source_node_id, edge.target_node_id)] = edge.id
+        edge_by_pair[(edge.target_node_id, edge.source_node_id)] = edge.id
+
+    ids: set[str] = set()
+    for path in paths:
+        for source_id, target_id in zip(path, path[1:], strict=False):
+            edge_id = edge_by_pair.get((source_id, target_id))
+            if edge_id:
+                ids.add(edge_id)
+    return ids
+
+
+def _supporting_claims(nodes: list[ArcbrainNode], edges: list[ArcbrainEdge]) -> list[str]:
+    refs: list[str] = []
+    for ref in [*(ref for node in nodes for ref in node.evidence_refs), *(ref for edge in edges for ref in edge.evidence_refs)]:
+        if ref not in refs:
+            refs.append(ref)
+        if len(refs) >= 8:
+            break
+    return refs
+
+
+def _search_answer(
+    query: str, matches: list[ArcbrainNode], focus: ArcbrainNode | None, edges: list[ArcbrainEdge]
+) -> str:
+    top = matches[0]
+    layers = ", ".join(sorted({node.layer for node in matches})[:4])
+    focus_text = f" from {focus.label}" if focus else ""
+    return (
+        f"Arcbrain found {len(matches)} graph records for '{query}'{focus_text}. "
+        f"The strongest record is {top.label} ({top.node_type.replace('_', ' ')}), "
+        f"with {len(edges)} supporting relationships across {layers or 'the operating graph'}."
+    )
+
+
+def _search_assumptions(focus: ArcbrainNode | None) -> list[str]:
+    assumptions = ["This answer is grounded in the current Arcbrain projection, not a live Salesforce query."]
+    if focus:
+        assumptions.append(f"Path highlighting is scoped from the selected node: {focus.label}.")
+    return assumptions
+
+
+def _missing_evidence(nodes: list[ArcbrainNode]) -> list[str]:
+    missing = [
+        f"{node.label} has no evidence references."
+        for node in nodes
+        if not node.evidence_refs
+    ]
+    return missing[:5]
+
+
+def _suggested_questions(recommended_view: str) -> list[str]:
+    if recommended_view == "replacement_heat":
+        return [
+            "Which replacement opportunities have the strongest evidence?",
+            "What blockers reduce confidence in this automation path?",
+        ]
+    if recommended_view == "blast_radius":
+        return [
+            "What breaks if we change the selected node?",
+            "Which upstream dependencies carry the most risk?",
+        ]
+    if recommended_view == "trust":
+        return [
+            "Which claims are assumptions instead of observed facts?",
+            "What evidence is missing for this recommendation?",
+        ]
+    return [
+        "What work can we remove safely?",
+        "Which processes have the highest manual handoff density?",
+    ]
 
 
 def _node_id(source_type: str, source_ref: object) -> str:

@@ -881,6 +881,7 @@ export interface ArcbrainCommunity {
   label: string
   summary?: string | null
   layer?: string | null
+  member_node_ids?: string[]
   node_count?: number | null
   confidence?: number | null
   evidence_coverage?: number | null

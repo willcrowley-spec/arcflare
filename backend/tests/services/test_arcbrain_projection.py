@@ -321,6 +321,48 @@ def test_search_matches_labels_types_and_summaries_with_incident_edges():
     )
 
 
+def test_search_returns_conversation_focus_for_lens_and_selected_node():
+    org_id, data = _source_data()
+    service = ArcbrainProjectionService()
+    snapshot = service.project(org_id, data)
+    focus_id = f"metadata_object:{data.metadata_objects[1].id}"
+
+    result = service.search(
+        snapshot,
+        "case",
+        limit=10,
+        lens="blast_radius",
+        focus_node_id=focus_id,
+    )
+
+    assert result.answer_type == "graph_search"
+    assert result.recommended_view == "blast_radius"
+    assert result.confidence > 0
+    assert "case" in result.answer.lower()
+    assert result.paths
+    assert any(focus_id in path for path in result.paths)
+    assert result.supporting_claims
+    assert result.suggested_next_questions
+    assert result.summary["focus_node_id"] == focus_id
+
+
+def test_search_no_matches_returns_answer_and_missing_evidence():
+    org_id, data = _source_data()
+    service = ArcbrainProjectionService()
+    snapshot = service.project(org_id, data)
+
+    result = service.search(snapshot, "not-a-real-process", lens="trust")
+
+    assert result.nodes == []
+    assert result.edges == []
+    assert result.total_matches == 0
+    assert result.answer_type == "no_match"
+    assert result.recommended_view == "trust"
+    assert result.confidence == 0
+    assert "could not find" in result.answer.lower()
+    assert result.missing_evidence
+
+
 def test_blast_radius_partitions_upstream_downstream_and_related_nodes():
     org_id, data = _source_data()
     service = ArcbrainProjectionService()

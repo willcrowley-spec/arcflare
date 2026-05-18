@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react'
 import { EmptyState, ErrorState, LoadingState } from '@/components/EmptyState'
 import type { ArcbrainEvidenceRef, ArcbrainLens, ArcbrainNode } from '@/types'
@@ -112,9 +111,8 @@ export default function ArcbrainPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
           <h2 className="text-base font-semibold text-navy-900">Projection unavailable</h2>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-            The frontend route is ready, but the `/arcbrain/snapshot` endpoint did not return a usable projection.
-            Once the backend worker exposes the Arcbrain API, this screen will render the operating graph without
-            seeded demo data.
+            Arcbrain could not load the operating graph for the selected organization. Confirm the org connection,
+            authentication state, and backend health before trusting this screen.
           </p>
         </section>
       </div>
@@ -170,38 +168,42 @@ export default function ArcbrainPage() {
         </div>
       </section>
 
-      <div className="grid w-full max-w-full min-w-0 gap-5 overflow-hidden xl:grid-cols-[300px_minmax(0,1fr)_340px]">
+      <div className="grid w-full max-w-full min-w-0 gap-5 overflow-hidden xl:grid-cols-[300px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)_340px]">
         <AskRail
           question={question}
           setQuestion={setQuestion}
           onAsk={handleAsk}
           isAsking={searchMutation.isPending}
           error={searchMutation.error}
-          answer={searchResult?.answer ?? null}
-          confidence={searchResult?.confidence ?? null}
+          searchResult={searchResult}
           suggestedQuestions={searchResult?.suggested_next_questions ?? []}
-        />
-
-        <ArcbrainConstellation
-          graph={graph}
-          lens={lens}
-          selectedNodeId={selectedNodeId}
           onSelectNode={setSelectedNodeId}
-          searchResult={searchResult}
-          blastRadius={blastRadiusQuery.data ?? null}
-          replacementHeat={replacementHeatQuery.data ?? null}
         />
 
-        <DetailsPanel
-          node={selectedNode}
-          summary={graph.summary}
-          lens={lens}
-          nodeLoading={selectedNodeQuery.isFetching}
-          blastRadius={blastRadiusQuery.data ?? null}
-          blastRadiusLoading={blastRadiusQuery.isFetching}
-          replacementHeatLoading={replacementHeatQuery.isFetching}
-          searchResult={searchResult}
-        />
+        <div className="min-w-0">
+          <ArcbrainConstellation
+            graph={graph}
+            lens={lens}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={setSelectedNodeId}
+            searchResult={searchResult}
+            blastRadius={blastRadiusQuery.data ?? null}
+            replacementHeat={replacementHeatQuery.data ?? null}
+          />
+        </div>
+
+        <div className="min-w-0 xl:col-span-2 2xl:col-span-1">
+          <DetailsPanel
+            node={selectedNode}
+            summary={graph.summary}
+            lens={lens}
+            nodeLoading={selectedNodeQuery.isFetching}
+            blastRadius={blastRadiusQuery.data ?? null}
+            blastRadiusLoading={blastRadiusQuery.isFetching}
+            replacementHeatLoading={replacementHeatQuery.isFetching}
+            searchResult={searchResult}
+          />
+        </div>
       </div>
     </div>
   )
@@ -216,10 +218,6 @@ function ArcbrainHeader({ summary }: { summary?: ReturnType<typeof normalizeArcb
           <p className="mt-2 max-w-3xl break-words text-sm leading-relaxed text-slate-600">
             Evidence-backed operating graph for replacement planning, blast-radius analysis, and executive trust review.
           </p>
-        </div>
-        <div className="inline-flex items-center gap-2 self-start rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-900">
-          <Sparkles className="h-4 w-4" />
-          V0 Executive Surface
         </div>
       </div>
 
@@ -239,24 +237,29 @@ function AskRail({
   onAsk,
   isAsking,
   error,
-  answer,
-  confidence,
+  searchResult,
   suggestedQuestions,
+  onSelectNode,
 }: {
   question: string
   setQuestion: (value: string) => void
   onAsk: (question?: string) => void
   isAsking: boolean
   error: unknown
-  answer: string | null
-  confidence: number | null
+  searchResult: ReturnType<typeof normalizeSearchResult>
   suggestedQuestions: string[]
+  onSelectNode: (nodeId: string) => void
 }) {
+  const answer = searchResult?.answer ?? null
+  const confidence = searchResult?.confidence ?? null
+  const pathNodes = searchResult?.nodes ?? []
+  const supportingClaims = searchResult?.supporting_claims ?? []
+
   return (
     <aside className="min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
       <div>
         <h2 className="text-base font-semibold text-navy-900">Ask the Brain</h2>
-        <p className="mt-1 text-sm text-slate-600">Query the projection and highlight supporting paths.</p>
+        <p className="mt-1 text-sm text-slate-600">Ask a business question and inspect the nodes Arcbrain used.</p>
       </div>
 
       <div className="space-y-2">
@@ -309,6 +312,31 @@ function AskRail({
             <span className="text-xs font-semibold text-slate-500">{formatPercent(confidence)}</span>
           </div>
           <p className="mt-2 text-sm leading-relaxed text-slate-700">{answer}</p>
+          {pathNodes.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-semibold uppercase text-slate-500">Consulted nodes</p>
+              <div className="flex flex-wrap gap-1.5">
+                {pathNodes.slice(0, 8).map((node) => (
+                  <button
+                    key={node.id}
+                    type="button"
+                    onClick={() => onSelectNode(node.id)}
+                    className="max-w-full truncate rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:border-orange-200 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-200"
+                  >
+                    {node.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {supportingClaims.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">Evidence refs</p>
+              <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">
+                {supportingClaims.slice(0, 5).map((item) => (typeof item === 'string' ? item : item.label ?? item.id ?? 'Evidence')).join(' / ')}
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </aside>

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/components/AppLayout'
 import AnalysisPage from '@/pages/Analysis'
@@ -9,7 +10,8 @@ import RecommendationsPage from '@/pages/Recommendations'
 import AgentsPage from '@/pages/Agents'
 import AgentBuilderPage from '@/pages/AgentBuilder'
 import PlatformDetailPage from '@/pages/Platforms'
-import ArcbrainPage from '@/pages/Arcbrain'
+
+const ArcbrainPage = lazy(() => import('@/pages/Arcbrain'))
 
 export default function App() {
   return (
@@ -26,7 +28,14 @@ export default function App() {
         <Route path="/recommendations" element={<RecommendationsPage />} />
         <Route path="/agent-builder/:runId" element={<AgentBuilderPage />} />
         <Route path="/agents" element={<AgentsPage />} />
-        <Route path="/arcbrain" element={<ArcbrainPage />} />
+        <Route
+          path="/arcbrain"
+          element={
+            <Suspense fallback={<div className="p-6 text-sm font-medium text-slate-600">Loading Arcbrain...</div>}>
+              <ArcbrainPage />
+            </Suspense>
+          }
+        />
       </Route>
     </Routes>
   )

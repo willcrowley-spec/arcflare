@@ -56,8 +56,17 @@ class ArcbrainSnapshotResponse(BaseModel):
 
 class ArcbrainSearchResponse(BaseModel):
     query: str
+    answer: str = ""
+    answer_type: str = "graph_search"
+    confidence: float = 0.0
+    recommended_view: str | None = None
     nodes: list[ArcbrainNode] = Field(default_factory=list)
     edges: list[ArcbrainEdge] = Field(default_factory=list)
+    paths: list[list[str]] = Field(default_factory=list)
+    supporting_claims: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    suggested_next_questions: list[str] = Field(default_factory=list)
     total_matches: int = 0
     summary: dict = Field(default_factory=dict)
 

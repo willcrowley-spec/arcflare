@@ -18,8 +18,9 @@ service = ArcbrainProjectionService()
 async def get_arcbrain_snapshot(
     db: DbSession,
     org: CurrentOrg,
+    refresh: bool = Query(False),
 ) -> ArcbrainSnapshotResponse:
-    return await service.snapshot(org.id, db)
+    return await service.snapshot(org.id, db, refresh=refresh)
 
 
 @router.get("/search", response_model=ArcbrainSearchResponse)
@@ -28,9 +29,11 @@ async def search_arcbrain(
     org: CurrentOrg,
     q: str = Query(..., min_length=1, max_length=200),
     limit: int = Query(25, ge=1, le=100),
+    lens: str | None = Query(None),
+    focus_node_id: str | None = Query(None),
 ) -> ArcbrainSearchResponse:
     snapshot = await service.snapshot(org.id, db)
-    return service.search(snapshot, q, limit=limit)
+    return service.search(snapshot, q, limit=limit, lens=lens, focus_node_id=focus_node_id)
 
 
 @router.get("/node/{node_id}", response_model=ArcbrainNode)

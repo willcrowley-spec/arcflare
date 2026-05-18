@@ -413,7 +413,12 @@ export const api = {
     snapshot: () => request<ArcbrainSnapshotResponse>('/arcbrain/snapshot'),
     search: (body: ArcbrainSearchRequest) =>
       request<ArcbrainSearchResult>(
-        withQuery('/arcbrain/search', { q: body.query, limit: body.limit ?? 24 }),
+        withQuery('/arcbrain/search', {
+          q: body.query,
+          limit: body.limit ?? 24,
+          lens: body.lens,
+          focus_node_id: body.focus_node_id ?? undefined,
+        }),
       ),
     node: (id: string) => request<ArcbrainNode>(`/arcbrain/node/${encodeURIComponent(id)}`),
     blastRadius: (id: string) =>

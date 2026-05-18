@@ -35,6 +35,9 @@ export interface ArcbrainScene {
   edges: ArcbrainSceneEdge[]
   highlightedNodeIds: Set<string>
   highlightedEdgeIds: Set<string>
+  conversationNodeIds: Set<string>
+  mutedNodeIds: Set<string>
+  pulseOrderByNodeId: Map<string, number>
 }
 
 const NODE_TYPE_LAYER: Record<string, string> = {
@@ -161,8 +164,14 @@ export function buildArcbrainScene(
 ): ArcbrainScene {
   const highlightedNodeIds = new Set<string>()
   const highlightedEdgeIds = new Set<string>()
+  const conversationNodeIds = conversationIds(searchResult)
+  const pulseOrderByNodeId = new Map<string, number>()
 
   if (selectedNodeId) highlightedNodeIds.add(selectedNodeId)
+  conversationNodeIds.forEach((id) => {
+    highlightedNodeIds.add(id)
+    if (!pulseOrderByNodeId.has(id)) pulseOrderByNodeId.set(id, pulseOrderByNodeId.size)
+  })
   searchResult?.nodes.forEach((n) => highlightedNodeIds.add(n.id))
   searchResult?.edges.forEach((e) => highlightedEdgeIds.add(e.id))
   searchResult?.paths?.flat().forEach((id) => highlightedNodeIds.add(id))
@@ -192,27 +201,7 @@ export function buildArcbrainScene(
     heatScores.set(item.node.id, clamp01(item.replaceability_score ?? item.node.replaceability_score ?? 0))
   })
 
-  const communityIndex = new Map<string, number>()
-  graph.communities.forEach((c, i) => communityIndex.set(c.id, i))
-  const fallbackCommunities = new Map<string, number>()
-
-  const nodes = graph.nodes.map((node, i) => {
-    const communityKey = node.community_id || nodeLayer(node)
-    if (!fallbackCommunities.has(communityKey)) fallbackCommunities.set(communityKey, fallbackCommunities.size)
-    const community = communityIndex.get(communityKey) ?? fallbackCommunities.get(communityKey) ?? 0
-    const communityCount = Math.max(graph.communities.length, fallbackCommunities.size, 1)
-    const orbit = (Math.PI * 2 * community) / communityCount
-    const local = seededUnit(node.id)
-    const ring = 150 + (community % 3) * 42
-    const spread = 46 + ((i % 5) * 8)
-    const heat = heatScores.get(node.id) ?? getNodeHeat(node, lens)
-    const importance = clamp01((node.confidence ?? 0.45) * 0.45 + heat * 0.4 + (node.economic_value ? 0.15 : 0))
-    const radius = 4.5 + importance * 7
-    const x = Math.cos(orbit) * ring + Math.cos(local * Math.PI * 2) * spread
-    const y = Math.sin(orbit) * ring + Math.sin(local * Math.PI * 2) * spread
-    const z = ((seededUnit(`${node.id}:z`) - 0.5) * 180) + (nodeLayer(node) === 'replacement' ? 44 : 0)
-    return { ...node, x, y, z, radius, heat }
-  })
+  const nodes = positionNodes(graph, lens, heatScores)
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
   const edges = graph.edges.reduce<ArcbrainSceneEdge[]>((acc, edge) => {
@@ -221,6 +210,10 @@ export function buildArcbrainScene(
     if (source && target) acc.push({ ...edge, source, target })
     return acc
   }, [])
+
+  searchResult?.paths?.forEach((path) => {
+    pathEdges(path, edges).forEach((edgeId) => highlightedEdgeIds.add(edgeId))
+  })
 
   if (selectedNodeId && highlightedNodeIds.size === 1) {
     edges.forEach((edge) => {
@@ -232,8 +225,118 @@ export function buildArcbrainScene(
     })
   }
 
-  return { nodes, edges, highlightedNodeIds, highlightedEdgeIds }
+  const mutedNodeIds = new Set<string>()
+  if (searchResult || blastRadius || replacementHeat) {
+    nodes.forEach((node) => {
+      if (!highlightedNodeIds.has(node.id)) mutedNodeIds.add(node.id)
+    })
+  }
+
+  return { nodes, edges, highlightedNodeIds, highlightedEdgeIds, conversationNodeIds, mutedNodeIds, pulseOrderByNodeId }
 }
+
+function positionNodes(
+  graph: ArcbrainGraphModel,
+  lens: ArcbrainLens,
+  heatScores: Map<string, number>,
+): PositionedArcbrainNode[] {
+  const communityIndex = new Map<string, number>()
+  graph.communities.forEach((community, index) => communityIndex.set(community.id, index))
+  const fallbackCommunities = new Map<string, number>()
+  const nodesByCommunity = new Map<string, ArcbrainNode[]>()
+
+  graph.nodes.forEach((node) => {
+    const communityKey = node.community_id || nodeLayer(node)
+    if (!fallbackCommunities.has(communityKey)) fallbackCommunities.set(communityKey, fallbackCommunities.size)
+    const bucket = nodesByCommunity.get(communityKey) ?? []
+    bucket.push(node)
+    nodesByCommunity.set(communityKey, bucket)
+  })
+
+  const communityKeys = [...nodesByCommunity.keys()].sort((a, b) => {
+    const aIndex = communityIndex.get(a) ?? fallbackCommunities.get(a) ?? 0
+    const bIndex = communityIndex.get(b) ?? fallbackCommunities.get(b) ?? 0
+    return aIndex - bIndex || a.localeCompare(b)
+  })
+  const communityCount = Math.max(communityKeys.length, 1)
+
+  const nodes = communityKeys.flatMap((communityKey, communityOrder) => {
+    const bucket = [...(nodesByCommunity.get(communityKey) ?? [])].sort((a, b) => {
+      const aHeat = heatScores.get(a.id) ?? getNodeHeat(a, lens)
+      const bHeat = heatScores.get(b.id) ?? getNodeHeat(b, lens)
+      return bHeat - aHeat || String(a.label).localeCompare(String(b.label)) || a.id.localeCompare(b.id)
+    })
+    const orbit = (Math.PI * 2 * communityOrder) / communityCount
+    const clusterRadius = communityCount === 1 ? 0 : 230 + Math.min(120, communityCount * 10)
+    const centerX = Math.cos(orbit) * clusterRadius
+    const centerY = Math.sin(orbit) * clusterRadius * 0.74
+    const centerZ = ((seededUnit(`${communityKey}:z`) - 0.5) * 90)
+
+    return bucket.map((node, index) => {
+      const heat = heatScores.get(node.id) ?? getNodeHeat(node, lens)
+      const importance = clamp01((node.confidence ?? 0.45) * 0.45 + heat * 0.4 + (node.economic_value ? 0.15 : 0))
+      const radius = 4.5 + importance * 7
+      const localAngle = index * 2.399963 + seededUnit(node.id) * 0.35
+      const localRadius = index === 0 ? 0 : Math.sqrt(index) * 42
+      const x = centerX + Math.cos(localAngle) * localRadius
+      const y = centerY + Math.sin(localAngle) * localRadius * 0.86
+      const z = centerZ + ((seededUnit(`${node.id}:z`) - 0.5) * 150) + (nodeLayer(node) === 'replacement' ? 44 : 0)
+      return { ...node, x, y, z, radius, heat }
+    })
+  })
+
+  return relaxCollisions(nodes)
+}
+
+function relaxCollisions(nodes: PositionedArcbrainNode[]): PositionedArcbrainNode[] {
+  const relaxed = nodes.map((node) => ({ ...node }))
+  for (let iteration = 0; iteration < 18; iteration += 1) {
+    for (let i = 0; i < relaxed.length; i += 1) {
+      for (let j = i + 1; j < relaxed.length; j += 1) {
+        const a = relaxed[i]
+        const b = relaxed[j]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const distance = Math.max(0.001, Math.hypot(dx, dy))
+        const minimum = a.radius + b.radius + 22
+        if (distance >= minimum) continue
+        const push = (minimum - distance) / 2
+        const nx = dx / distance
+        const ny = dy / distance
+        a.x -= nx * push
+        a.y -= ny * push
+        b.x += nx * push
+        b.y += ny * push
+      }
+    }
+  }
+  return relaxed
+}
+
+function conversationIds(searchResult?: ArcbrainSearchResult | null): Set<string> {
+  const ids = new Set<string>()
+  searchResult?.paths?.forEach((path) => path.forEach((id) => ids.add(id)))
+  searchResult?.nodes.forEach((node) => ids.add(node.id))
+  return ids
+}
+
+function pathEdges(path: string[], edges: ArcbrainSceneEdge[]): string[] {
+  const edgeByPair = new Map<string, string>()
+  edges.forEach((edge) => {
+    edgeByPair.set(`${edge.source_node_id}->${edge.target_node_id}`, edge.id)
+    edgeByPair.set(`${edge.target_node_id}->${edge.source_node_id}`, edge.id)
+  })
+  return path.flatMap((sourceId, index) => {
+    const targetId = path[index + 1]
+    if (!targetId) return []
+    return edgeByPair.get(`${sourceId}->${targetId}`) ?? []
+  })
+}
+
+/*
+ * The cluster layout intentionally avoids a force simulation at render time. Arcbrain needs stable positions
+ * across questions, so nodes can animate and executives do not lose their mental map.
+ */
 
 function numberFromMetric(node: ArcbrainNode, key: string): number | null {
   const value = node.metrics_json?.[key] ?? node.metadata_json?.[key]
