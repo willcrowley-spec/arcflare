@@ -4,6 +4,7 @@ import type { ArcbrainGraphModel, ArcbrainScene, ArcbrainSceneEdge } from './typ
 import { clamp01, getNodeHeat } from './utils'
 
 const MAX_VISIBLE_SCENE_NODES = 1400
+const MAX_VISIBLE_SCENE_EDGES = 2200
 
 export function buildArcbrainScene(
   graph: ArcbrainGraphModel,
@@ -77,6 +78,8 @@ export function buildArcbrainScene(
     })
   }
 
+  const visibleEdges = limitEdgesForScene(edges, highlightedEdgeIds)
+
   const mutedNodeIds = new Set<string>()
   if (searchResult || blastRadius || replacementHeat) {
     nodes.forEach((node) => {
@@ -84,7 +87,7 @@ export function buildArcbrainScene(
     })
   }
 
-  return { nodes, edges, highlightedNodeIds, highlightedEdgeIds, conversationNodeIds, mutedNodeIds, pulseOrderByNodeId }
+  return { nodes, edges: visibleEdges, highlightedNodeIds, highlightedEdgeIds, conversationNodeIds, mutedNodeIds, pulseOrderByNodeId }
 }
 
 function limitGraphForScene(
@@ -160,4 +163,22 @@ function pathEdges(path: string[], edges: ArcbrainSceneEdge[]): string[] {
     if (!targetId) return []
     return edgeByPair.get(`${sourceId}->${targetId}`) ?? []
   })
+}
+
+function limitEdgesForScene(edges: ArcbrainSceneEdge[], highlightedEdgeIds: Set<string>): ArcbrainSceneEdge[] {
+  if (edges.length <= MAX_VISIBLE_SCENE_EDGES) return edges
+
+  return [...edges]
+    .sort((a, b) => edgeRenderScore(b, highlightedEdgeIds) - edgeRenderScore(a, highlightedEdgeIds) || a.id.localeCompare(b.id))
+    .slice(0, MAX_VISIBLE_SCENE_EDGES)
+}
+
+function edgeRenderScore(edge: ArcbrainSceneEdge, highlightedEdgeIds: Set<string>): number {
+  return (
+    (highlightedEdgeIds.has(edge.id) ? 100 : 0) +
+    (edge.confidence ?? 0.45) * 2 +
+    (edge.weight ?? 0.5) +
+    Math.min(2, edge.source.heat + edge.target.heat) +
+    Math.min(1.5, (edge.source.radius + edge.target.radius) / 18)
+  )
 }

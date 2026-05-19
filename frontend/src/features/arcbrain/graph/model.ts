@@ -2,6 +2,13 @@ export type { ArcbrainGraphModel, ArcbrainScene, ArcbrainSceneEdge, PositionedAr
 export { normalizeArcbrainSnapshot, normalizeSearchResult } from './normalize'
 export { buildArcbrainScene } from './scene'
 export {
+  LAYER_VISUALS,
+  layerVisualForNode,
+  sceneBounds,
+  summarizeSceneCommunities,
+  summarizeSceneLayers,
+} from './visuals'
+export {
   compactLabel,
   formatCurrency,
   formatDateTime,

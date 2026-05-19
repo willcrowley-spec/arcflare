@@ -202,4 +202,31 @@ describe('buildArcbrainScene', () => {
     expect(renderedIds.has(selected.id)).toBe(true)
     expect(renderedIds.has(consulted.id)).toBe(true)
   })
+
+  it('caps dense visible edges without dropping answer path edges', () => {
+    const nodes = Array.from({ length: 90 }, (_, index) => node(`edge-node-${index}`))
+    const edges = Array.from({ length: 2500 }, (_, index) =>
+      edge(`dense-edge-${index}`, nodes[index % nodes.length].id, nodes[(index * 7 + 11) % nodes.length].id),
+    )
+    const protectedEdge = edges[2499]
+    const graph: ArcbrainGraphModel = {
+      nodes,
+      edges,
+      communities: [{ id: 'service', label: 'Service', member_node_ids: nodes.map((item) => item.id) }],
+      summary: {},
+    }
+    const searchResult: ArcbrainSearchResult = {
+      answer: 'Arcbrain consulted the protected edge.',
+      confidence: 0.8,
+      nodes: [nodes[0], nodes[1]],
+      edges: [protectedEdge],
+      paths: [[protectedEdge.source_node_id, protectedEdge.target_node_id]],
+    }
+
+    const scene = buildArcbrainScene(graph, 'overview', nodes[0].id, searchResult)
+    const renderedEdgeIds = new Set(scene.edges.map((item) => item.id))
+
+    expect(scene.edges.length).toBeLessThanOrEqual(2200)
+    expect(renderedEdgeIds.has(protectedEdge.id)).toBe(true)
+  })
 })

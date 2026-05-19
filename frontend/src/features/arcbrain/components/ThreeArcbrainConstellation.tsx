@@ -7,10 +7,21 @@ import type { ArcbrainBlastRadius, ArcbrainLens, ArcbrainReplacementHeat, Arcbra
 import {
   buildArcbrainScene,
   compactLabel,
+  layerVisualForNode,
+  sceneBounds,
+  summarizeSceneCommunities,
+  summarizeSceneLayers,
   type ArcbrainGraphModel,
   type ArcbrainScene,
   type PositionedArcbrainNode,
 } from '../graph/model'
+import type { ArcbrainCommunityBeacon, ArcbrainSceneBounds } from '../graph/visuals'
+import {
+  ArcbrainAnswerPath,
+  ArcbrainCommunityBeacons,
+  ArcbrainDepthStage,
+  ArcbrainLayerLegend,
+} from './ThreeArcbrainAtmosphere'
 import { CameraRig, CAMERA_FAR_PLANE, type CameraViewMode } from './ThreeCameraRig'
 
 interface ThreeArcbrainConstellationProps {
@@ -30,18 +41,6 @@ const LENS_LABEL: Record<ArcbrainLens, string> = {
   trust: 'Trust',
 }
 
-const LAYER_COLOR: Record<string, string> = {
-  process: '#f8fafc',
-  operations: '#f8fafc',
-  people: '#bfdbfe',
-  metadata: '#c7d2fe',
-  platform: '#c7d2fe',
-  code: '#bfdbfe',
-  controls: '#fecaca',
-  evidence: '#fde68a',
-  replacement: '#fdba74',
-  other: '#d1d5db',
-}
 const GRAPH_VIEWPORT_HEIGHT = 'clamp(560px, 72vh, 840px)'
 const DEFAULT_CAMERA_POSITION: [number, number, number] = [860, 520, 1850]
 
@@ -78,6 +77,12 @@ export function ThreeArcbrainConstellation({
     () => buildArcbrainScene(graph, lens, selectedNodeId, searchResult, blastRadius, replacementHeat),
     [graph, lens, selectedNodeId, searchResult, blastRadius, replacementHeat],
   )
+  const layerSummaries = useMemo(() => summarizeSceneLayers(scene.nodes), [scene.nodes])
+  const communityBeacons = useMemo(
+    () => summarizeSceneCommunities(scene.nodes, graph.communities, 8),
+    [graph.communities, scene.nodes],
+  )
+  const bounds = useMemo(() => sceneBounds(scene.nodes), [scene.nodes])
 
   const hovered = hoveredNodeId ? graph.nodes.find((node) => node.id === hoveredNodeId) : null
   const selected = selectedNodeId ? graph.nodes.find((node) => node.id === selectedNodeId) : null
@@ -164,6 +169,8 @@ export function ThreeArcbrainConstellation({
           <pointLight position={[360, 420, 540]} intensity={0.55} color="#fff7ed" />
           <ArcbrainSceneObjects
             scene={scene}
+            bounds={bounds}
+            communityBeacons={communityBeacons}
             selectedNodeId={selectedNodeId}
             hoveredNodeId={hoveredNodeId}
             onHover={setHoveredNodeId}
@@ -199,9 +206,12 @@ export function ThreeArcbrainConstellation({
           </ControlButton>
         </div>
 
-        <div className="absolute bottom-4 left-4 rounded-lg border border-white/10 bg-navy-800/90 px-3 py-2 text-xs font-medium text-slate-300 shadow-xl">
-          True 3D / WebGL
-        </div>
+        <ArcbrainLayerLegend
+          summaries={layerSummaries}
+          renderedCount={scene.nodes.length}
+          totalCount={graph.nodes.length}
+          communityCount={communityBeacons.length}
+        />
 
         {(hovered || selected) && (
           <div className="pointer-events-none absolute left-4 top-4 max-w-[min(320px,calc(100%-6rem))] rounded-lg border border-white/10 bg-navy-800/95 p-3 text-white shadow-xl">
@@ -219,6 +229,8 @@ export function ThreeArcbrainConstellation({
 
 function ArcbrainSceneObjects({
   scene,
+  bounds,
+  communityBeacons,
   selectedNodeId,
   hoveredNodeId,
   onHover,
@@ -226,6 +238,8 @@ function ArcbrainSceneObjects({
   reducedMotion,
 }: {
   scene: ArcbrainScene
+  bounds: ArcbrainSceneBounds
+  communityBeacons: ArcbrainCommunityBeacon[]
   selectedNodeId: string | null
   hoveredNodeId: string | null
   onHover: (nodeId: string | null) => void
@@ -234,7 +248,10 @@ function ArcbrainSceneObjects({
 }) {
   return (
     <>
+      <ArcbrainDepthStage bounds={bounds} />
+      <ArcbrainCommunityBeacons beacons={communityBeacons} reducedMotion={reducedMotion} />
       <ArcbrainEdges scene={scene} />
+      <ArcbrainAnswerPath scene={scene} reducedMotion={reducedMotion} />
       <ArcbrainNodes
         scene={scene}
         selectedNodeId={selectedNodeId}
@@ -243,6 +260,7 @@ function ArcbrainSceneObjects({
         onSelectNode={onSelectNode}
         reducedMotion={reducedMotion}
       />
+      <ArcbrainNodeLightCloud scene={scene} selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId} />
       <ArcbrainFocusNodes
         scene={scene}
         selectedNodeId={selectedNodeId}
@@ -251,6 +269,48 @@ function ArcbrainSceneObjects({
       />
       <ArcbrainLabels scene={scene} selectedNodeId={selectedNodeId} hoveredNodeId={hoveredNodeId} />
     </>
+  )
+}
+
+function ArcbrainNodeLightCloud({
+  scene,
+  selectedNodeId,
+  hoveredNodeId,
+}: {
+  scene: ArcbrainScene
+  selectedNodeId: string | null
+  hoveredNodeId: string | null
+}) {
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(scene.nodes.length * 3)
+    const colors = new Float32Array(scene.nodes.length * 3)
+    const color = new THREE.Color()
+    scene.nodes.forEach((node, index) => {
+      const active = selectedNodeId === node.id || hoveredNodeId === node.id
+      const conversation = scene.conversationNodeIds.has(node.id)
+      const highlighted = scene.highlightedNodeIds.has(node.id)
+      const muted = scene.mutedNodeIds.has(node.id)
+      const visual = layerVisualForNode(node, { active, conversation, highlighted, muted })
+      const offset = index * 3
+      positions[offset] = node.x
+      positions[offset + 1] = node.y
+      positions[offset + 2] = node.z
+      color.set(visual.color)
+      colors[offset] = color.r
+      colors[offset + 1] = color.g
+      colors[offset + 2] = color.b
+    })
+
+    const graphGeometry = new THREE.BufferGeometry()
+    graphGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    graphGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return graphGeometry
+  }, [hoveredNodeId, scene.conversationNodeIds, scene.highlightedNodeIds, scene.mutedNodeIds, scene.nodes, selectedNodeId])
+
+  return (
+    <points geometry={geometry} frustumCulled={false}>
+      <pointsMaterial vertexColors size={3.2} sizeAttenuation={false} transparent opacity={0.86} depthTest={false} depthWrite={false} toneMapped={false} />
+    </points>
   )
 }
 
@@ -269,15 +329,68 @@ function ArcbrainNodes({
   onSelectNode: (nodeId: string) => void
   reducedMotion: boolean
 }) {
+  const groups = useMemo(() => {
+    const byColor = new Map<string, PositionedArcbrainNode[]>()
+    scene.nodes.forEach((node) => {
+      const active = selectedNodeId === node.id || hoveredNodeId === node.id
+      const conversation = scene.conversationNodeIds.has(node.id)
+      const highlighted = scene.highlightedNodeIds.has(node.id)
+      const muted = scene.mutedNodeIds.has(node.id)
+      const visual = layerVisualForNode(node, { active, conversation, highlighted, muted })
+      const bucket = byColor.get(visual.color) ?? []
+      bucket.push(node)
+      byColor.set(visual.color, bucket)
+    })
+    return [...byColor.entries()].map(([color, nodes]) => ({ color, nodes }))
+  }, [hoveredNodeId, scene.conversationNodeIds, scene.highlightedNodeIds, scene.mutedNodeIds, scene.nodes, selectedNodeId])
+
+  return (
+    <>
+      {groups.map((group) => (
+        <ArcbrainNodeGroup
+          key={group.color}
+          color={group.color}
+          nodes={group.nodes}
+          scene={scene}
+          selectedNodeId={selectedNodeId}
+          hoveredNodeId={hoveredNodeId}
+          onHover={onHover}
+          onSelectNode={onSelectNode}
+          reducedMotion={reducedMotion}
+        />
+      ))}
+    </>
+  )
+}
+
+function ArcbrainNodeGroup({
+  color,
+  nodes,
+  scene,
+  selectedNodeId,
+  hoveredNodeId,
+  onHover,
+  onSelectNode,
+  reducedMotion,
+}: {
+  color: string
+  nodes: PositionedArcbrainNode[]
+  scene: ArcbrainScene
+  selectedNodeId: string | null
+  hoveredNodeId: string | null
+  onHover: (nodeId: string | null) => void
+  onSelectNode: (nodeId: string) => void
+  reducedMotion: boolean
+}) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const tempObject = useMemo(() => new THREE.Object3D(), [])
 
-  const nodeIds = useMemo(() => scene.nodes.map((node) => node.id), [scene.nodes])
+  const nodeIds = useMemo(() => nodes.map((node) => node.id), [nodes])
 
   useLayoutEffect(() => {
     const mesh = meshRef.current
     if (!mesh) return
-    scene.nodes.forEach((node, index) => {
+    nodes.forEach((node, index) => {
       const active = selectedNodeId === node.id || hoveredNodeId === node.id
       const conversation = scene.conversationNodeIds.has(node.id)
       const highlighted = scene.highlightedNodeIds.has(node.id)
@@ -290,13 +403,13 @@ function ArcbrainNodes({
     })
     mesh.instanceMatrix.needsUpdate = true
     mesh.computeBoundingSphere()
-  }, [hoveredNodeId, nodeIds, reducedMotion, scene, selectedNodeId, tempObject])
+  }, [hoveredNodeId, nodeIds, nodes, reducedMotion, scene, selectedNodeId, tempObject])
 
   useFrame(({ clock }) => {
     const mesh = meshRef.current
     if (!mesh || reducedMotion) return
     const elapsed = clock.getElapsedTime()
-    scene.nodes.forEach((node, index) => {
+    nodes.forEach((node, index) => {
       if (!scene.conversationNodeIds.has(node.id) && selectedNodeId !== node.id && hoveredNodeId !== node.id) return
       const active = selectedNodeId === node.id || hoveredNodeId === node.id
       const conversation = scene.conversationNodeIds.has(node.id)
@@ -315,21 +428,21 @@ function ArcbrainNodes({
   return (
     <instancedMesh
       ref={meshRef}
-      args={[undefined, undefined, scene.nodes.length]}
+      args={[undefined, undefined, nodes.length]}
       frustumCulled={false}
       onPointerOver={(event) => {
         event.stopPropagation()
-        if (event.instanceId != null) onHover(scene.nodes[event.instanceId]?.id ?? null)
+        if (event.instanceId != null) onHover(nodes[event.instanceId]?.id ?? null)
       }}
       onPointerOut={() => onHover(null)}
       onClick={(event) => {
         event.stopPropagation()
-        const nodeId = event.instanceId != null ? scene.nodes[event.instanceId]?.id : null
+        const nodeId = event.instanceId != null ? nodes[event.instanceId]?.id : null
         if (nodeId) onSelectNode(nodeId)
       }}
     >
       <sphereGeometry args={[1, 24, 16]} />
-      <meshBasicMaterial color="#cbd5e1" transparent opacity={0.82} toneMapped={false} />
+      <meshBasicMaterial color={color} transparent opacity={0.9} toneMapped={false} />
     </instancedMesh>
   )
 }
@@ -362,7 +475,7 @@ function ArcbrainFocusNodes({
         const highlighted = scene.highlightedNodeIds.has(node.id)
         const muted = scene.mutedNodeIds.has(node.id)
         const scale = nodeScale(node, active, conversation, highlighted, muted, 0.2, reducedMotion)
-        const color = active || conversation ? '#fb923c' : focusColorForNode(node)
+        const color = layerVisualForNode(node, { active, conversation, highlighted, muted }).color
         return (
           <group key={node.id} position={[node.x, node.y, node.z]}>
             <mesh scale={scale * 1.08}>
@@ -385,12 +498,15 @@ function ArcbrainEdges({ scene }: { scene: ArcbrainScene }) {
     const positions = new Float32Array(scene.edges.length * 6)
     const colors = new Float32Array(scene.edges.length * 6)
     const color = new THREE.Color()
+    const targetColor = new THREE.Color()
     scene.edges.forEach((edge, index) => {
       const highlighted = scene.highlightedEdgeIds.has(edge.id)
       const muted = scene.mutedNodeIds.has(edge.source_node_id) || scene.mutedNodeIds.has(edge.target_node_id)
-      const edgeColor = highlighted ? '#fb923c' : muted ? '#475569' : '#64748b'
-      const intensity = highlighted ? 1 : muted ? 0.18 : 0.34
-      color.set(edgeColor).multiplyScalar(intensity)
+      const sourceVisual = layerVisualForNode(edge.source, { highlighted, muted })
+      const targetVisual = layerVisualForNode(edge.target, { highlighted, muted })
+      const intensity = highlighted ? 1 : muted ? 0.08 : 0.18
+      color.set(highlighted ? '#fb923c' : sourceVisual.edgeColor).multiplyScalar(intensity)
+      targetColor.set(highlighted ? '#fb923c' : targetVisual.edgeColor).multiplyScalar(intensity)
       const offset = index * 6
       positions[offset] = edge.source.x
       positions[offset + 1] = edge.source.y
@@ -401,9 +517,9 @@ function ArcbrainEdges({ scene }: { scene: ArcbrainScene }) {
       colors[offset] = color.r
       colors[offset + 1] = color.g
       colors[offset + 2] = color.b
-      colors[offset + 3] = color.r
-      colors[offset + 4] = color.g
-      colors[offset + 5] = color.b
+      colors[offset + 3] = targetColor.r
+      colors[offset + 4] = targetColor.g
+      colors[offset + 5] = targetColor.b
     })
     const graphGeometry = new THREE.BufferGeometry()
     graphGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -413,7 +529,7 @@ function ArcbrainEdges({ scene }: { scene: ArcbrainScene }) {
 
   return (
     <lineSegments geometry={geometry}>
-      <lineBasicMaterial vertexColors transparent opacity={0.92} depthWrite={false} toneMapped={false} />
+      <lineBasicMaterial vertexColors transparent opacity={0.72} depthWrite={false} toneMapped={false} />
     </lineSegments>
   )
 }
@@ -458,19 +574,13 @@ function nodeScale(
   phaseTime: number,
   reducedMotion: boolean,
 ) {
-  const base = Math.max(3.2, node.radius * 0.72)
+  const base = Math.max(4.2, node.radius * 0.88)
   const pulse = reducedMotion ? 0 : Math.sin(phaseTime * Math.PI * 2) * 0.16
   if (active) return base * 1.55
   if (conversation) return base * (1.32 + Math.max(0, pulse))
   if (highlighted) return base * 1.18
   if (muted) return base * 0.62
   return base
-}
-
-function focusColorForNode(node: PositionedArcbrainNode) {
-  if (node.heat >= 0.78) return '#fb923c'
-  if (node.risk_level === 'high' || node.risk_level === 'critical') return '#f87171'
-  return LAYER_COLOR[node.layer || 'other'] ?? LAYER_COLOR.other
 }
 
 function ControlButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {

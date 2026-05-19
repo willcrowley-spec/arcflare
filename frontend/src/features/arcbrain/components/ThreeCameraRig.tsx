@@ -5,10 +5,10 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
 import type { PositionedArcbrainNode } from '../graph/model'
 
-export const CAMERA_FAR_PLANE = 180000
+export const CAMERA_FAR_PLANE = 500000
 
 const MIN_CAMERA_DISTANCE = 90
-const MAX_CAMERA_DISTANCE = 72000
+const MAX_CAMERA_DISTANCE = 220000
 
 export type CameraViewMode = 'focus' | 'fit' | 'wide'
 
@@ -126,10 +126,10 @@ function cameraTargetForNodes(nodes: PositionedArcbrainNode[], ids: Set<string>,
     targets.reduce((max, node) => Math.max(max, center.distanceTo(new THREE.Vector3(node.x, node.y, node.z)) + node.radius), 0),
   )
   const selectedFocus = selected.length > 0
-  const multiplier = mode === 'wide' ? 5.35 : selectedFocus ? 2.45 : 3.05
-  const minimumDistance = selectedFocus ? (targets.length <= 2 ? 380 : 760) : mode === 'wide' ? 5200 : 1350
+  const multiplier = mode === 'wide' ? 6.2 : selectedFocus ? 2.25 : 2.32
+  const minimumDistance = selectedFocus ? (targets.length <= 2 ? 360 : 720) : mode === 'wide' ? 7200 : 980
   const distance = clamp(Math.max(minimumDistance, spread * multiplier), MIN_CAMERA_DISTANCE * 3.5, MAX_CAMERA_DISTANCE * 0.92)
-  const direction = new THREE.Vector3(0.44, 0.28, 1).normalize()
+  const direction = new THREE.Vector3(0.42, 0.12, 1).normalize()
 
   return {
     lookAt: center,
