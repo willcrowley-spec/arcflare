@@ -44,9 +44,9 @@ const LAYER_COLOR: Record<string, string> = {
 }
 const GRAPH_VIEWPORT_HEIGHT = 'clamp(560px, 72vh, 840px)'
 const DEFAULT_CAMERA_POSITION: [number, number, number] = [860, 520, 1850]
-const CAMERA_FAR_PLANE = 60000
+const CAMERA_FAR_PLANE = 180000
 const MIN_CAMERA_DISTANCE = 90
-const MAX_CAMERA_DISTANCE = 24000
+const MAX_CAMERA_DISTANCE = 72000
 type CameraViewMode = 'focus' | 'fit' | 'wide'
 
 function useReducedMotion() {
@@ -71,7 +71,7 @@ export function ThreeArcbrainConstellation({
   replacementHeat,
 }: ThreeArcbrainConstellationProps) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
-  const [orbiting, setOrbiting] = useState(true)
+  const [orbiting, setOrbiting] = useState(false)
   const [focusIds, setFocusIds] = useState<string[]>([])
   const [focusSignal, setFocusSignal] = useState(0)
   const [viewMode, setViewMode] = useState<CameraViewMode>('fit')
@@ -100,6 +100,10 @@ export function ThreeArcbrainConstellation({
     [onSelectNode],
   )
 
+  const handleUserControl = useCallback(() => {
+    setOrbiting(false)
+  }, [])
+
   const focusHighlighted = () => {
     const ids = [...scene.conversationNodeIds]
     if (ids.length === 0 && selectedNodeId) ids.push(selectedNodeId)
@@ -117,7 +121,7 @@ export function ThreeArcbrainConstellation({
   }
 
   const resetCamera = () => {
-    setOrbiting(!reducedMotion)
+    setOrbiting(false)
     setFocusIds([])
     setViewMode('fit')
     setViewSignal((value) => value + 1)
@@ -177,6 +181,7 @@ export function ThreeArcbrainConstellation({
             viewMode={viewMode}
             viewSignal={viewSignal}
             orbiting={orbiting && !reducedMotion}
+            onUserControl={handleUserControl}
           />
         </Canvas>
 
@@ -455,6 +460,7 @@ function CameraRig({
   viewMode,
   viewSignal,
   orbiting,
+  onUserControl,
 }: {
   nodes: PositionedArcbrainNode[]
   focusIds: string[]
@@ -462,11 +468,17 @@ function CameraRig({
   viewMode: CameraViewMode
   viewSignal: number
   orbiting: boolean
+  onUserControl: () => void
 }) {
   const { camera } = useThree()
   const controlsRef = useRef<OrbitControlsImpl | null>(null)
   const targetRef = useRef<{ cameraPosition: THREE.Vector3; lookAt: THREE.Vector3 } | null>(null)
+  const nodesRef = useRef(nodes)
   const initializedRef = useRef(false)
+
+  useEffect(() => {
+    nodesRef.current = nodes
+  }, [nodes])
 
   useEffect(() => {
     if (initializedRef.current || nodes.length === 0) return
@@ -476,15 +488,20 @@ function CameraRig({
   }, [nodes])
 
   useEffect(() => {
-    const target = cameraTargetForNodes(nodes, new Set(), viewMode)
+    const target = cameraTargetForNodes(nodesRef.current, new Set(), viewMode)
     if (target) targetRef.current = target
-  }, [nodes, viewMode, viewSignal])
+  }, [viewMode, viewSignal])
 
   useEffect(() => {
     if (focusIds.length === 0) return
-    const target = cameraTargetForNodes(nodes, new Set(focusIds), 'focus')
+    const target = cameraTargetForNodes(nodesRef.current, new Set(focusIds), 'focus')
     if (target) targetRef.current = target
-  }, [focusIds, focusSignal, nodes])
+  }, [focusIds, focusSignal])
+
+  const handleControlsStart = useCallback(() => {
+    targetRef.current = null
+    onUserControl()
+  }, [onUserControl])
 
   useFrame(() => {
     const target = targetRef.current
@@ -508,6 +525,7 @@ function CameraRig({
       zoomToCursor
       autoRotate={orbiting}
       autoRotateSpeed={0.35}
+      onStart={handleControlsStart}
       makeDefault
     />
   )
@@ -547,8 +565,8 @@ function cameraTargetForNodes(nodes: PositionedArcbrainNode[], ids: Set<string>,
     targets.reduce((max, node) => Math.max(max, center.distanceTo(new THREE.Vector3(node.x, node.y, node.z)) + node.radius), 0),
   )
   const selectedFocus = selected.length > 0
-  const multiplier = mode === 'wide' ? 3.9 : selectedFocus ? 2.45 : 3.05
-  const minimumDistance = selectedFocus ? (targets.length <= 2 ? 380 : 760) : mode === 'wide' ? 2200 : 1350
+  const multiplier = mode === 'wide' ? 5.35 : selectedFocus ? 2.45 : 3.05
+  const minimumDistance = selectedFocus ? (targets.length <= 2 ? 380 : 760) : mode === 'wide' ? 5200 : 1350
   const distance = clamp(Math.max(minimumDistance, spread * multiplier), MIN_CAMERA_DISTANCE * 3.5, MAX_CAMERA_DISTANCE * 0.92)
   const direction = new THREE.Vector3(0.44, 0.28, 1).normalize()
 
