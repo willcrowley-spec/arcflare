@@ -12,6 +12,7 @@ from app.models.metadata import (
 )
 from app.models.process import BusinessProcess
 from app.models.recommendation import Recommendation
+from app.services.arcbrain.code_graph import CodeGraphEdge, CodeGraphNode, CodeGraphProject
 from app.services.arcbrain.projection import ArcbrainProjectionService, ArcbrainSourceData
 
 
@@ -300,6 +301,83 @@ def test_snapshot_projects_org_assets_into_stable_graph_contract():
     assert snapshot.summary["counts_by_type"]["business_process"] == 2
     assert snapshot.summary["replacement_value_total"] == 240000.0
     assert snapshot.summary["staleness_status"] == "current"
+
+
+def test_snapshot_projects_code_graph_into_arcbrain_and_links_matching_metadata():
+    org_id, data = _source_data()
+    data.code_graph_projects = [
+        CodeGraphProject(
+            project_id="arcflare",
+            label="Arcflare Codebase",
+            root_path="/app",
+            indexed_at="2026-05-19T00:00:00Z",
+            nodes=[
+                CodeGraphNode(
+                    external_id="code:file:backend/app/services/account_service.py",
+                    label="backend/app/services/account_service.py",
+                    kind="File",
+                    file_path="backend/app/services/account_service.py",
+                ),
+                CodeGraphNode(
+                    external_id="code:class:AccountService",
+                    label="AccountService",
+                    kind="Class",
+                    qualified_name="backend.app.services.account_service.AccountService",
+                    file_path="backend/app/services/account_service.py",
+                    start_line=8,
+                    end_line=42,
+                    in_degree=3,
+                    out_degree=6,
+                ),
+                CodeGraphNode(
+                    external_id="code:route:GET:/accounts",
+                    label="GET /accounts",
+                    kind="Route",
+                    qualified_name="__route__GET__/accounts",
+                    file_path="backend/app/api/routes/accounts.py",
+                    in_degree=1,
+                ),
+            ],
+            edges=[
+                CodeGraphEdge(
+                    source_external_id="code:class:AccountService",
+                    target_external_id="code:file:backend/app/services/account_service.py",
+                    edge_type="DEFINES",
+                    confidence=0.9,
+                ),
+                CodeGraphEdge(
+                    source_external_id="code:route:GET:/accounts",
+                    target_external_id="code:class:AccountService",
+                    edge_type="HANDLES",
+                    confidence=0.85,
+                ),
+            ],
+            metrics={"total_nodes": 3, "total_edges": 2},
+        )
+    ]
+
+    snapshot = ArcbrainProjectionService().project(org_id, data)
+
+    project_node = next(node for node in snapshot.nodes if node.node_type == "code_project")
+    class_node = next(node for node in snapshot.nodes if node.node_type == "code_class")
+    route_node = next(node for node in snapshot.nodes if node.node_type == "code_route")
+
+    assert project_node.layer == "code"
+    assert project_node.metrics_json["total_nodes"] == 3
+    assert class_node.layer == "code"
+    assert class_node.metadata_json["qualified_name"].endswith("AccountService")
+    assert route_node.metadata_json["kind"] == "Route"
+    assert snapshot.summary["counts_by_layer"]["code"] == 4
+
+    edge_keys = {
+        (edge.source_node_id, edge.target_node_id, edge.edge_type) for edge in snapshot.edges
+    }
+    assert (
+        class_node.id,
+        f"metadata_component:{data.metadata_components[0].id}",
+        "implements",
+    ) in edge_keys
+    assert any(edge_type == "handles" for _, _, edge_type in edge_keys)
 
 
 def test_search_matches_labels_types_and_summaries_with_incident_edges():

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from decimal import Decimal
+import logging
 from statistics import mean
 from time import monotonic
 from uuid import UUID
@@ -29,6 +31,14 @@ from app.schemas.arcbrain import (
     ArcbrainSearchResponse,
     ArcbrainSnapshotResponse,
 )
+from app.services.arcbrain.code_graph import (
+    CodeGraphNode,
+    CodeGraphProject,
+    code_edge_type,
+    code_node_type,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,6 +53,7 @@ class ArcbrainSourceData:
     concepts: list[Concept] = field(default_factory=list)
     communities: list[Community] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
+    code_graph_projects: list[CodeGraphProject] = field(default_factory=list)
 
 
 class ArcbrainProjectionService:
@@ -184,6 +195,13 @@ class ArcbrainProjectionService:
             .scalars()
             .all()
         )
+        code_graph_projects: list[CodeGraphProject] = []
+        try:
+            from app.services.arcbrain.code_graph import get_configured_code_graph_provider
+
+            code_graph_projects = await asyncio.to_thread(get_configured_code_graph_provider().load_projects)
+        except Exception:
+            logger.warning("arcbrain_code_graph_load_failed org_id=%s", org_id, exc_info=True)
 
         return ArcbrainSourceData(
             metadata_objects=list(metadata_objects),
@@ -196,6 +214,7 @@ class ArcbrainProjectionService:
             concepts=list(concepts),
             communities=list(communities),
             recommendations=list(recommendations),
+            code_graph_projects=code_graph_projects,
         )
 
     def project(self, org_id: UUID, data: ArcbrainSourceData) -> ArcbrainSnapshotResponse:
@@ -208,6 +227,7 @@ class ArcbrainProjectionService:
         component_node_by_type_api: dict[tuple[str, str], str] = {}
         process_node_by_id: dict[str, str] = {}
         concept_node_by_id: dict[str, str] = {}
+        code_node_by_external: dict[tuple[str, str], str] = {}
 
         def add_node(node: ArcbrainNode) -> None:
             nodes.setdefault(node.id, node)
@@ -623,6 +643,126 @@ class ArcbrainProjectionService:
                         },
                     )
                 )
+
+        for project in sorted(data.code_graph_projects, key=lambda row: row.project_id):
+            project_node_id = _node_id("code_project", project.project_id)
+            project_community_id = _node_id("code_community", project.project_id)
+            communities[project_community_id] = ArcbrainCommunity(
+                id=project_community_id,
+                label=f"{project.label} code graph",
+                layer="code",
+                source_type="code_project",
+                source_ref=project.project_id,
+                summary=f"Code graph indexed from {project.root_path}.",
+                confidence=0.72,
+                member_node_ids=[],
+                metrics_json=project.metrics,
+                metadata_json={"provider": project.provider, "status": project.status},
+            )
+            add_node(
+                ArcbrainNode(
+                    id=project_node_id,
+                    label=project.label,
+                    node_type="code_project",
+                    layer="code",
+                    source_type="code_project",
+                    source_ref=project.project_id,
+                    confidence=0.72,
+                    freshness="current" if project.status == "indexed" else "stale",
+                    risk_level="medium",
+                    replaceability_score=0.15,
+                    economic_value=0.0,
+                    evidence_refs=[f"code_project:{project.project_id}"],
+                    metrics_json=project.metrics,
+                    metadata_json={
+                        "provider": project.provider,
+                        "root_path": project.root_path,
+                        "indexed_at": project.indexed_at,
+                        "status": project.status,
+                    },
+                    summary=f"{project.label} source code graph with {project.metrics.get('total_nodes', len(project.nodes))} indexed nodes.",
+                    community_id=project_community_id,
+                )
+            )
+
+            for code_node in sorted(project.nodes, key=lambda row: row.external_id):
+                node_id = _node_id("code", f"{project.project_id}:{code_node.external_id}")
+                code_node_by_external[(project.project_id, code_node.external_id)] = node_id
+                node_type = code_node_type(code_node.kind)
+                add_node(
+                    ArcbrainNode(
+                        id=node_id,
+                        label=code_node.label,
+                        node_type=node_type,
+                        layer="code",
+                        source_type="code_graph",
+                        source_ref=f"{project.project_id}:{code_node.external_id}",
+                        confidence=_code_confidence(code_node.in_degree, code_node.out_degree),
+                        freshness="current",
+                        risk_level=_code_risk(code_node.in_degree, code_node.out_degree, node_type),
+                        replaceability_score=_code_replaceability(node_type),
+                        economic_value=0.0,
+                        evidence_refs=[f"code:{project.project_id}:{code_node.qualified_name or code_node.label}"],
+                        metrics_json={
+                            "in_degree": code_node.in_degree,
+                            "out_degree": code_node.out_degree,
+                            "start_line": code_node.start_line,
+                            "end_line": code_node.end_line,
+                        },
+                        metadata_json={
+                            **code_node.metadata,
+                            "project_id": project.project_id,
+                            "kind": code_node.kind,
+                            "qualified_name": code_node.qualified_name,
+                            "file_path": code_node.file_path,
+                        },
+                        summary=_code_summary(code_node),
+                        community_id=project_community_id,
+                    )
+                )
+                communities[project_community_id].member_node_ids.append(node_id)
+                add_edge(
+                    _edge(
+                        "part_of",
+                        node_id,
+                        project_node_id,
+                        confidence=0.7,
+                        evidence_refs=[f"code_project:{project.project_id}"],
+                    )
+                )
+
+            for code_edge in project.edges:
+                source_id = code_node_by_external.get((project.project_id, code_edge.source_external_id))
+                target_id = code_node_by_external.get((project.project_id, code_edge.target_external_id))
+                if source_id and target_id:
+                    add_edge(
+                        _edge(
+                            code_edge_type(code_edge.edge_type),
+                            source_id,
+                            target_id,
+                            confidence=code_edge.confidence,
+                            evidence_refs=[f"code_edge:{project.project_id}:{code_edge.edge_type}"],
+                            metadata_json=code_edge.metadata,
+                        )
+                    )
+
+            for code_node in project.nodes:
+                source_id = code_node_by_external.get((project.project_id, code_node.external_id))
+                if not source_id:
+                    continue
+                for component_key, target_id in component_node_by_type_api.items():
+                    _component_type, component_api = component_key
+                    if _code_matches_metadata_name(code_node, component_api):
+                        add_edge(
+                            _edge(
+                                "implements",
+                                source_id,
+                                target_id,
+                                confidence=0.74,
+                                evidence_refs=[f"code:{project.project_id}:{code_node.qualified_name or code_node.label}"],
+                                metadata_json={"match": "name"},
+                            )
+                        )
 
         ordered_nodes = sorted(nodes.values(), key=lambda node: node.id)
         ordered_edges = sorted(edges.values(), key=lambda edge: edge.id)
@@ -1109,6 +1249,43 @@ def _component_node_type(category: str) -> str:
     if normalized in {"integration", "external_system"}:
         return "integration"
     return normalized or "metadata_component"
+
+
+def _code_confidence(in_degree: int, out_degree: int) -> float:
+    return _clamp(0.62 + min(0.24, (in_degree + out_degree) / 40))
+
+
+def _code_risk(in_degree: int, out_degree: int, node_type: str) -> str:
+    if node_type == "code_route" and in_degree + out_degree >= 8:
+        return "high"
+    if in_degree >= 12 or out_degree >= 18:
+        return "high"
+    if in_degree + out_degree >= 5:
+        return "medium"
+    return "low"
+
+
+def _code_replaceability(node_type: str) -> float:
+    if node_type == "code_route":
+        return 0.35
+    if node_type in {"code_function", "code_class"}:
+        return 0.22
+    return 0.08
+
+
+def _code_summary(node: CodeGraphNode) -> str:
+    location = f" in {node.file_path}" if node.file_path else ""
+    degree = node.in_degree + node.out_degree
+    return f"{node.kind} {node.label}{location}; {degree} graph relationships."
+
+
+def _code_matches_metadata_name(node: CodeGraphNode, api_name: str) -> bool:
+    if not api_name:
+        return False
+    needle = _norm(api_name).replace(" ", "").replace("_", "")
+    label = _norm(node.label).replace(" ", "").replace("_", "")
+    qualified = _norm(node.qualified_name).replace(" ", "").replace("_", "")
+    return bool(needle and (label == needle or qualified.endswith(f".{needle}") or f".{needle}." in qualified))
 
 
 def _process_risk(process: BusinessProcess) -> str:

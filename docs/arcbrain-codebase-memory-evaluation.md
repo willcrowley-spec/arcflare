@@ -1,12 +1,12 @@
 # Arcbrain Codebase Memory MCP Evaluation
 
-Date: 2026-05-18
+Date: 2026-05-19
 
 ## Recommendation
 
 Do not replace Arcbrain with `codebase-memory-mcp`.
 
-Use it as a candidate source adapter for code-repository intelligence after legal and security review. Arcbrain should remain the product brain: Salesforce metadata, operating processes, evidence, recommendations, economics, risk, and replacement plans. `codebase-memory-mcp` can help populate the code slice of that brain, but it does not model business process replacement, executive evidence, ROI, controls, or agent implementation plans.
+Use it as an Arcbrain source adapter for code-repository intelligence, with the provider gated by configuration and a pinned binary checksum. Arcbrain should remain the product brain: Salesforce metadata, operating processes, evidence, recommendations, economics, risk, and replacement plans. `codebase-memory-mcp` can populate the code slice of that brain, but it does not model business process replacement, executive evidence, ROI, controls, or agent implementation plans.
 
 ## What It Is
 
@@ -96,9 +96,7 @@ The security policy is candid that the tool reads deeply from the filesystem, wr
 
 ## Proposed Arcbrain Adapter Shape
 
-Do not add the provider yet. First finish legal/security review and resolve the Windows `search_code` issue.
-
-If accepted, add:
+Implemented V0 adapter shape:
 
 - `CodeGraphProvider` interface with methods for indexing, graph schema, search, trace, impact, and snippet retrieval.
 - `CodebaseMemoryProvider` implementation that shells out to the pinned binary in an isolated temp/cache directory.
@@ -109,15 +107,24 @@ If accepted, add:
   - `code_function`
   - `code_class`
   - `code_module`
+  - `code_type`
+  - `code_symbol`
+  - `code_section`
 - Output normalization into Arcbrain graph edges:
   - `defines`
   - `imports`
   - `calls`
   - `http_calls`
   - `tests`
-  - `changes_with`
-  - `semantically_related`
+  - `handles`
+  - `defined_in`
 - Arcbrain-only cross-links from code nodes to Salesforce metadata, integrations, recommendations, agent packages, evidence claims, and process nodes.
 
 The key boundary: `codebase-memory-mcp` can enrich Arcbrain’s code intelligence. Arcbrain remains responsible for the enterprise operating graph and the executive replacement answer.
 
+Current implementation notes:
+
+- Backend Docker installs `codebase-memory-mcp` v0.6.1 Linux AMD64 and verifies SHA-256 before extraction.
+- Railway backend defaults enable the provider for `/app` as `arcflare-backend`, which gives the internal production Arcbrain a live code graph without writing global agent configuration.
+- Matching code classes/functions are linked to Salesforce metadata components by exact normalized name using `implements` edges.
+- This is still not a customer-repo ingestion product. Commercial/customer use needs tenant-scoped repo mapping, path containment, binary provenance capture, and legal/security sign-off.

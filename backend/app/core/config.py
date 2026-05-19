@@ -89,6 +89,39 @@ class Settings(BaseSettings):
 
     ARC_AGENT_NAME: str = Field(default="Arc", description="Display name for the chat agent")
 
+    ARCBRAIN_CODEGRAPH_ENABLED: bool = Field(
+        default=False,
+        description="Enable optional Arcbrain code graph ingestion via a configured provider.",
+    )
+    ARCBRAIN_CODEGRAPH_PROVIDER: Literal["none", "codebase_memory"] = Field(
+        default="none",
+        description="Code graph provider for Arcbrain.",
+    )
+    ARCBRAIN_CODEGRAPH_BINARY: str = Field(
+        default="codebase-memory-mcp",
+        description="Path or executable name for the codebase-memory-mcp binary.",
+    )
+    ARCBRAIN_CODEGRAPH_REPOS: str = Field(
+        default="",
+        description="Semicolon-separated repo list, e.g. arcflare=/app;client=/workspace/client.",
+    )
+    ARCBRAIN_CODEGRAPH_MODE: str = Field(
+        default="fast",
+        description="codebase-memory-mcp indexing mode: fast, moderate, or full.",
+    )
+    ARCBRAIN_CODEGRAPH_TIMEOUT_SECONDS: int = Field(
+        default=45,
+        ge=5,
+        le=300,
+        description="Timeout per codebase-memory-mcp CLI call.",
+    )
+    ARCBRAIN_CODEGRAPH_CACHE_TTL_SECONDS: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        description="In-process cache TTL for Arcbrain code graph projections.",
+    )
+
     S3_BUCKET: str = Field(default="", description="Railway Bucket name (S3-compatible)")
     S3_ACCESS_KEY_ID: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     S3_SECRET_ACCESS_KEY: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")

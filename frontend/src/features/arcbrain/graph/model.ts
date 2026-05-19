@@ -50,6 +50,16 @@ const NODE_TYPE_LAYER: Record<string, string> = {
   metadata_object: 'platform',
   metadata_field: 'platform',
   automation: 'platform',
+  code_project: 'code',
+  code_file: 'code',
+  code_folder: 'code',
+  code_module: 'code',
+  code_route: 'code',
+  code_function: 'code',
+  code_class: 'code',
+  code_type: 'code',
+  code_symbol: 'code',
+  code_section: 'code',
   apex_class: 'platform',
   permission: 'controls',
   control: 'controls',
@@ -451,6 +461,7 @@ function layerDepth(node: ArcbrainNode): number {
   if (layer === 'process' || layer === 'operations') return -170
   if (layer === 'people') return -90
   if (layer === 'metadata' || layer === 'platform') return -20
+  if (layer === 'code') return 38
   if (layer === 'controls') return 52
   if (layer === 'evidence') return 125
   if (layer === 'replacement') return 255

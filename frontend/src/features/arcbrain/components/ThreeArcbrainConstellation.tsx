@@ -36,6 +36,7 @@ const LAYER_COLOR: Record<string, string> = {
   people: '#bfdbfe',
   metadata: '#c7d2fe',
   platform: '#c7d2fe',
+  code: '#bfdbfe',
   controls: '#fecaca',
   evidence: '#fde68a',
   replacement: '#fdba74',
