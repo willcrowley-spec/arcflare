@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Html, OrbitControls } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import * as THREE from 'three'
-import { Crosshair, LocateFixed, MousePointer2, Pause, Play, RotateCcw, ScanSearch, ZoomIn } from 'lucide-react'
+import { Crosshair, LocateFixed, MousePointer2, Pause, Play, RotateCcw, ScanSearch, ZoomOut } from 'lucide-react'
 import type { ArcbrainBlastRadius, ArcbrainLens, ArcbrainReplacementHeat, ArcbrainSearchResult } from '@/types'
 import {
   buildArcbrainScene,
@@ -46,6 +46,7 @@ const DEFAULT_CAMERA_POSITION: [number, number, number] = [860, 520, 1850]
 const CAMERA_FAR_PLANE = 60000
 const MIN_CAMERA_DISTANCE = 90
 const MAX_CAMERA_DISTANCE = 24000
+type CameraViewMode = 'focus' | 'fit' | 'wide'
 
 function useReducedMotion() {
   const [reduced, setReduced] = useState(false)
@@ -72,7 +73,8 @@ export function ThreeArcbrainConstellation({
   const [orbiting, setOrbiting] = useState(true)
   const [focusIds, setFocusIds] = useState<string[]>([])
   const [focusSignal, setFocusSignal] = useState(0)
-  const [resetSignal, setResetSignal] = useState(0)
+  const [viewMode, setViewMode] = useState<CameraViewMode>('fit')
+  const [viewSignal, setViewSignal] = useState(0)
   const reducedMotion = useReducedMotion()
 
   const scene = useMemo(
@@ -106,10 +108,18 @@ export function ThreeArcbrainConstellation({
     setFocusSignal((value) => value + 1)
   }
 
+  const zoomOutToGraph = () => {
+    setOrbiting(false)
+    setFocusIds([])
+    setViewMode('wide')
+    setViewSignal((value) => value + 1)
+  }
+
   const resetCamera = () => {
     setOrbiting(!reducedMotion)
     setFocusIds([])
-    setResetSignal((value) => value + 1)
+    setViewMode('fit')
+    setViewSignal((value) => value + 1)
   }
 
   return (
@@ -163,7 +173,8 @@ export function ThreeArcbrainConstellation({
             nodes={scene.nodes}
             focusIds={focusIds}
             focusSignal={focusSignal}
-            resetSignal={resetSignal}
+            viewMode={viewMode}
+            viewSignal={viewSignal}
             orbiting={orbiting && !reducedMotion}
           />
         </Canvas>
@@ -174,6 +185,9 @@ export function ThreeArcbrainConstellation({
           </ControlButton>
           <ControlButton label="Focus answer path" onClick={focusHighlighted}>
             <Crosshair className="h-4 w-4" />
+          </ControlButton>
+          <ControlButton label="Zoom out to full graph" onClick={zoomOutToGraph}>
+            <ZoomOut className="h-4 w-4" />
           </ControlButton>
           <ControlButton label={orbiting && !reducedMotion ? 'Pause orbit' : 'Resume orbit'} onClick={() => setOrbiting((value) => !value)}>
             {orbiting && !reducedMotion ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -437,28 +451,37 @@ function CameraRig({
   nodes,
   focusIds,
   focusSignal,
-  resetSignal,
+  viewMode,
+  viewSignal,
   orbiting,
 }: {
   nodes: PositionedArcbrainNode[]
   focusIds: string[]
   focusSignal: number
-  resetSignal: number
+  viewMode: CameraViewMode
+  viewSignal: number
   orbiting: boolean
 }) {
   const { camera } = useThree()
   const controlsRef = useRef<OrbitControlsImpl | null>(null)
   const targetRef = useRef<{ cameraPosition: THREE.Vector3; lookAt: THREE.Vector3 } | null>(null)
+  const initializedRef = useRef(false)
 
   useEffect(() => {
-    camera.position.set(...DEFAULT_CAMERA_POSITION)
-    controlsRef.current?.target.set(0, 0, 0)
-    controlsRef.current?.update()
-    targetRef.current = null
-  }, [camera, resetSignal])
+    if (initializedRef.current || nodes.length === 0) return
+    const target = cameraTargetForNodes(nodes, new Set(), 'fit')
+    if (target) targetRef.current = target
+    initializedRef.current = true
+  }, [nodes])
 
   useEffect(() => {
-    const target = cameraTargetForNodes(nodes, new Set(focusIds))
+    const target = cameraTargetForNodes(nodes, new Set(), viewMode)
+    if (target) targetRef.current = target
+  }, [nodes, viewMode, viewSignal])
+
+  useEffect(() => {
+    if (focusIds.length === 0) return
+    const target = cameraTargetForNodes(nodes, new Set(focusIds), 'focus')
     if (target) targetRef.current = target
   }, [focusIds, focusSignal, nodes])
 
@@ -481,6 +504,7 @@ function CameraRig({
       panSpeed={0.72}
       minDistance={MIN_CAMERA_DISTANCE}
       maxDistance={MAX_CAMERA_DISTANCE}
+      zoomToCursor
       autoRotate={orbiting}
       autoRotateSpeed={0.35}
       makeDefault
@@ -488,24 +512,52 @@ function CameraRig({
   )
 }
 
-function cameraTargetForNodes(nodes: PositionedArcbrainNode[], ids: Set<string>) {
+function cameraTargetForNodes(nodes: PositionedArcbrainNode[], ids: Set<string>, mode: CameraViewMode) {
   const selected = ids.size > 0 ? nodes.filter((node) => ids.has(node.id)) : []
-  const targets = selected.length > 0 ? selected : nodes.slice(0, 20)
+  const targets = selected.length > 0 ? selected : nodes
   if (targets.length === 0) return null
-  const center = targets.reduce(
-    (acc, node) => {
-      acc.x += node.x
-      acc.y += node.y
-      acc.z += node.z
-      return acc
+
+  const bounds = targets.reduce(
+    (acc, node) => ({
+      minX: Math.min(acc.minX, node.x - node.radius),
+      maxX: Math.max(acc.maxX, node.x + node.radius),
+      minY: Math.min(acc.minY, node.y - node.radius),
+      maxY: Math.max(acc.maxY, node.y + node.radius),
+      minZ: Math.min(acc.minZ, node.z - node.radius),
+      maxZ: Math.max(acc.maxZ, node.z + node.radius),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minZ: Number.POSITIVE_INFINITY,
+      maxZ: Number.NEGATIVE_INFINITY,
     },
-    new THREE.Vector3(),
-  ).divideScalar(targets.length)
-  const spread = targets.reduce((max, node) => Math.max(max, center.distanceTo(new THREE.Vector3(node.x, node.y, node.z))), 0)
-  const distance = Math.max(targets.length <= 2 ? 320 : 520, spread * 2.7)
+  )
+  const center = new THREE.Vector3(
+    (bounds.minX + bounds.maxX) / 2,
+    (bounds.minY + bounds.maxY) / 2,
+    (bounds.minZ + bounds.maxZ) / 2,
+  )
+  const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ)
+  const spread = Math.max(
+    diagonal / 2,
+    targets.reduce((max, node) => Math.max(max, center.distanceTo(new THREE.Vector3(node.x, node.y, node.z)) + node.radius), 0),
+  )
+  const selectedFocus = selected.length > 0
+  const multiplier = mode === 'wide' ? 3.9 : selectedFocus ? 2.45 : 3.05
+  const minimumDistance = selectedFocus ? (targets.length <= 2 ? 380 : 760) : mode === 'wide' ? 2200 : 1350
+  const distance = clamp(Math.max(minimumDistance, spread * multiplier), MIN_CAMERA_DISTANCE * 3.5, MAX_CAMERA_DISTANCE * 0.92)
+  const direction = new THREE.Vector3(0.44, 0.28, 1).normalize()
+
   return {
     lookAt: center,
-    cameraPosition: new THREE.Vector3(center.x + distance * 0.26, center.y + distance * 0.18, center.z + distance),
+    cameraPosition: new THREE.Vector3(
+      center.x + direction.x * distance,
+      center.y + direction.y * distance,
+      center.z + direction.z * distance,
+    ),
   }
 }
 
@@ -531,6 +583,10 @@ function focusColorForNode(node: PositionedArcbrainNode) {
   if (node.heat >= 0.78) return '#fb923c'
   if (node.risk_level === 'high' || node.risk_level === 'critical') return '#f87171'
   return LAYER_COLOR[node.layer || 'other'] ?? LAYER_COLOR.other
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }
 
 function ControlButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
